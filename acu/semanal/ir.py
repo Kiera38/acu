@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from acu.parser import Location
-from acu.semanal.types import FuncType, Struct, StructField, Type
+
+if TYPE_CHECKING:
+    from acu.semanal.types import FuncType, Struct, StructField, Type
 
 
 class InstVisitor[T]:
@@ -342,8 +345,42 @@ class Func:
     def __hash__(self) -> int:
         return id(self)
 
+    def iter_code(self):
+        return CodeIterator(self.code)
+
 
 @dataclass
 class Module:
     funcs: list[Func]
     structs: list[Struct]
+
+
+class CodeIterator(Iterable, InstVisitor[Iterator[Inst]]):
+    def __init__(self, code: Block) -> None:
+        super().__init__()
+        self.code = code
+
+    def __iter__(self) -> Iterator:
+        for inst in self.code.code:
+            yield from inst.accept(self)
+
+    def inst(self, inst: Inst) -> Iterator[Inst]:
+        yield inst
+
+    def if_inst(self, inst: If) -> Iterator[Inst]:
+        yield inst
+        yield from CodeIterator(inst.then_block)
+        yield from CodeIterator(inst.else_block)
+
+    def loop(self, inst: Loop) -> Iterator[Inst]:
+        yield inst
+        yield from CodeIterator(inst.block)
+
+    def comparison(self, inst: Comparison) -> Iterator[Inst]:
+        yield inst
+        for comparator in inst.comparators:
+            yield from CodeIterator(comparator.value)
+
+    def logical(self, inst: Logical) -> Iterator[Inst]:
+        yield inst
+        yield from CodeIterator(inst.right)

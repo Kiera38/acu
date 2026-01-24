@@ -26,13 +26,19 @@ from acu.refanal.flow_graph_ir import (
     Value,
 )
 from acu.semanal import ir
-from acu.semanal.types import Struct, StructType, Type, bool_type, nothing_type
+from acu.semanal.types import (
+    Struct,
+    StructType,
+    Type,
+    TypedFunc,
+    bool_type,
+)
 
 
 class IRBuilder(ir.InstVisitor[Value]):
-    def __init__(self, func_map: dict[str, FuncIR], types: dict[ir.Inst, Type]):
+    def __init__(self, func_map: dict[str, FuncIR], func: TypedFunc):
         self.func_map = func_map
-        self.types = types
+        self.func = func
         self.value_map: dict[ir.Inst, Value] = {}
         self.blocks: list[BasicBlock] = []
         self.current: BasicBlock = None  # type: ignore
@@ -68,7 +74,7 @@ class IRBuilder(ir.InstVisitor[Value]):
         return op
 
     def type(self, i: ir.Inst) -> Type:
-        return self.types.get(i, nothing_type)
+        return self.func.inst_type(i)
 
     def new_reg_for(self, inst: ir.Inst, name: str = "") -> Register:
         reg = Register(location=inst.location, type=self.type(inst), name=name)
@@ -328,13 +334,13 @@ class IRBuilder(ir.InstVisitor[Value]):
                     inst.location, [self.value(a) for a in inst.args], fn_inst.value
                 )
             )
-        assert isinstance(fn_inst.value, ir.Func), (
-            "Function call target must be a function"
-        )
+        assert isinstance(
+            fn_inst.value, ir.Func
+        ), "Function call target must be a function"
         fn = self.func_map.get(fn_inst.value.name)
-        assert fn is not None, (
-            f"Function {getattr(fn_inst, 'name', None)} not found in func_map"
-        )
+        assert (
+            fn is not None
+        ), f"Function {getattr(fn_inst, 'name', None)} not found in func_map"
         args_vals = [self.value(a) for a in inst.args]
         op = Call(location=inst.location, fn=fn, args=args_vals)
         return self.add(op)
@@ -343,7 +349,7 @@ class IRBuilder(ir.InstVisitor[Value]):
         obj = self.value(inst.value)
         # determine field index from the object's struct type (type analysis
         # does not set inst.field), prefer raising on missing information
-        obj_type = self.types.get(inst.value)
+        obj_type = self.type(inst.value)
         if isinstance(obj_type, StructType):
             field = obj_type.struct.fields.get(inst.name)
             if field is None:
@@ -359,7 +365,7 @@ class IRBuilder(ir.InstVisitor[Value]):
         obj = self.value(inst.var)
         val = self.value(inst.value)
         # lookup field index and type from the struct type of the object
-        obj_type = self.types.get(inst.var)
+        obj_type = self.type(inst.var)
         if isinstance(obj_type, StructType):
             field = obj_type.struct.fields.get(inst.name)
             if field is None:
@@ -496,33 +502,30 @@ class IRBuilder(ir.InstVisitor[Value]):
 
 def build_func(
     func_map: dict[str, FuncIR],
-    func: ir.Func,
+    func: TypedFunc,
     ir_func: FuncIR,
-    types: dict[ir.Inst, Type],
 ) -> FuncIR:
-    builder = IRBuilder(func_map, types)
-    args = builder.create_args(func)
+    builder = IRBuilder(func_map, func)
+    args = builder.create_args(func.func)
     ir_func.args = args
-    builder.process_block(func.code)
+    builder.process_block(func.func.code)
     ir_func.blocks = builder.blocks
     ir_func.return_type = (
-        func.return_type
+        func.type.return_type
     )  # Set the return type from the original function
     return ir_func
 
 
-def build_module(
-    module: ir.Module, types: dict[ir.Func, dict[ir.Inst, Type]]
-) -> list[FuncIR]:
+def build_module(funcs: list[TypedFunc]) -> list[FuncIR]:
     func_map: dict[str, FuncIR] = {}
 
     # First pass: create stubs
-    for func in module.funcs:
-        stub = FuncIR(name=func.name, args=[], blocks=[])
-        func_map[func.name] = stub
+    for func in funcs:
+        stub = FuncIR(name=func.func.name, args=[], blocks=[])
+        func_map[func.func.name] = stub
 
     # Second pass: build each function with resolved call targets
-    for func in module.funcs:
-        build_func(func_map, func, func_map[func.name], types[func])
+    for func in funcs:
+        build_func(func_map, func, func_map[func.func.name])
 
     return list(func_map.values())

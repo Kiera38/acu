@@ -1,3 +1,4 @@
+from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator
@@ -52,7 +53,7 @@ class Context:
         self.blocks[-1].code.append(inst)
         return inst
 
-    def find(self, name: str) -> ir.VarDecl | ir.Arg | ir.Func | ir.Struct:
+    def find(self, name: str) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct:
         for scope in reversed(self.scopes):
             if var := scope.vars.get(name):
                 return var
