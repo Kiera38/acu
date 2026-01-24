@@ -62,8 +62,8 @@ def main():
     args = parse_args()
     source = create_source(args.file)
     ast = parser.parse(source.text)
-    ir, types = semanal.analyze(ast)
-    fg_ir = refanal.analyze(ir, types)
+    ir, funcs = semanal.analyze(ast)
+    fg_ir = refanal.analyze(funcs)
     codegen.emit_files(
         fg_ir,
         llvm_ir_path=args.llvm_ir,

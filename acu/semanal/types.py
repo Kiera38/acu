@@ -128,20 +128,19 @@ class TypedFunc:
     types: dict[Inst, TypeInfo] = field(default_factory=dict)
 
     def add_type(self, inst: Inst, type: Type, location: Location):
-        info = self.types[inst]
+        info = self.types.get(inst)
+        if not info:
+            self.types[inst] = TypeInfo(type, location)
+            return
         if info.locked:
             if type != info.type:
                 assert info.type is not None
                 if not type.can_convert(info.type):
                     raise Exception("cannot convert type")
         else:
-            if info.type is not None:
-                unified = unify_types((info.type, type))
-                if unified is None:
-                    raise Exception("connot unify types")
-            else:
-                unified = type
-                info.location = location
+            unified = unify_types((info.type, type))
+            if unified is None:
+                raise Exception("connot unify types")
             info.type = unified
         return info.type
 

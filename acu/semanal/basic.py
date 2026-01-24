@@ -95,7 +95,7 @@ class Context:
         return False
 
 
-class TypeConverter(ExprVisitor[ir.Type]):
+class TypeConverter(ExprVisitor[types.Type]):
     def __init__(self, context: Context) -> None:
         super().__init__()
         self.context = context
@@ -179,7 +179,7 @@ class ExprConverter(ExprVisitor[ir.Inst]):
 
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
         var = self.context.find(expr.name)
-        if isinstance(var, (ir.Func, ir.Struct)):
+        if isinstance(var, (ir.Func, types.Struct)):
             return ir.Literal(expr.location, var)
         return ir.Load(expr.location, var)
 
@@ -257,7 +257,7 @@ class StoreConverter(ExprVisitor[ir.Inst]):
 
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
         var = self.context.find(expr.name)
-        if isinstance(var, (ir.Func, ir.Struct)):
+        if isinstance(var, (ir.Func, types.Struct)):
             raise Exception("func or struct in left of assign")
         return ir.Store(self.location, var, self.value)
 

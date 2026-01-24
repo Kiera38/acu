@@ -16,4 +16,4 @@ def analyze(module: nodes.Module):
                 finished.append(func)
         funcs = need_analyze
         need_analyze = []
-    return ir_module, [func.unify() for func in funcs]
+    return ir_module, [func.unify() for func in finished]

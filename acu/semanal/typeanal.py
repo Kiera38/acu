@@ -88,11 +88,9 @@ class TypeAnalyzer(InstVisitor[None]):
             inst.accept(self)
 
     def unify(self) -> TypedFunc:
-        types = {}
         for inst in self.func.func.iter_code():
             if not self.func.defined(inst):
-                raise Exception("unknown type")
-            types[inst] = self.func.inst_type(inst)
+                raise Exception(f"unknown type {inst}")
         return self.func
 
     def get_state(self):
@@ -117,6 +115,7 @@ class TypeAnalyzer(InstVisitor[None]):
         self.copy_type(inst.var, inst, inst.location)
 
     def store(self, inst: Store) -> None:
+        self.lock_type(inst, nothing_type, inst.location)
         self.copy_type(inst.value, inst.var, inst.location)
 
         def refine(type: Type):

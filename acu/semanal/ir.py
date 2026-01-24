@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 from acu.parser import Location
 
-if TYPE_CHECKING:
-    from acu.semanal.types import FuncType, Struct, StructField, Type
+from acu.semanal.types import FuncType, Struct, StructField, Type
 
 
 class InstVisitor[T]:
