@@ -26,6 +26,7 @@ def initialize_llvm(opt: int = 0, jit: bool = False) -> llvm.TargetMachine:
 def optimize(ir_module: llir.Module, tm: llvm.TargetMachine, opt: int = 0):
     ir_module.triple = tm.triple
     ir_module.data_layout = str(tm.target_data)
+    print(ir_module)
     ll_module = llvm.parse_assembly(str(ir_module))
     pb = llvm.create_pass_builder(tm, llvm.PipelineTuningOptions(opt))
     pb.getModulePassManager().run(ll_module, pb)

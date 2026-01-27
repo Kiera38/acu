@@ -147,10 +147,18 @@ class LLVMGenerator(OpVisitor[llir.Value]):
 
     def get_item_ptr(self, op: GetItemPtr) -> llir.Value:
         assert isinstance(op.ptr.type, PointerType)
+        if isinstance(op.ptr.type.type, ArrayType):
+            return self.builder.gep(
+                self.value(op.ptr),
+                [self.int_const(0), self.value(op.index)],
+                source_etype=self.type(op.ptr.type.type),
+            )
+        assert isinstance(op.ptr.type.type, PointerType)
+        value = self.builder.load(self.value(op.ptr), typ=self.type(op.ptr.type.type))
         return self.builder.gep(
-            self.value(op.ptr),
-            [self.int_const(0), self.value(op.index)],
-            source_etype=self.type(op.ptr.type.type),
+            value,
+            [self.value(op.index)],
+            source_etype=self.type(op.ptr.type.type.type),
         )
 
     def goto(self, op: Goto) -> llir.Value:
@@ -288,6 +296,9 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                         return self.builder.inttoptr(
                             self.value(op.obj), self.type(op.type)
                         ) # type: ignore
+                    case ArrayType():
+                        assert op.obj.type.type == op.type.type
+                        return self.value(op.obj)
                     case _:
                         raise Exception(f"Unknown conversion type {op.type}")
             case _:

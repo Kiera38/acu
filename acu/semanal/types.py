@@ -111,6 +111,9 @@ class ArrayType(Type):
     type: Type
     size: int
 
+    def can_explicit_convert(self, to: Type) -> bool:
+        return super().can_explicit_convert(to) or to == PointerType(self.type)
+
 
 @dataclass
 class PointerType(Type):

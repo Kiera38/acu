@@ -1,12 +1,11 @@
 func main() Int:
     var a = [10, 100, 30, 7]
-    bubble_sort(a)
+    bubble_sort(a as Ptr[Int], 4)
     var b = 10 as UInt
     return 0
 
 
-func bubble_sort(a: Array[Int, 4]):
-    var n = 4
+func bubble_sort(a: Ptr[Int], n: Int):
     var swapped
     var i = 0
     while i < n -1:
