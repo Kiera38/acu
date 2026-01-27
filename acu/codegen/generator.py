@@ -242,6 +242,10 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                         return self.builder.fptosi(
                             self.value(op.obj), self.type(op.type)
                         )  # type: ignore
+                    case PointerType():
+                        return self.builder.ptrtoint(
+                            self.value(op.obj), self.type(op.type)
+                        )  # type: ignore
                     case _:
                         raise Exception("unknown conversion type")
             case IntType(size=to_size, signed=False):
@@ -272,8 +276,20 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                         return self.builder.fptoui(
                             self.value(op.obj), self.type(op.type)
                         )  # type: ignore
+                    case PointerType():
+                        return self.builder.ptrtoint(
+                            self.value(op.obj), self.type(op.type)
+                        )  # type: ignore
                     case _:
                         raise Exception("unknown conversion type")
+            case PointerType():
+                match op.obj.type:
+                    case IntType(size=64):
+                        return self.builder.inttoptr(
+                            self.value(op.obj), self.type(op.type)
+                        ) # type: ignore
+                    case _:
+                        raise Exception(f"Unknown conversion type {op.type}")
             case _:
                 raise Exception(f"Unknown conversion type {op.type}")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ast import In
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Iterable
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 class Type:
     def can_convert(self, to: Type) -> bool:
         return self == to
-    
+
     def can_explicit_convert(self, to: Type) -> bool:
         return self.can_convert(to)
 
@@ -55,9 +56,14 @@ class IntType(Type):
             )
             or isinstance(to, BoolType)
         )
-    
+
     def can_explicit_convert(self, to: Type) -> bool:
-        return self.can_convert(to) or isinstance(to, IntType)
+        return (
+            self.can_convert(to)
+            or isinstance(to, IntType)
+            or isinstance(to, PointerType)
+            and self.size == 64
+        )
 
 
 int_type = IntType(64)
@@ -84,7 +90,7 @@ class FloatType(Type):
             and to.size >= self.size
             or isinstance(to, BoolType)
         )
-    
+
     def can_explicit_convert(self, to: Type) -> bool:
         return self.can_convert(to) or isinstance(to, IntType)
 
@@ -109,6 +115,9 @@ class ArrayType(Type):
 @dataclass
 class PointerType(Type):
     type: Type
+
+    def can_explicit_convert(self, to: Type) -> bool:
+        return super().can_explicit_convert(to) or to == int_type or to == uint_type
 
 
 @dataclass
