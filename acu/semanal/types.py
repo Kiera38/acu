@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Iterable
 
-from acu.source import Location
+from acu.errors import CompilationError
+from acu.source import Location, Source
 
 if TYPE_CHECKING:
     from acu.semanal.ir import Inst
@@ -164,6 +165,7 @@ def unify_types(types: Iterable[Type]):
 class TypedFunc:
     func: Func
     type: FuncType
+    source: Source
     types: dict[Inst, TypeInfo] = field(default_factory=dict)
 
     def add_type(self, inst: Inst, type: Type, location: Location):
@@ -175,11 +177,11 @@ class TypedFunc:
             if type != info.type:
                 assert info.type is not None
                 if not type.can_convert(info.type):
-                    raise Exception("cannot convert type")
+                    raise CompilationError(location, f"cannot convert type {type} to {info.type}", self.source)
         else:
             unified = unify_types((info.type, type))
             if unified is None:
-                raise Exception("connot unify types")
+                raise CompilationError(location, f"cannot unify types {info.type} and {type}", self.source)
             info.type = unified
         return info.type
 

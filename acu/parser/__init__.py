@@ -1,8 +1,9 @@
 from typing import cast
 
-from acu.parser.nodes import *
+from acu.errors import CompilationError
 from acu.parser.lexer import TokenType, Token, Lexer
-from acu.parser.nodes import CallExpr, Module
+from acu.parser.nodes import *
+from acu.source import Source
 
 
 binary_op = {
@@ -52,10 +53,11 @@ assign_op = {
 
 
 class Parser:
-    def __init__(self, lexer: Lexer) -> None:
+    def __init__(self, lexer: Lexer, source: Source) -> None:
         self._lexer = lexer
         self._tokens: list[Token] = []
         self._current = 0
+        self._source = source
 
     def parse(self) -> Module:
         funcs = []
@@ -66,7 +68,8 @@ class Parser:
             elif self.match(TokenType.STRUCT):
                 structs.append(self.parse_struct())
             else:
-                raise Exception("Expected function or struct")
+                token = self.peek()
+                raise CompilationError(token.location, "Expected function or struct", self._source)
         return Module(funcs, structs)
 
     def peek(self, rel_pos: int = 0) -> Token:
@@ -97,7 +100,8 @@ class Parser:
     def expect(self, type: TokenType, message: str) -> Token:
         if self.check(type):
             return self.next()
-        raise Exception(message)
+        token = self.peek()
+        raise CompilationError(token.location, message, self._source)
 
     def parse_type(self) -> Expr:
         return self.parse_expr()
@@ -453,10 +457,10 @@ class Parser:
                     break
             return ArrayExpr(location, items)
 
-        raise Exception("expected expression")
+        raise CompilationError(self.peek().location, "expected expression", self._source)
 
 
-def parse(source: str) -> Module:
+def parse(source: Source) -> Module:
     lexer = Lexer(source)
-    parser = Parser(lexer)
+    parser = Parser(lexer, source)
     return parser.parse()

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
+from acu.errors import CompilationError
+from acu.source import Source
+
 from acu.semanal.ir import (
     AddressOf,
     Arg,
@@ -53,11 +56,12 @@ from acu.source import Location
 
 
 class TypeAnalyzer(InstVisitor[None]):
-    def __init__(self, func: Func) -> None:
+    def __init__(self, func: Func, source: Source) -> None:
         super().__init__()
-        self.func = TypedFunc(func, func.get_type())
+        self.func = TypedFunc(func, func.get_type(), source)
         self.refine_map: dict[Inst, Callable[[Type], None]] = {}
         self.first = True
+        self._source = source
 
     def lock_type(self, inst: Inst, type: Type, location: Location):
         self.func.lock_type(inst, type, location)
@@ -91,7 +95,7 @@ class TypeAnalyzer(InstVisitor[None]):
     def unify(self) -> TypedFunc:
         for inst in self.func.func.iter_code():
             if not self.func.defined(inst):
-                raise Exception(f"unknown type {inst}")
+                raise CompilationError(inst.location, f"unknown type {inst}", self._source)
         return self.func
 
     def get_state(self):
@@ -110,7 +114,7 @@ class TypeAnalyzer(InstVisitor[None]):
             case Struct():
                 self.lock_type(inst, StructType(inst.value), inst.location)
             case _:
-                raise Exception("unsupported literal")
+                raise CompilationError(inst.location, "unsupported literal", self._source)
 
     def load(self, inst: Load) -> None:
         self.copy_type(inst.var, inst, inst.location)
@@ -144,13 +148,13 @@ class TypeAnalyzer(InstVisitor[None]):
                 BinaryOp.MOD,
             ):
                 if not isinstance(type, (IntType, FloatType)):
-                    raise Exception("operation is not supported")
+                    raise CompilationError(inst.location, "operation is not supported", self._source)
             else:
                 if not isinstance(type, FloatType):
-                    raise Exception("operation is not supported")
+                    raise CompilationError(inst.location, "operation is not supported", self._source)
             self.add_type(inst, type, inst.location)
         else:
-            raise Exception("cannot unify types")
+            raise CompilationError(inst.location, "cannot unify types", self._source)
 
     def unary(self, inst: Unary) -> None:
         type = self.func.get_type(inst.value)

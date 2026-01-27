@@ -3,8 +3,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator
 
+from acu.errors import CompilationError
 from acu.parser import ExprVisitor, Location, StmtVisitor, nodes
 from acu.semanal import ir, types
+from acu.source import Source
 
 builtin_types = {
     "Nothing": types.nothing_type,
@@ -43,7 +45,8 @@ class Scope:
 
 
 class Context:
-    def __init__(self) -> None:
+    def __init__(self, source: Source) -> None:
+        self.source = source
         self.scopes: list[Scope] = []
         self.push_scope()
         self.blocks: list[ir.Block] = []
@@ -64,7 +67,7 @@ class Context:
         self.blocks[-1].code.append(inst)
         return inst
 
-    def find(self, name: str) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct:
+    def find(self, name: str, location: Location) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct:
         for scope in reversed(self.scopes):
             if var := scope.vars.get(name):
                 return var
@@ -72,7 +75,7 @@ class Context:
                 return func
             if struct := scope.structs.get(name):
                 return struct
-        raise Exception(f"name not found {name}")
+        raise CompilationError(location, f"name '{name}' not found", self.source)
 
     def add_var(self, var: ir.VarDecl | ir.Arg) -> None:
         self.scopes[-1].vars[var.name] = var
@@ -114,7 +117,7 @@ class TypeConverter(ExprVisitor[types.Type]):
     def name(self, expr: nodes.NameExpr) -> types.Type:
         if type := builtin_types.get(expr.name):
             return type
-        if struct := self.context.find(expr.name):
+        if struct := self.context.find(expr.name, expr.location):
             if not isinstance(struct, ir.Struct):
                 raise Exception("is not struct")
             return types.StructType(struct)
@@ -189,7 +192,7 @@ class ExprConverter(ExprVisitor[ir.Inst]):
         return block
 
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
-        var = self.context.find(expr.name)
+        var = self.context.find(expr.name, expr.location)
         if isinstance(var, (ir.Func, types.Struct)):
             return ir.Literal(expr.location, var)
         return ir.Load(expr.location, var)
@@ -274,7 +277,7 @@ class StoreConverter(ExprVisitor[ir.Inst]):
         return self.context.add(expr.accept(self))
 
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
-        var = self.context.find(expr.name)
+        var = self.context.find(expr.name, expr.location)
         if isinstance(var, (ir.Func, types.Struct)):
             raise Exception("func or struct in left of assign")
         return ir.Store(self.location, var, self.value)
@@ -453,8 +456,8 @@ def convert_func(
     return ir_func
 
 
-def convert_module(module: nodes.Module) -> ir.Module:
-    context = Context()
+def convert_module(module: nodes.Module, source: Source) -> ir.Module:
+    context = Context(source)
     for struct in module.structs:
         context.add_struct(struct.name, struct.location)
     for func in module.funcs:

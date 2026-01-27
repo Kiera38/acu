@@ -1,5 +1,8 @@
 from typing import List
 
+from acu.errors import CompilationError
+from acu.source import Source
+
 from acu.refanal.dataflow import analyze_must_defined_regs, get_cfg
 from acu.refanal.flow_graph_ir import (
     BasicBlock,
@@ -74,7 +77,7 @@ class RefAnalysisError(Exception):
     pass
 
 
-def analyze(fn: FuncIR) -> None:
+def analyze(fn: FuncIR, source: Source) -> None:
     """Perform reference analysis for fn.
 
     Checks performed:
@@ -102,9 +105,7 @@ def analyze(fn: FuncIR) -> None:
                     loc = getattr(op, "location", None) or getattr(
                         op.dest, "location", None
                     )
-                    errors.append(
-                        f"Assignment to already-initialized immutable 'let' variable '{op.dest.name}' at {loc}"
-                    )
+                    raise CompilationError(loc, f"Assignment to already-initialized immutable 'let' variable '{op.dest.name}'", source)
 
             # For every source that is a Register (non-trivial), ensure it is
             # possibly defined at this program point
@@ -114,9 +115,4 @@ def analyze(fn: FuncIR) -> None:
                         loc = getattr(op, "location", None) or getattr(
                             src, "location", None
                         )
-                        errors.append(
-                            f"Use of possibly uninitialized variable '{src.name}' at {loc}"
-                        )
-
-    if errors:
-        raise RefAnalysisError("\n".join(errors))
+                        raise CompilationError(loc, f"Use of possibly uninitialized variable '{src.name}'", source)

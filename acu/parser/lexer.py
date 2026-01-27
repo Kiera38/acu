@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from acu.source import Location
+from acu.source import Source, Location
 
 
 class TokenType(Enum):
@@ -153,8 +153,9 @@ class Position:
 
 
 class Lexer:
-    def __init__(self, source: str) -> None:
-        self.source = source
+    def __init__(self, source: Source) -> None:
+        self._source = source
+        self.source = source.text
         self._pos = Position(0, 1, 1)
         self._begin_of_line = True
         self._dedents = 0

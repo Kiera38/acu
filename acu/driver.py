@@ -3,6 +3,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from acu import codegen, parser, refanal, semanal
+from acu.errors import CompilationError
 from acu.source import Source
 
 
@@ -61,17 +62,21 @@ def parse_args():
 def main():
     args = parse_args()
     source = create_source(args.file)
-    ast = parser.parse(source.text)
-    ir, funcs = semanal.analyze(ast)
-    fg_ir = refanal.analyze(funcs)
-    codegen.emit_files(
-        fg_ir,
-        llvm_ir_path=args.llvm_ir,
-        llvm_bc_path=args.llvm_bc,
-        object_path=args.object,
-        asm_path=args.asm,
-        exe_path=args.exe,
-        static_lib_path=args.static_lib,
-        dynamic_lib_path=args.dynamic_lib,
-        opt=args.opt,
-    )
+    try:
+        ast = parser.parse(source)
+        ir, funcs = semanal.analyze(ast, source)
+        fg_ir = refanal.analyze(funcs, source)
+        codegen.emit_files(
+            fg_ir,
+            llvm_ir_path=args.llvm_ir,
+            llvm_bc_path=args.llvm_bc,
+            object_path=args.object,
+            asm_path=args.asm,
+            exe_path=args.exe,
+            static_lib_path=args.static_lib,
+            dynamic_lib_path=args.dynamic_lib,
+            opt=args.opt,
+        )
+    except CompilationError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)

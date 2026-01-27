@@ -1,11 +1,12 @@
 from acu.parser import nodes
 from acu.semanal.basic import convert_module
 from acu.semanal.typeanal import TypeAnalyzer
+from acu.source import Source
 
 
-def analyze(module: nodes.Module):
-    ir_module = convert_module(module)
-    funcs = [TypeAnalyzer(func) for func in ir_module.funcs]
+def analyze(module: nodes.Module, source: Source):
+    ir_module = convert_module(module, source)
+    funcs = [TypeAnalyzer(func, source) for func in ir_module.funcs]
     finished = []
     need_analyze = []
     while funcs:
