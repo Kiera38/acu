@@ -1,3 +1,4 @@
+from acu.errors import ErrorCollector
 from acu.refanal.build_ir import build_module
 from acu.refanal.copy_propagation import do_copy_propagation
 from acu.refanal.dataflow import cleanup_cfg
@@ -9,7 +10,9 @@ from acu.semanal.types import TypedFunc
 from acu.source import Source
 
 
-def analyze(funcs: list[TypedFunc], source: Source) -> list[FuncIR]:
+def analyze(
+    funcs: list[TypedFunc], source: Source, error_collector: ErrorCollector
+) -> list[FuncIR]:
     ir_funcs = build_module(funcs)
     for fn in ir_funcs:
         cleanup_cfg(fn.blocks)

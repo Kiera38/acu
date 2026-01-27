@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from acu import codegen, parser, refanal, semanal
-from acu.errors import CompilationError
+from acu.errors import CompilationError, ErrorCollector
 from acu.source import Source
 
 
@@ -62,10 +62,12 @@ def parse_args():
 def main():
     args = parse_args()
     source = create_source(args.file)
+    error_collector = ErrorCollector()
+
     try:
         ast = parser.parse(source)
-        ir, funcs = semanal.analyze(ast, source)
-        fg_ir = refanal.analyze(funcs, source)
+        ir, funcs = semanal.analyze(ast, source, error_collector)
+        fg_ir = refanal.analyze(funcs, source, error_collector)
         codegen.emit_files(
             fg_ir,
             llvm_ir_path=args.llvm_ir,
@@ -78,5 +80,9 @@ def main():
             opt=args.opt,
         )
     except CompilationError as e:
-        print(e, file=sys.stderr)
+        error_collector.add_error(e)
+
+    # Вывести все ошибки если они есть
+    if error_collector.has_errors():
+        error_collector.report_errors()
         sys.exit(1)

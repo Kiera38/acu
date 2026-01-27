@@ -1,10 +1,11 @@
+from acu.errors import ErrorCollector
 from acu.parser import nodes
 from acu.semanal.basic import convert_module
 from acu.semanal.typeanal import TypeAnalyzer
 from acu.source import Source
 
 
-def analyze(module: nodes.Module, source: Source):
+def analyze(module: nodes.Module, source: Source, error_collector: ErrorCollector):
     ir_module = convert_module(module, source)
     funcs = [TypeAnalyzer(func, source) for func in ir_module.funcs]
     finished = []

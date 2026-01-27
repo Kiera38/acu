@@ -1,9 +1,16 @@
 from __future__ import annotations
+
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator
 
-from acu.errors import CompilationError
+from acu.errors import (
+    CompilationError,
+    ErrorCollector,
+    NameError,
+    TypeError,
+    ValidationError,
+)
 from acu.parser import ExprVisitor, Location, StmtVisitor, nodes
 from acu.semanal import ir, types
 from acu.source import Source
@@ -27,11 +34,11 @@ builtin_types = {
 }
 
 
-def get_int_constant(expr: nodes.Expr) -> int:
+def get_int_constant(expr: nodes.Expr, source: Source) -> int:
     if not isinstance(expr, nodes.LiteralExpr):
-        raise Exception("must be a literal")
+        raise ValidationError(expr.location, "must be a literal", source)
     if not isinstance(expr.value, int):
-        raise Exception("not a int")
+        raise ValidationError(expr.location, "not a int", source)
     return expr.value
 
 
@@ -67,7 +74,9 @@ class Context:
         self.blocks[-1].code.append(inst)
         return inst
 
-    def find(self, name: str, location: Location) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct:
+    def find(
+        self, name: str, location: Location
+    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct:
         for scope in reversed(self.scopes):
             if var := scope.vars.get(name):
                 return var
@@ -75,7 +84,7 @@ class Context:
                 return func
             if struct := scope.structs.get(name):
                 return struct
-        raise CompilationError(location, f"name '{name}' not found", self.source)
+        raise NameError(location, f"name '{name}' not found", self.source)
 
     def add_var(self, var: ir.VarDecl | ir.Arg) -> None:
         self.scopes[-1].vars[var.name] = var
@@ -119,27 +128,27 @@ class TypeConverter(ExprVisitor[types.Type]):
             return type
         if struct := self.context.find(expr.name, expr.location):
             if not isinstance(struct, ir.Struct):
-                raise Exception("is not struct")
+                raise TypeError(expr.location, "is not struct", self.context.source)
             return types.StructType(struct)
-        raise Exception("unknown type")
+        raise TypeError(expr.location, "unknown type", self.context.source)
 
     def get_item(self, expr: nodes.GetItemExpr) -> ir.Type:
         if not isinstance(expr.value, nodes.NameExpr):
-            raise Exception("unknown type")
+            raise TypeError(expr.location, "unknown type", self.context.source)
 
         if expr.value.name == "Array":
             if len(expr.args) != 2:
-                raise Exception("unknown type")
+                raise TypeError(expr.location, "unknown type", self.context.source)
             type = expr.args[0].accept(self)
-            length = get_int_constant(expr.args[1])
+            length = get_int_constant(expr.args[1], self.context.source)
             return types.ArrayType(type, length)
 
         if expr.value.name == "Ptr":
             if len(expr.args) != 1:
-                raise Exception("unknown type")
+                raise TypeError(expr.location, "unknown type", self.context.source)
             return types.PointerType(expr.args[0].accept(self))
 
-        raise Exception("unknown type")
+        raise TypeError(expr.location, "unknown type", self.context.source)
 
 
 logical_op = {
@@ -241,7 +250,9 @@ class ExprConverter(ExprVisitor[ir.Inst]):
 
     def get_item(self, expr: nodes.GetItemExpr) -> ir.Inst:
         if len(expr.args) != 1:
-            raise Exception("unsupported get iitem")
+            raise ValidationError(
+                expr.location, "unsupported get item", self.context.source
+            )
         return ir.GetItem(
             expr.location, self.accept(expr.value), self.accept(expr.args[0])
         )
@@ -251,7 +262,7 @@ class ExprConverter(ExprVisitor[ir.Inst]):
 
     def array(self, expr: nodes.ArrayExpr) -> ir.Inst:
         return ir.Array(expr.location, [self.accept(item) for item in expr.items])
-    
+
     def as_expr(self, expr: nodes.AsExpr) -> ir.Inst:
         return ir.AsInst(
             expr.location,
@@ -271,7 +282,11 @@ class StoreConverter(ExprVisitor[ir.Inst]):
         self.location = location
 
     def expr(self, expr: nodes.Expr) -> ir.Inst:
-        raise Exception("no use this in left of assign")
+        raise ValidationError(
+            expr.location,
+            "cannot use this expression on the left side of assignment",
+            self.context.source,
+        )
 
     def accept(self, expr: nodes.Expr) -> ir.Inst:
         return self.context.add(expr.accept(self))
@@ -279,7 +294,11 @@ class StoreConverter(ExprVisitor[ir.Inst]):
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
         var = self.context.find(expr.name, expr.location)
         if isinstance(var, (ir.Func, types.Struct)):
-            raise Exception("func or struct in left of assign")
+            raise ValidationError(
+                expr.location,
+                "function or struct cannot be assigned to",
+                self.context.source,
+            )
         return ir.Store(self.location, var, self.value)
 
     def get_item(self, expr: nodes.GetItemExpr) -> ir.Inst:
@@ -381,7 +400,11 @@ class StmtConverter(StmtVisitor[None]):
 
     def return_stmt(self, stmt: nodes.ReturnStmt):
         if not self.context.in_function:
-            raise Exception("return not in function")
+            raise ValidationError(
+                stmt.location,
+                "'return' statement not inside function",
+                self.context.source,
+            )
         self.add(
             ir.Return(
                 stmt.location,
@@ -391,12 +414,18 @@ class StmtConverter(StmtVisitor[None]):
 
     def break_stmt(self, stmt: nodes.BreakStmt):
         if not self.context.in_loop:
-            raise Exception("break not in loop")
+            raise ValidationError(
+                stmt.location, "'break' statement not inside loop", self.context.source
+            )
         self.add(ir.Break(stmt.location))
 
     def continue_stmt(self, stmt: nodes.ContinueStmt):
         if not self.context.in_loop:
-            raise Exception("continue not in loop")
+            raise ValidationError(
+                stmt.location,
+                "'continue' statement not inside loop",
+                self.context.source,
+            )
         self.add(ir.Continue(stmt.location))
 
     def assign(self, stmt: nodes.AssignStmt):
@@ -451,7 +480,9 @@ def convert_func(
             if ir_func.return_type == types.nothing_type:
                 stmts.add(ir.Return(func.location, None))
             else:
-                raise Exception("missing return statement")
+                raise ValidationError(
+                    func.location, "missing return statement", context.source
+                )
     context.pop_scope()
     return ir_func
 
