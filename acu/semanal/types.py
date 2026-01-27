@@ -37,13 +37,19 @@ bool_type = BoolType()
 @dataclass
 class IntType(Type):
     size: int
+    signed: bool = True
 
     def can_convert(self, to: Type) -> bool:
         return (
             super().can_convert(to)
             or isinstance(to, FloatType)
-            or isinstance(to, IntType)
-            and to.size >= self.size
+            or (
+                isinstance(to, IntType)
+                and (
+                    (to.signed == self.signed and to.size >= self.size)
+                    or (not self.signed and to.signed and to.size > self.size)
+                )
+            )
             or isinstance(to, BoolType)
         )
 
@@ -53,6 +59,12 @@ int8_type = IntType(8)
 int16_type = IntType(16)
 int32_type = IntType(32)
 int64_type = IntType(64)
+
+uint_type = IntType(64, signed=False)
+uint8_type = IntType(8, signed=False)
+uint16_type = IntType(16, signed=False)
+uint32_type = IntType(32, signed=False)
+uint64_type = IntType(64, signed=False)
 
 
 @dataclass

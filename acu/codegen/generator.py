@@ -178,8 +178,12 @@ class LLVMGenerator(OpVisitor[llir.Value]):
         match op.type:
             case BoolType():
                 match op.obj.type:
-                    case IntType():
+                    case IntType(signed=True):
                         return self.builder.icmp_signed(
+                            "!=", self.value(op.obj), self.int_const(0, op.obj.type)
+                        )
+                    case IntType(signed=False):
+                        return self.builder.icmp_unsigned(
                             "!=", self.value(op.obj), self.int_const(0, op.obj.type)
                         )
                     case FloatType():
@@ -190,8 +194,12 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                         raise Exception("unknown convertion type")
             case FloatType(size=to_size):
                 match op.obj.type:
-                    case IntType():
+                    case IntType(signed=True):
                         return self.builder.sitofp(
+                            self.value(op.obj), self.type(op.type)
+                        )  # type: ignore
+                    case IntType(signed=False):
+                        return self.builder.uitofp(
                             self.value(op.obj), self.type(op.type)
                         )  # type: ignore
                     case FloatType(size=size):
@@ -205,15 +213,26 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                             )  # type: ignore
                     case _:
                         raise Exception("unknown conversion type")
-            case IntType(size=to_size):
+            case IntType(size=to_size, signed=True):
                 match op.obj.type:
                     case BoolType():
                         return self.builder.sext(self.value(op.obj), self.type(op.type))  # type: ignore
-                    case IntType(size=size):
+                    case IntType(size=size, signed=True):
                         if to_size > size:
                             return self.builder.sext(
                                 self.value(op.obj), self.type(op.type)
                             )  # type: ignore
+                        else:
+                            return self.builder.trunc(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                    case IntType(size=size, signed=False):
+                        if to_size > size:
+                            return self.builder.zext(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                        elif to_size == size:
+                            return self.value(op.obj)
                         else:
                             return self.builder.trunc(
                                 self.value(op.obj), self.type(op.type)
@@ -224,12 +243,42 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                         )  # type: ignore
                     case _:
                         raise Exception("unknown conversion type")
+            case IntType(size=to_size, signed=False):
+                match op.obj.type:
+                    case BoolType():
+                        return self.builder.zext(self.value(op.obj), self.type(op.type))  # type: ignore
+                    case IntType(size=size, signed=True):
+                        if to_size > size:
+                            return self.builder.sext(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                        elif to_size == size:
+                            return self.value(op.obj)
+                        else:
+                            return self.builder.trunc(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                    case IntType(size=size, signed=False):
+                        if to_size > size:
+                            return self.builder.zext(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                        else:
+                            return self.builder.trunc(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                    case FloatType():
+                        return self.builder.fptoui(
+                            self.value(op.obj), self.type(op.type)
+                        )  # type: ignore
+                    case _:
+                        raise Exception("unknown conversion type")
             case _:
                 raise Exception("Unknown conversion type")
 
     def binary(self, op: Binary) -> llir.Value:
         match op.type:
-            case IntType():
+            case IntType(signed=signed):
                 match op.op:
                     case BinaryOp.ADD:
                         return self.builder.add(
@@ -243,20 +292,32 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                         return self.builder.mul(
                             self.value(op.left), self.value(op.right)
                         )  # type: ignore
-                    case BinaryOp.DIV:
+                    case BinaryOp.DIV if signed:
                         return self.builder.sdiv(
                             self.value(op.left), self.value(op.right)
                         )  # type: ignore
-                    case BinaryOp.MOD:
+                    case BinaryOp.DIV if not signed:
+                        return self.builder.udiv(
+                            self.value(op.left), self.value(op.right)
+                        )  # type: ignore
+                    case BinaryOp.MOD if signed:
                         return self.builder.srem(
+                            self.value(op.left), self.value(op.right)
+                        )  # type: ignore
+                    case BinaryOp.MOD if not signed:
+                        return self.builder.urem(
                             self.value(op.left), self.value(op.right)
                         )  # type: ignore
                     case BinaryOp.LSHIFT:
                         return self.builder.shl(
                             self.value(op.left), self.value(op.right)
                         )  # type: ignore
-                    case BinaryOp.RSHIFT:
+                    case BinaryOp.RSHIFT if signed:
                         return self.builder.ashr(
+                            self.value(op.left), self.value(op.right)
+                        )  # type: ignore
+                    case BinaryOp.RSHIFT if not signed:
+                        return self.builder.lshr(
                             self.value(op.left), self.value(op.right)
                         )  # type: ignore
                     case BinaryOp.BIT_AND:
@@ -327,8 +388,12 @@ class LLVMGenerator(OpVisitor[llir.Value]):
         }[op.op]
 
         match op.left.type:
-            case BoolType() | IntType():
+            case BoolType() | IntType(signed=True):
                 return self.builder.icmp_signed(
+                    cmpop, self.value(op.left), self.value(op.right)
+                )
+            case IntType(signed=False):
+                return self.builder.icmp_unsigned(
                     cmpop, self.value(op.left), self.value(op.right)
                 )
             case FloatType():
