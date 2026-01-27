@@ -48,17 +48,21 @@ class LLVMGenerator(OpVisitor[llir.Value]):
         self.funcs: dict[FuncIR, llir.Function] = {}
         self.const_int_type = llir.IntType(32)
 
-    def int_const(self, value: int) -> llir.Value:
+    def int_const(self, value: int, type: IntType | None = None) -> llir.Value:
+        if type is not None:
+            return llir.IntType(type.size)(value)
         return self.const_int_type(value)
 
     def type(self, type: Type) -> llir.Type:
         match type:
             case BoolType():
                 return llir.IntType(1)
-            case FloatType():
+            case FloatType() if type.size == 64:
                 return llir.DoubleType()
-            case IntType():
-                return llir.IntType(64)
+            case FloatType() if type.size == 32:
+                return llir.FloatType()
+            case IntType(size=size):
+                return llir.IntType(size)
             case NothingType():
                 return llir.VoidType()
             case PointerType():
@@ -176,26 +180,44 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                 match op.obj.type:
                     case IntType():
                         return self.builder.icmp_signed(
-                            "!=", self.value(op.obj), self.int_const(0)
+                            "!=", self.value(op.obj), self.int_const(0, op.obj.type)
                         )
                     case FloatType():
                         return self.builder.fcmp_unordered(
-                            "!=", self.value(op.obj), llir.DoubleType()(0)
+                            "!=", self.value(op.obj), self.type(op.obj.type)(0.0)
                         )
                     case _:
                         raise Exception("unknown convertion type")
-            case FloatType():
+            case FloatType(size=to_size):
                 match op.obj.type:
-                    case IntType() | FloatType():
+                    case IntType():
                         return self.builder.sitofp(
                             self.value(op.obj), self.type(op.type)
                         )  # type: ignore
+                    case FloatType(size=size):
+                        if to_size > size:
+                            return self.builder.fpext(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                        else:
+                            return self.builder.fptrunc(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
                     case _:
                         raise Exception("unknown conversion type")
-            case IntType():
+            case IntType(size=to_size):
                 match op.obj.type:
                     case BoolType():
                         return self.builder.sext(self.value(op.obj), self.type(op.type))  # type: ignore
+                    case IntType(size=size):
+                        if to_size > size:
+                            return self.builder.sext(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
+                        else:
+                            return self.builder.trunc(
+                                self.value(op.obj), self.type(op.type)
+                            )  # type: ignore
                     case FloatType():
                         return self.builder.fptosi(
                             self.value(op.obj), self.type(op.type)

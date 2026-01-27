@@ -10,7 +10,13 @@ builtin_types = {
     "Nothing": types.nothing_type,
     "Bool": types.bool_type,
     "Int": types.int_type,
+    "Int8": types.int8_type,
+    "Int16": types.int16_type,
+    "Int32": types.int32_type,
+    "Int64": types.int64_type,
     "Float": types.float_type,
+    "Float32": types.float32_type,
+    "Float64": types.float64_type,
 }
 
 

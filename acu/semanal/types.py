@@ -49,6 +49,10 @@ class IntType(Type):
 
 
 int_type = IntType(64)
+int8_type = IntType(8)
+int16_type = IntType(16)
+int32_type = IntType(32)
+int64_type = IntType(64)
 
 
 @dataclass
@@ -65,6 +69,8 @@ class FloatType(Type):
 
 
 float_type = FloatType(64)
+float32_type = FloatType(32)
+float64_type = FloatType(64)
 
 
 @dataclass
