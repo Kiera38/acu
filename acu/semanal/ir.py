@@ -6,7 +6,6 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, cast
 
 from acu.parser import Location
-
 from acu.semanal.types import FuncType, Struct, StructField, Type
 
 
@@ -79,7 +78,7 @@ class InstVisitor[T]:
 
     def array(self, inst: Array) -> T:
         return self.inst(inst)
-    
+
     def as_inst(self, inst: AsInst) -> T:
         return self.inst(inst)
 
@@ -327,7 +326,7 @@ class Array(Inst):
 
     def accept[T](self, visitor: InstVisitor[T]) -> T:
         return visitor.array(self)
-    
+
 
 @dataclass(eq=False)
 class AsInst(Inst):
@@ -344,6 +343,7 @@ class Func:
     arg_count: int
     return_type: Type
     code: Block
+    location: Location
 
     def get_type(self):
         arg_types = []

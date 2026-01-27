@@ -1,4 +1,4 @@
-from acu.errors import ErrorCollector
+from acu.errors import CompilationError, ErrorCollector, ValidationError
 from acu.refanal.build_ir import build_module
 from acu.refanal.copy_propagation import do_copy_propagation
 from acu.refanal.dataflow import cleanup_cfg
@@ -15,9 +15,25 @@ def analyze(
 ) -> list[FuncIR]:
     ir_funcs = build_module(funcs)
     for fn in ir_funcs:
-        cleanup_cfg(fn.blocks)
-        ref_spec_analyze(fn, source)
-        do_copy_propagation(fn)
-        # do_flag_elimination(fn)
-        lower_refs(fn)
+        try:
+            cleanup_cfg(fn.blocks)
+            ref_spec_analyze(fn, source)
+            do_copy_propagation(fn)
+            # do_flag_elimination(fn)
+            lower_refs(fn)
+        except Exception as e:
+            # Если возникает ошибка, которая не является CompilationError,
+            # но которую мы хотим обработать, мы можем создать соответствующую ошибку
+            if isinstance(e, CompilationError):
+                error_collector.add_error(e)
+            else:
+                # Для других типов ошибок можно создать общую ошибку компиляции
+                # Используем местоположение функции, если оно доступно
+                error_collector.add_error(
+                    ValidationError(
+                        fn.location,  # Используем местоположение из FuncIR
+                        f"Error during reference analysis of function '{fn.name}': {str(e)}",
+                        source,
+                    )
+                )
     return ir_funcs

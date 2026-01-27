@@ -96,8 +96,10 @@ class Context:
     def get_struct(self, name: str) -> types.Struct:
         return self.scopes[-1].structs[name]
 
-    def add_func(self, name: str) -> ir.Func:
-        f = self.scopes[-1].funcs[name] = ir.Func(name, 0, types.Type(), ir.Block([]))
+    def add_func(self, name: str, location: Location) -> ir.Func:
+        f = self.scopes[-1].funcs[name] = ir.Func(
+            name, 0, types.Type(), ir.Block([]), location
+        )
         return f
 
     def get_func(self, name: str) -> ir.Func:
@@ -492,7 +494,7 @@ def convert_module(module: nodes.Module, source: Source) -> ir.Module:
     for struct in module.structs:
         context.add_struct(struct.name, struct.location)
     for func in module.funcs:
-        context.add_func(func.name)
+        context.add_func(func.name, func.location)
 
     types = TypeConverter(context)
     exprs = ExprConverter(types, context)

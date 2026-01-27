@@ -11,10 +11,10 @@ from acu.semanal.types import (
     PointerType,
     Struct,
     Type,
-    nothing_type,
     bool_type,
-    int_type,
     float_type,
+    int_type,
+    nothing_type,
 )
 from acu.source import Location
 
@@ -68,7 +68,7 @@ class Register(Value):
 
     def __repr__(self):
         return f"<Register {self.name!r} at {hex(id(self))}>"
-    
+
 
 class Boolean(Value):
     def __init__(self, location: Location, value: bool):
@@ -236,7 +236,7 @@ class Call(RegisterOp):
     def __init__(self, location: Location, fn: FuncIR, args: Sequence[Value]):
         super().__init__(location)
         self.fn = fn
-        #assert len(args) == len(fn.args), f"expected {len(fn.args)} args, got {len(args)} in call to {fn.name}"
+        # assert len(args) == len(fn.args), f"expected {len(fn.args)} args, got {len(args)} in call to {fn.name}"
         self.args = list(args)
         self.type = fn.return_type
         self.specifier = Specifier.VAL
@@ -566,6 +566,7 @@ class GetFieldPtr(RegisterOp):
 
 @dataclass(eq=False)
 class FuncIR:
+    location: Location
     name: str
     args: list[Register]
     blocks: list[BasicBlock]

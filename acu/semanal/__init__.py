@@ -1,4 +1,4 @@
-from acu.errors import ErrorCollector
+from acu.errors import CompilationError, ErrorCollector
 from acu.parser import nodes
 from acu.semanal.basic import convert_module
 from acu.semanal.typeanal import TypeAnalyzer
@@ -18,4 +18,12 @@ def analyze(module: nodes.Module, source: Source, error_collector: ErrorCollecto
                 finished.append(func)
         funcs = need_analyze
         need_analyze = []
-    return ir_module, [func.unify() for func in finished]
+
+    typed_funcs = []
+    for func in finished:
+        try:
+            typed_funcs.append(func.unify())
+        except CompilationError as e:
+            error_collector.add_error(e)
+
+    return ir_module, typed_funcs

@@ -330,13 +330,13 @@ class IRBuilder(ir.InstVisitor[Value]):
                     inst.location, [self.value(a) for a in inst.args], fn_inst.value
                 )
             )
-        assert isinstance(
-            fn_inst.value, ir.Func
-        ), "Function call target must be a function"
+        assert isinstance(fn_inst.value, ir.Func), (
+            "Function call target must be a function"
+        )
         fn = self.func_map.get(fn_inst.value.name)
-        assert (
-            fn is not None
-        ), f"Function {getattr(fn_inst, 'name', None)} not found in func_map"
+        assert fn is not None, (
+            f"Function {getattr(fn_inst, 'name', None)} not found in func_map"
+        )
         args_vals = [self.value(a) for a in inst.args]
         op = Call(location=inst.location, fn=fn, args=args_vals)
         return self.add(op)
@@ -487,7 +487,7 @@ class IRBuilder(ir.InstVisitor[Value]):
         body_b, _ = self.loop_stack[-1]
         self.add(Goto(location=inst.location, label=body_b))
         return Undef(type=self.type(inst))
-    
+
     def as_inst(self, inst: ir.AsInst):
         value = self.value(inst.value)
         # ensure value can be explicitly converted to target type
@@ -523,7 +523,9 @@ def build_module(funcs: list[TypedFunc]) -> list[FuncIR]:
 
     # First pass: create stubs
     for func in funcs:
-        stub = FuncIR(name=func.func.name, args=[], blocks=[])
+        stub = FuncIR(
+            name=func.func.name, args=[], blocks=[], location=func.func.location
+        )
         func_map[func.func.name] = stub
 
     # Second pass: build each function with resolved call targets
