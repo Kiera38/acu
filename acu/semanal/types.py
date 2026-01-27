@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 class Type:
     def can_convert(self, to: Type) -> bool:
         return self == to
+    
+    def can_explicit_convert(self, to: Type) -> bool:
+        return self.can_convert(to)
 
 
 @dataclass
@@ -52,6 +55,9 @@ class IntType(Type):
             )
             or isinstance(to, BoolType)
         )
+    
+    def can_explicit_convert(self, to: Type) -> bool:
+        return self.can_convert(to) or isinstance(to, IntType)
 
 
 int_type = IntType(64)
@@ -78,6 +84,9 @@ class FloatType(Type):
             and to.size >= self.size
             or isinstance(to, BoolType)
         )
+    
+    def can_explicit_convert(self, to: Type) -> bool:
+        return self.can_convert(to) or isinstance(to, IntType)
 
 
 float_type = FloatType(64)

@@ -36,6 +36,9 @@ class ExprVisitor[T]:
 
     def array(self, expr: ArrayExpr) -> T:
         return self.expr(expr)
+    
+    def as_expr(self, expr: AsExpr) -> T:
+        return self.expr(expr)
 
 
 @trait
@@ -224,6 +227,15 @@ class ArrayExpr(Expr):
 
     def accept[T](self, visitor: ExprVisitor[T]) -> T:
         return visitor.array(self)
+    
+
+@dataclass
+class AsExpr(Expr):
+    value: Expr
+    type: Expr
+
+    def accept[T](self, visitor: ExprVisitor[T]) -> T:
+        return visitor.as_expr(self)
 
 
 @dataclass

@@ -6,6 +6,7 @@ from acu.semanal.ir import (
     AddressOf,
     Arg,
     Array,
+    AsInst,
     Binary,
     BinaryOp,
     Block,
@@ -349,3 +350,12 @@ class TypeAnalyzer(InstVisitor[None]):
             self.add_type(inst, field.type, inst.location)
         else:
             raise Exception("field not found")
+    
+    def as_inst(self, inst: AsInst) -> None:
+        value_type = self.func.get_type(inst.value)
+        if not value_type:
+            return
+        if not value_type.can_explicit_convert(inst.type):
+            raise Exception("cannot convert type")
+        self.add_type(inst, inst.type, inst.location)
+

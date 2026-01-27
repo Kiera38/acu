@@ -344,6 +344,10 @@ class Parser:
                         TokenType.IDENTIFIER, "expectde attribute name after '.'"
                     )
                     expr = GetAttrExpr(name.location, expr, cast(str, name.value))
+                case TokenType.AS:
+                    self.next()
+                    type = self.parse_type()
+                    expr = AsExpr(type.location, expr, type)
                 case _:
                     break
         return expr

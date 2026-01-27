@@ -274,7 +274,7 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                     case _:
                         raise Exception("unknown conversion type")
             case _:
-                raise Exception("Unknown conversion type")
+                raise Exception(f"Unknown conversion type {op.type}")
 
     def binary(self, op: Binary) -> llir.Value:
         match op.type:

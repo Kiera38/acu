@@ -98,18 +98,11 @@ class IRBuilder(ir.InstVisitor[Value]):
         return t1
 
     def ensure_type(self, val: Value, to_type: Type, location):
-        if val is None:
-            return val
         if val.type == to_type:
             return val
-        try:
-            can = val.type.can_convert(to_type)
-        except Exception:
-            can = False
-        if can:
-            cast = Cast(location=location, type=to_type, obj=val)
-            return self.add(cast)
-        return val
+
+        cast = Cast(location=location, type=to_type, obj=val)
+        return self.add(cast)
 
     def literal(self, inst: ir.Literal):
         v = inst.value
@@ -429,10 +422,10 @@ class IRBuilder(ir.InstVisitor[Value]):
 
     def return_inst(self, inst: ir.Return):
         if inst.value is None:
-            val = Undef(type=self.type(inst))
+            val = Undef(type=self.func.type.return_type)
         else:
             val = self.value(inst.value)
-            val = self.ensure_type(val, self.type(inst), inst.location)
+            val = self.ensure_type(val, self.func.type.return_type, inst.location)
         op = Return(location=inst.location, value=val)
         self.current.ops.append(op)
         return val  # Return the value so caller knows it's assigned
@@ -491,6 +484,12 @@ class IRBuilder(ir.InstVisitor[Value]):
         body_b, _ = self.loop_stack[-1]
         self.add(Goto(location=inst.location, label=body_b))
         return Undef(type=self.type(inst))
+    
+    def as_inst(self, inst: ir.AsInst):
+        value = self.value(inst.value)
+        # ensure value can be explicitly converted to target type
+        value = self.ensure_type(value, inst.type, inst.location)
+        return value
 
     def inst(self, inst: ir.Inst):
         if inst not in self.value_map:

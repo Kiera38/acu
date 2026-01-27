@@ -248,6 +248,13 @@ class ExprConverter(ExprVisitor[ir.Inst]):
 
     def array(self, expr: nodes.ArrayExpr) -> ir.Inst:
         return ir.Array(expr.location, [self.accept(item) for item in expr.items])
+    
+    def as_expr(self, expr: nodes.AsExpr) -> ir.Inst:
+        return ir.AsInst(
+            expr.location,
+            self.accept(expr.value),
+            expr.type.accept(self.types),
+        )
 
 
 class StoreConverter(ExprVisitor[ir.Inst]):

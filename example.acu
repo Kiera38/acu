@@ -1,6 +1,7 @@
 func main() Int:
     var a = [10, 100, 30, 7]
     bubble_sort(a)
+    var b = 10 as UInt
     return 0
 
 

@@ -79,6 +79,9 @@ class InstVisitor[T]:
 
     def array(self, inst: Array) -> T:
         return self.inst(inst)
+    
+    def as_inst(self, inst: AsInst) -> T:
+        return self.inst(inst)
 
 
 @dataclass(eq=False)
@@ -324,6 +327,15 @@ class Array(Inst):
 
     def accept[T](self, visitor: InstVisitor[T]) -> T:
         return visitor.array(self)
+    
+
+@dataclass(eq=False)
+class AsInst(Inst):
+    value: Inst
+    type: Type
+
+    def accept[T](self, visitor: InstVisitor[T]) -> T:
+        return visitor.as_inst(self)
 
 
 @dataclass(eq=False)
