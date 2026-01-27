@@ -117,7 +117,7 @@ class Expr(Node):
 
 @dataclass
 class LiteralExpr(Expr):
-    value: int | float | str
+    value: bool | int | float | str
     is_char = False
 
     def accept[T](self, visitor: ExprVisitor[T]) -> T:

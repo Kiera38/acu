@@ -2,6 +2,7 @@ from acu.refanal.flow_graph_ir import (
     Array,
     BasicBlock,
     Binary,
+    Boolean,
     Branch,
     Call,
     Cast,
@@ -106,6 +107,8 @@ class IRBuilder(ir.InstVisitor[Value]):
 
     def literal(self, inst: ir.Literal):
         v = inst.value
+        if isinstance(v, bool):
+            val = Boolean(location=inst.location, value=v)
         if isinstance(v, int):
             val = Integer(location=inst.location, value=v)
         elif isinstance(v, float):
@@ -186,7 +189,7 @@ class IRBuilder(ir.InstVisitor[Value]):
                 Store(
                     location=inst.location,
                     dest=res_reg,
-                    src=Integer(location=inst.location, value=0),
+                    src=Boolean(location=inst.location, value=False),
                 )
             )
             false_b.ops.append(Goto(location=inst.location, label=join_b))

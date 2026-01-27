@@ -18,6 +18,8 @@ class TokenType(Enum):
     BREAK = auto()
     CONTINUE = auto()
     AS = auto()
+    TRUE = auto()
+    FALSE = auto()
 
     PLUS = auto()
     MINUS = auto()
@@ -97,6 +99,8 @@ keywords = {
     "break": TokenType.BREAK,
     "continue": TokenType.CONTINUE,
     "as": TokenType.AS,
+    "true": TokenType.TRUE,
+    "false": TokenType.FALSE,
 }
 
 escaped_char = {"n": "\n", "t": "\t", "0": "\0", "'": "'", "\\": "\\"}

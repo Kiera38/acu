@@ -99,7 +99,7 @@ class Block:
 
 @dataclass(eq=False)
 class Literal(Inst):
-    value: int | float | str | Func | Struct
+    value: bool | int | float | str | Func | Struct
 
     def accept[T](self, visitor: InstVisitor[T]) -> T:
         return visitor.literal(self)

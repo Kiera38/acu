@@ -427,6 +427,12 @@ class Parser:
         ):
             token = self.next()
             return LiteralExpr(token.location, cast(str | int | float, token.value))
+        if self.match(TokenType.TRUE):
+            token = self.peek(-1)
+            return LiteralExpr(token.location, True)
+        if self.match(TokenType.FALSE):
+            token = self.peek(-1)
+            return LiteralExpr(token.location, False)
 
         if self.match(TokenType.IDENTIFIER):
             token = self.peek(-1)

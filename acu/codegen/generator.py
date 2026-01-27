@@ -4,6 +4,7 @@ from acu.refanal.flow_graph_ir import (
     Array,
     BasicBlock,
     Binary,
+    Boolean,
     Branch,
     Call,
     Cast,
@@ -112,7 +113,7 @@ class LLVMGenerator(OpVisitor[llir.Value]):
             if isinstance(value, Register):
                 return self.builder.load(ll_value)
             return ll_value
-        if isinstance(value, (Integer, Float)):
+        if isinstance(value, (Boolean, Integer, Float)):
             ll_value = self.type(value.type)(value.value)
         elif isinstance(value, Register):
             ll_value = self.builder.alloca(self.type(value.type))

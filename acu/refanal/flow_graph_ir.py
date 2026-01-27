@@ -68,6 +68,14 @@ class Register(Value):
 
     def __repr__(self):
         return f"<Register {self.name!r} at {hex(id(self))}>"
+    
+
+class Boolean(Value):
+    def __init__(self, location: Location, value: bool):
+        self.value = value
+        self.location = location
+        self.type = bool_type
+        self.specifier = Specifier.VAL
 
 
 class Integer(Value):
