@@ -99,9 +99,6 @@ class Package:
         llvm_bc_path: str | None = None,
         object_path: str | None = None,
         asm_path: str | None = None,
-        exe_path: str | None = None,
-        static_lib_path: str | None = None,
-        dynamic_lib_path: str | None = None,
         opt: int = 0,
     ) -> None:
         codegen.emit_files(
@@ -110,8 +107,5 @@ class Package:
             llvm_bc_path,
             object_path,
             asm_path,
-            exe_path,
-            static_lib_path,
-            dynamic_lib_path,
             opt,
         )

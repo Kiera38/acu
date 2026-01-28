@@ -84,9 +84,6 @@ def main():
                 llvm_bc_path=args.llvm_bc,
                 object_path=args.object,
                 asm_path=args.asm,
-                exe_path=args.exe,
-                static_lib_path=args.static_lib,
-                dynamic_lib_path=args.dynamic_lib,
                 opt=args.opt,
             )
         else:
@@ -101,10 +98,17 @@ def main():
                 llvm_bc_path=args.llvm_bc,
                 object_path=args.object,
                 asm_path=args.asm,
+                opt=args.opt,
+            )
+        if args.exe or args.static_lib or args.dynamic_lib and not args.object:
+            args.object = str(
+                path.with_suffix(".obj" if sys.platform == "win32" else ".o")
+            )
+            codegen.link(
+                [args.object],
                 exe_path=args.exe,
                 static_lib_path=args.static_lib,
                 dynamic_lib_path=args.dynamic_lib,
-                opt=args.opt,
             )
     except CompilationError as e:
         error_collector.add_error(e)

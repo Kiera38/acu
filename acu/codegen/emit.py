@@ -53,18 +53,7 @@ def emit_bc(ll_module: llvm.ModuleRef, path: str):
         f.write(ll_module.as_bitcode())
 
 
-def emit_exe(
-    ll_module: llvm.ModuleRef,
-    tm: llvm.TargetMachine,
-    path: str,
-    object_path: str | None = None,
-):
-    if object_path is None:
-        object_path = str(
-            Path(path).with_suffix(".obj" if sys.platform == "win32" else ".o")
-        )
-        emit_object(ll_module, tm, object_path)
-
+def link_exe(path: str, object_paths: list[str]):
     import setuptools
 
     _ = setuptools
@@ -73,56 +62,33 @@ def emit_exe(
     compiler = new_compiler()
     output = Path(path)
     compiler.link_executable(
-        [object_path],
-        output.with_suffix("").name,
+        object_paths,
+        output.name,
         str(output.parent),
         extra_postargs=["-defaultlib:libcmt", "-defaultlib:oldnames"],
     )
 
 
-def emit_static_lib(
-    ll_module: llvm.ModuleRef,
-    tm: llvm.TargetMachine,
-    path: str,
-    object_path: str | None = None,
-):
-    if object_path is None:
-        object_path = str(
-            Path(path).with_suffix("obj" if sys.platform == "win32" else "o")
-        )
-        emit_object(ll_module, tm, object_path)
-
+def link_static_lib(path: str, object_paths: list[str]):
     import setuptools
 
     _ = setuptools
     from distutils.ccompiler import new_compiler
 
     compiler = new_compiler()
-    compiler.create_static_lib([object_path], path)
+    output = Path(path)
+    compiler.create_static_lib(object_paths, output.name, str(output.parent))
 
 
-def emit_dynamic_lib(
-    ll_module: llvm.ModuleRef,
-    tm: llvm.TargetMachine,
-    path: str,
-    object_path: str | None = None,
-):
-    if object_path is None:
-        object_path = str(
-            Path(path).with_suffix("obj" if sys.platform == "win32" else "o")
-        )
-        emit_object(ll_module, tm, object_path)
-
+def link_dynamic_lib(path: str, object_paths: list[str]):
     import setuptools
 
     _ = setuptools
     from distutils.ccompiler import new_compiler
 
     compiler = new_compiler()
-    compiler.link_shared_lib([object_path], path)
-
-
-emit_shared_lib = emit_dynamic_lib
+    output = Path(path)
+    compiler.link_shared_lib(object_paths, output.name, str(output.parent))
 
 
 def emit(
@@ -132,9 +98,6 @@ def emit(
     llvm_bc_path: str | None = None,
     object_path: str | None = None,
     asm_path: str | None = None,
-    exe_path: str | None = None,
-    static_lib_path: str | None = None,
-    dynamic_lib_path: str | None = None,
 ):
     if llvm_ir_path is not None:
         emit_ir(ll_module, llvm_ir_path)
@@ -144,9 +107,3 @@ def emit(
         emit_object(ll_module, tm, object_path)
     if asm_path is not None:
         emit_asm(ll_module, tm, asm_path)
-    if exe_path is not None:
-        emit_exe(ll_module, tm, exe_path, object_path)
-    if static_lib_path is not None:
-        emit_static_lib(ll_module, tm, static_lib_path, object_path)
-    if dynamic_lib_path is not None:
-        emit_dynamic_lib(ll_module, tm, dynamic_lib_path, object_path)
