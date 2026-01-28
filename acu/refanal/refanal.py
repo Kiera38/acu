@@ -77,7 +77,7 @@ class RefAnalysisError(Exception):
     pass
 
 
-def analyze(fn: FuncIR, source: Source) -> None:
+def analyze(fn: FuncIR) -> None:
     """Perform reference analysis for fn.
 
     Checks performed:
@@ -102,13 +102,10 @@ def analyze(fn: FuncIR, source: Source) -> None:
             # Disallow assigning to LET (immutable) registers that are already initialized.
             if isinstance(op, Store) and isinstance(op.dest, Register):
                 if op.dest.specifier == Specifier.LET and op.dest in before:
-                    loc = getattr(op, "location", None) or getattr(
-                        op.dest, "location", None
-                    )
                     raise CompilationError(
-                        loc,
+                        op.location,
                         f"Assignment to already-initialized immutable 'let' variable '{op.dest.name}'",
-                        source,
+                        fn.source,
                         helps=[Note("Variables declared with 'let' cannot be reassigned")]
                     )
 
@@ -117,12 +114,9 @@ def analyze(fn: FuncIR, source: Source) -> None:
             for src in op.sources():
                 if isinstance(src, Register):
                     if src not in before:
-                        loc = getattr(op, "location", None) or getattr(
-                            src, "location", None
-                        )
                         raise CompilationError(
-                            loc,
+                            op.location,
                             f"Use of possibly uninitialized variable '{src.name}'",
-                            source,
+                            fn.source,
                             helps=[Note(f"Make sure '{src.name}' is assigned a value before being used")]
                         )

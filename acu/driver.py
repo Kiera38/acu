@@ -4,12 +4,18 @@ from pathlib import Path
 
 from acu import codegen, parser, refanal, semanal
 from acu.errors import CompilationError, ErrorCollector
+from acu.package import Package
 from acu.source import Source
 
 
 def create_source(file: str):
     path = Path(file)
     return Source(path.name, file, path.read_text())
+
+
+def is_package_path(path: Path) -> bool:
+    """Проверяет, является ли путь папкой пакета (содержит .acu файлы)"""
+    return path.is_dir() and bool(list(path.glob("*.acu")))
 
 
 def parse_args():
@@ -61,24 +67,45 @@ def parse_args():
 
 def main():
     args = parse_args()
-    source = create_source(args.file)
     error_collector = ErrorCollector()
-
+    
+    path = Path(args.file)
+    
     try:
-        ast = parser.parse(source)
-        ir, funcs = semanal.analyze(ast, source, error_collector)
-        fg_ir = refanal.analyze(funcs, source, error_collector)
-        codegen.emit_files(
-            fg_ir,
-            llvm_ir_path=args.llvm_ir,
-            llvm_bc_path=args.llvm_bc,
-            object_path=args.object,
-            asm_path=args.asm,
-            exe_path=args.exe,
-            static_lib_path=args.static_lib,
-            dynamic_lib_path=args.dynamic_lib,
-            opt=args.opt,
-        )
+        # Проверяем, является ли это пакетом (папкой с .acu файлами) или одиночным файлом
+        if is_package_path(path):
+            # Компиляция пакета
+            package = Package(path)
+            package.load_modules()
+            package.semanal(error_collector)
+            package.refanal(error_collector)
+            package.codegen(
+                llvm_ir_path=args.llvm_ir,
+                llvm_bc_path=args.llvm_bc,
+                object_path=args.object,
+                asm_path=args.asm,
+                exe_path=args.exe,
+                static_lib_path=args.static_lib,
+                dynamic_lib_path=args.dynamic_lib,
+                opt=args.opt,
+            )
+        else:
+            # Компиляция одного файла (старый режим)
+            source = create_source(args.file)
+            ast = parser.parse(source)
+            ir, funcs = semanal.analyze([(ast, source)], error_collector)
+            fg_ir = refanal.analyze(funcs, error_collector)
+            codegen.emit_files(
+                fg_ir,
+                llvm_ir_path=args.llvm_ir,
+                llvm_bc_path=args.llvm_bc,
+                object_path=args.object,
+                asm_path=args.asm,
+                exe_path=args.exe,
+                static_lib_path=args.static_lib,
+                dynamic_lib_path=args.dynamic_lib,
+                opt=args.opt,
+            )
     except CompilationError as e:
         error_collector.add_error(e)
 

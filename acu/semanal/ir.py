@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from acu.parser import Location
 from acu.semanal.types import FuncType, Struct, StructField, Type
@@ -98,7 +98,7 @@ class Block:
 
 @dataclass(eq=False)
 class Literal(Inst):
-    value: bool | int | float | str | Func | Struct
+    value: bool | int | float | str | Func | Struct | Any
 
     def accept[T](self, visitor: InstVisitor[T]) -> T:
         return visitor.literal(self)
@@ -344,6 +344,7 @@ class Func:
     return_type: Type
     code: Block
     location: Location
+    module_name: str = "main"  # Имя модуля, из которого функция
 
     def get_type(self):
         arg_types = []

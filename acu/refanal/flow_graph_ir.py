@@ -16,7 +16,7 @@ from acu.semanal.types import (
     int_type,
     nothing_type,
 )
-from acu.source import Location
+from acu.source import Location, Source
 
 
 @dataclass(eq=False)
@@ -567,6 +567,7 @@ class GetFieldPtr(RegisterOp):
 @dataclass(eq=False)
 class FuncIR:
     location: Location
+    source: Source
     name: str
     args: list[Register]
     blocks: list[BasicBlock]

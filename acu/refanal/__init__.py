@@ -11,13 +11,14 @@ from acu.source import Source
 
 
 def analyze(
-    funcs: list[TypedFunc], source: Source, error_collector: ErrorCollector
+    funcs: list[TypedFunc], error_collector: ErrorCollector
 ) -> list[FuncIR]:
+    
     ir_funcs = build_module(funcs)
     for fn in ir_funcs:
         try:
             cleanup_cfg(fn.blocks)
-            ref_spec_analyze(fn, source)
+            ref_spec_analyze(fn)
             do_copy_propagation(fn)
             # do_flag_elimination(fn)
             lower_refs(fn)
@@ -33,7 +34,7 @@ def analyze(
                     CompilationError(
                         fn.location,  # Используем местоположение из FuncIR
                         f"Error during reference analysis of function '{fn.name}': {str(e)}",
-                        source,
+                        fn.source,
                     )
                 )
     return ir_funcs

@@ -59,8 +59,18 @@ class Parser:
         self._source = source
 
     def parse(self) -> Module:
+        imports: list[UseStmt | FromUseStmt] = []
         funcs = []
         structs = []
+        
+        # Сначала парсим импорты (они должны быть в начале)
+        while self.check(TokenType.USING) or self.check(TokenType.FROM):
+            if self.match(TokenType.USING):
+                imports.append(self.parse_use_stmt())
+            elif self.match(TokenType.FROM):
+                imports.append(self.parse_from_use_stmt())
+        
+        # Затем парсим функции и структуры
         while not self.at_end():
             if self.match(TokenType.FUNC):
                 funcs.append(self.parse_function())
@@ -71,7 +81,7 @@ class Parser:
                 raise CompilationError(
                     token.location, "Expected function or struct", self._source
                 )
-        return Module(funcs, structs)
+        return Module(imports, funcs, structs)
 
     def peek(self, rel_pos: int = 0) -> Token:
         pos = self._current + rel_pos
@@ -111,6 +121,42 @@ class Parser:
 
     def parse_type(self) -> Expr:
         return self.parse_expr()
+
+    def parse_use_stmt(self) -> UseStmt:
+        """using module_name"""
+        location = self.peek(-1).location  # 'using' token location
+        module_name_token = self.expect(TokenType.IDENTIFIER, "Expected module name after 'using'")
+        module_name = cast(str, module_name_token.value)
+        self.expect(TokenType.NEW_LINE, "Expected newline after import statement")
+        return UseStmt(location, module_name)
+
+    def parse_from_use_stmt(self) -> FromUseStmt:
+        """from module_name using name1, name2"""
+        location = self.peek(-1).location  # 'from' token location
+        module_name_token = self.expect(TokenType.IDENTIFIER, "Expected module name after 'from'")
+        module_name = cast(str, module_name_token.value)
+        self.expect(TokenType.USING, "Expected 'using' after module name")
+        
+        items: list[UseItem] = []
+        need_rparen = self.match(TokenType.LPAREN)
+        while True:
+            name_token = self.expect(TokenType.IDENTIFIER, "Expected identifier in import list")
+            name = cast(str, name_token.value)
+            alias = None
+            
+            # Проверяем наличие 'as' для альяса
+            if self.match(TokenType.AS):
+                alias_token = self.expect(TokenType.IDENTIFIER, "Expected alias name after 'as'")
+                alias = cast(str, alias_token.value)
+            
+            items.append(UseItem(name_token.location, name, alias))
+            
+            if not self.match(TokenType.COMMA):
+                break
+        if need_rparen:
+            self.expect(TokenType.RPAREN, "Expected ')' after import list")
+        self.expect(TokenType.NEW_LINE, "Expected newline after import statement")
+        return FromUseStmt(location, module_name, items)
 
     def parse_function(self) -> Func:
         name = self.expect(TokenType.IDENTIFIER, "expected function name")

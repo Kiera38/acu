@@ -524,7 +524,7 @@ def build_module(funcs: list[TypedFunc]) -> list[FuncIR]:
     # First pass: create stubs
     for func in funcs:
         stub = FuncIR(
-            name=func.func.name, args=[], blocks=[], location=func.func.location
+            name=func.func.name, args=[], blocks=[], location=func.func.location, source=func.source
         )
         func_map[func.func.name] = stub
 

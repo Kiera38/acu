@@ -76,6 +76,12 @@ class StmtVisitor[T]:
     def op_assign(self, stmt: OpAssignStmt) -> T:
         return self.stmt(stmt)
 
+    def use_stmt(self, stmt: UseStmt) -> T:
+        return self.stmt(stmt)
+
+    def from_use_stmt(self, stmt: FromUseStmt) -> T:
+        return self.stmt(stmt)
+
 
 @trait
 class NodeVisitor[T](ExprVisitor[T], StmtVisitor[T]):
@@ -98,6 +104,9 @@ class NodeVisitor[T](ExprVisitor[T], StmtVisitor[T]):
         return self.node(node)
 
     def struct(self, node: Struct) -> T:
+        return self.node(node)
+    
+    def use_item(self, node: UseItem) -> T:
         return self.node(node)
 
 
@@ -343,6 +352,35 @@ class OpAssignStmt(Stmt):
 
 
 @dataclass
+class UseStmt(Stmt):
+    """using module_name - квалифицированный импорт"""
+    module_name: str
+
+    def accept[T](self, visitor: StmtVisitor[T]) -> T:
+        return visitor.use_stmt(self)
+
+
+@dataclass
+class UseItem(Node):
+    """Элемент в from...using списке"""
+    name: str
+    alias: str | None = None  # Если есть, то используется as
+
+    def accept[T](self, visitor: NodeVisitor[T]) -> T:
+        return visitor.use_item(self)
+
+
+@dataclass
+class FromUseStmt(Stmt):
+    """from module_name using name1, name2"""
+    module_name: str
+    items: list[UseItem]
+
+    def accept[T](self, visitor: StmtVisitor[T]) -> T:
+        return visitor.from_use_stmt(self)
+
+
+@dataclass
 class FuncArg(Node):
     name: str
     type: Expr
@@ -382,5 +420,6 @@ class Struct(Node):
 
 @dataclass
 class Module:
+    imports: list[UseStmt | FromUseStmt]
     funcs: list[Func]
     structs: list[Struct]

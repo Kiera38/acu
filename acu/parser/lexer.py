@@ -21,6 +21,8 @@ class TokenType(Enum):
     AS = auto()
     TRUE = auto()
     FALSE = auto()
+    USING = auto()
+    FROM = auto()
 
     PLUS = auto()
     MINUS = auto()
@@ -102,6 +104,8 @@ keywords = {
     "as": TokenType.AS,
     "true": TokenType.TRUE,
     "false": TokenType.FALSE,
+    "using": TokenType.USING,
+    "from": TokenType.FROM,
 }
 
 escaped_char = {"n": "\n", "t": "\t", "0": "\0", "'": "'", "\\": "\\"}

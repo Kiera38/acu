@@ -1,0 +1,7 @@
+func add(a: Int, b: Int) Int:
+    var result: Int = a + b
+    return result
+
+func multiply(a: Int, b: Int) Int:
+    var result: Int = a * b
+    return result
