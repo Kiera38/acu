@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from acu.errors import CompilationError, Note
 from acu.source import Source, Location
 
 
@@ -244,8 +245,11 @@ class Lexer:
                 return None
             if len(indent) > len(prev_indent):
                 if not indent.startswith(prev_indent):
-                    raise Exception(
-                        "неправильная последовательность табов и пробелов в отступе"
+                    raise CompilationError(
+                        Location(start.line, start.column, self._pos.line, self._pos.column),
+                        "incorrect indentation: inconsistent tabs and spaces",
+                        self._source,
+                        helps=[Note("Make sure to use only tabs or only spaces for indentation")]
                     )
                 self._indent_stack.append(indent)
                 self._begin_of_line = False
@@ -253,17 +257,28 @@ class Lexer:
 
             while len(indent) < len(prev_indent):
                 if not prev_indent.startswith(indent):
-                    raise Exception(
-                        "неправильная последовательность табов и пробелов в отступе"
+                    raise CompilationError(
+                        Location(start.line, start.column, self._pos.line, self._pos.column),
+                        "incorrect indentation: inconsistent tabs and spaces",
+                        self._source,
+                        helps=[Note("Make sure to use only tabs or only spaces for indentation")]
                     )
                 self._dedents += 1
                 self._indent_stack.pop()
                 prev_indent = self._indent_stack[-1]
             if len(indent) != len(prev_indent):
-                raise Exception("неправильный размер отступа")
+                raise CompilationError(
+                    Location(start.line, start.column, self._pos.line, self._pos.column),
+                    "incorrect indentation size",
+                    self._source,
+                    helps=[Note("Indentation must be consistent with the surrounding code")]
+                )
             if prev_indent != indent:
-                raise Exception(
-                    "неправильная последовательность табов и пробелов в отступе"
+                raise CompilationError(
+                    Location(start.line, start.column, self._pos.line, self._pos.column),
+                    "incorrect indentation: inconsistent tabs and spaces",
+                    self._source,
+                    helps=[Note("Make sure to use only tabs or only spaces for indentation")]
                 )
             self._dedents -= 1
             if self._dedents == 0:
@@ -288,7 +303,12 @@ class Lexer:
             if self.peek() == ".":
                 text.append(".")
                 if is_float:
-                    raise Exception("invalid number")
+                    raise CompilationError(
+                        Location(start.line, start.column, self._pos.line, self._pos.column),
+                        "invalid number: multiple decimal points",
+                        self._source,
+                        helps=[Note("A floating-point number can have only one decimal point")]
+                    )
                 is_float = True
             elif self.peek() != "_":
                 text.append(self.peek())
@@ -348,7 +368,12 @@ class Lexer:
         else:
             value = self.next()
         if not self.match("'"):
-            raise Exception("unterminated character literal")
+            raise CompilationError(
+                Location(start.line, start.column, self._pos.line, self._pos.column),
+                "unterminated character literal",
+                self._source,
+                helps=[Note("Character literals must be enclosed in single quotes like 'a'")]
+            )
         return self.token(TokenType.CHAR, start, value)
 
     def string(self) -> Token:
@@ -362,7 +387,12 @@ class Lexer:
             else:
                 value.append(c)
         if self.at_end():
-            raise Exception("unterminated string literal")
+            raise CompilationError(
+                Location(start.line, start.column, self._pos.line, self._pos.column),
+                "unterminated string literal",
+                self._source,
+                helps=[Note("String literals must be enclosed in double quotes like \"text\"")]
+            )
         self.next()
         return self.token(TokenType.STRING, start, "".join(value))
 
@@ -405,8 +435,9 @@ class Lexer:
         if c == "\n":
             start = self._pos
             self._begin_of_line = True
+            token = self.token(TokenType.NEW_LINE, start)
             self.next()
-            return self.token(TokenType.NEW_LINE, start)
+            return token
         return self.operator()
 
     def __next__(self) -> Token:

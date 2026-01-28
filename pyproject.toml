@@ -10,7 +10,8 @@ license-files = ["LICENSE"]
 dynamic = ["version", "description"]
 dependencies = [
     "llvmlite>=0.45.1",
-    "setuptools"
+    "setuptools",
+    "termcolor>=2.0.0"
 ]
 
 [project.scripts]
