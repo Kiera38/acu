@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Iterable
 
-from acu.errors import CompilationError
+from acu.errors import CompilationError, Note
 from acu.source import Location, Source
 
 if TYPE_CHECKING:
@@ -177,11 +177,21 @@ class TypedFunc:
             if type != info.type:
                 assert info.type is not None
                 if not type.can_convert(info.type):
-                    raise CompilationError(location, f"cannot convert type {type} to {info.type}", self.source)
+                    raise CompilationError(
+                        location,
+                        f"cannot convert type {type} to {info.type}",
+                        self.source,
+                        helps=[Note(f"Expected {info.type}, got {type}")]
+                    )
         else:
             unified = unify_types((info.type, type))
             if unified is None:
-                raise CompilationError(location, f"cannot unify types {info.type} and {type}", self.source)
+                raise CompilationError(
+                    location,
+                    f"cannot unify types {info.type} and {type}",
+                    self.source,
+                    helps=[Note(f"These types are incompatible and cannot be unified")]
+                )
             info.type = unified
         return info.type
 

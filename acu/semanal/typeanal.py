@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from acu.errors import CompilationError
+from acu.errors import CompilationError, Note
 from acu.semanal.ir import (
     AddressOf,
     Arg,
@@ -160,7 +160,12 @@ class TypeAnalyzer(InstVisitor[None]):
                     )
             self.add_type(inst, type, inst.location)
         else:
-            raise CompilationError(inst.location, "cannot unify types", self._source)
+            raise CompilationError(
+                inst.location,
+                "cannot unify types",
+                self._source,
+                helps=[Note("Check that both sides of the operation have compatible types")]
+            )
 
     def unary(self, inst: Unary) -> None:
         type = self.func.get_type(inst.value)
@@ -191,7 +196,12 @@ class TypeAnalyzer(InstVisitor[None]):
         if not left:
             return
         if not left.can_convert(bool_type):
-            raise CompilationError(inst.location, "cannot convert type", self._source)
+            raise CompilationError(
+                inst.location,
+                "cannot convert type",
+                self._source,
+                helps=[Note(f"Expected bool type, got {left}")]
+            )
         right = self.get_block_type_var(inst.right)
         if not right:
             return
@@ -238,10 +248,20 @@ class TypeAnalyzer(InstVisitor[None]):
                     return
                 arg_type = arg_type
                 if not arg_type.can_convert(field.type):
-                    raise CompilationError(inst.location, "cannot convert type", self._source)
+                    raise CompilationError(
+                        inst.location,
+                        "cannot convert type",
+                        self._source,
+                        helps=[Note(f"Struct field requires {field.type}, got {arg_type}")]
+                    )
             self.add_type(inst, value_type.struct, inst.location)
         else:
-            raise CompilationError(inst.location, "type not callable", self._source)
+            raise CompilationError(
+                inst.location,
+                "type not callable",
+                self._source,
+                helps=[Note("Only functions and struct constructors can be called")]
+            )
 
     def loop(self, inst: Loop) -> None:
         self.propagate_block(inst.block)

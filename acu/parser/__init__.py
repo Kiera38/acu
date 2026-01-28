@@ -1,6 +1,6 @@
 from typing import cast
 
-from acu.errors import CompilationError
+from acu.errors import CompilationError, Note
 from acu.parser.lexer import Lexer, Token, TokenType
 from acu.parser.nodes import *
 from acu.source import Source
@@ -102,7 +102,12 @@ class Parser:
         if self.check(type):
             return self.next()
         token = self.peek()
-        raise CompilationError(token.location, message, self._source)
+        raise CompilationError(
+            token.location,
+            message,
+            self._source,
+            helps=[Note("Check the syntax of your code")]
+        )
 
     def parse_type(self) -> Expr:
         return self.parse_expr()

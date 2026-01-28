@@ -7,6 +7,7 @@ from typing import Any, Generator
 from acu.errors import (
     CompilationError,
     ErrorCollector,
+    Note,
 )
 from acu.parser import ExprVisitor, Location, StmtVisitor, nodes
 from acu.semanal import ir, types
@@ -33,9 +34,19 @@ builtin_types = {
 
 def get_int_constant(expr: nodes.Expr, source: Source) -> int:
     if not isinstance(expr, nodes.LiteralExpr):
-        raise CompilationError(expr.location, "must be a literal", source)
+        raise CompilationError(
+            expr.location,
+            "must be a literal",
+            source,
+            helps=[Note("Use a numeric literal like 10, 42, etc.")]
+        )
     if not isinstance(expr.value, int):
-        raise CompilationError(expr.location, "not a int", source)
+        raise CompilationError(
+            expr.location,
+            "not a int",
+            source,
+            helps=[Note("Expected an integer literal, got a different type")]
+        )
     return expr.value
 
 
@@ -81,7 +92,12 @@ class Context:
                 return func
             if struct := scope.structs.get(name):
                 return struct
-        raise CompilationError(location, f"name '{name}' not found", self.source)
+        raise CompilationError(
+            location,
+            f"name '{name}' not found",
+            self.source,
+            helps=[Note(f"Check that '{name}' is defined before use, or that it's spelled correctly")]
+        )
 
     def add_var(self, var: ir.VarDecl | ir.Arg) -> None:
         self.scopes[-1].vars[var.name] = var

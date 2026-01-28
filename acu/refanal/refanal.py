@@ -1,6 +1,6 @@
 from typing import List
 
-from acu.errors import CompilationError
+from acu.errors import CompilationError, Note
 from acu.source import Source
 
 from acu.refanal.dataflow import analyze_must_defined_regs, get_cfg
@@ -105,7 +105,12 @@ def analyze(fn: FuncIR, source: Source) -> None:
                     loc = getattr(op, "location", None) or getattr(
                         op.dest, "location", None
                     )
-                    raise CompilationError(loc, f"Assignment to already-initialized immutable 'let' variable '{op.dest.name}'", source)
+                    raise CompilationError(
+                        loc,
+                        f"Assignment to already-initialized immutable 'let' variable '{op.dest.name}'",
+                        source,
+                        helps=[Note("Variables declared with 'let' cannot be reassigned")]
+                    )
 
             # For every source that is a Register (non-trivial), ensure it is
             # possibly defined at this program point
@@ -115,4 +120,9 @@ def analyze(fn: FuncIR, source: Source) -> None:
                         loc = getattr(op, "location", None) or getattr(
                             src, "location", None
                         )
-                        raise CompilationError(loc, f"Use of possibly uninitialized variable '{src.name}'", source)
+                        raise CompilationError(
+                            loc,
+                            f"Use of possibly uninitialized variable '{src.name}'",
+                            source,
+                            helps=[Note(f"Make sure '{src.name}' is assigned a value before being used")]
+                        )
