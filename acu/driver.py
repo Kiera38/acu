@@ -68,9 +68,9 @@ def parse_args():
 def main():
     args = parse_args()
     error_collector = ErrorCollector()
-    
+
     path = Path(args.file)
-    
+
     try:
         # Проверяем, является ли это пакетом (папкой с .acu файлами) или одиночным файлом
         if is_package_path(path):
@@ -100,10 +100,12 @@ def main():
                 asm_path=args.asm,
                 opt=args.opt,
             )
-        if args.exe or args.static_lib or args.dynamic_lib and not args.object:
-            args.object = str(
-                path.with_suffix(".obj" if sys.platform == "win32" else ".o")
-            )
+        if args.exe or args.static_lib or args.dynamic_lib:
+            if args.object is None:
+                args.object = str(
+                    path.with_suffix(".obj" if sys.platform == "win32" else ".o")
+                )
+
             codegen.link(
                 [args.object],
                 exe_path=args.exe,
