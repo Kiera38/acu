@@ -1,10 +1,9 @@
 from typing import cast
 
 from acu.errors import CompilationError
-from acu.parser.lexer import TokenType, Token, Lexer
+from acu.parser.lexer import Lexer, Token, TokenType
 from acu.parser.nodes import *
 from acu.source import Source
-
 
 binary_op = {
     TokenType.PLUS: BinaryOp.ADD,
@@ -26,7 +25,7 @@ unary_op = {
     TokenType.MINUS: UnaryOp.NEG,
     TokenType.TILDE: UnaryOp.BIT_NOT,
     TokenType.AMP: UnaryOp.ADDRESS_OF,
-    TokenType.STAR: UnaryOp.DEREF
+    TokenType.STAR: UnaryOp.DEREF,
 }
 
 comparison_op = {
@@ -69,7 +68,9 @@ class Parser:
                 structs.append(self.parse_struct())
             else:
                 token = self.peek()
-                raise CompilationError(token.location, "Expected function or struct", self._source)
+                raise CompilationError(
+                    token.location, "Expected function or struct", self._source
+                )
         return Module(funcs, structs)
 
     def peek(self, rel_pos: int = 0) -> Token:
@@ -124,7 +125,9 @@ class Parser:
             return_type = self.parse_type()
             self.expect(TokenType.COLON, "Expected ':' before functio body")
 
-        return Func(name.location, cast(str, name.value), args, return_type, self.parse_body())
+        return Func(
+            name.location, cast(str, name.value), args, return_type, self.parse_body()
+        )
 
     def parse_struct(self) -> Struct:
         name = self.expect(TokenType.IDENTIFIER, "expected struct name")
@@ -457,7 +460,9 @@ class Parser:
                     break
             return ArrayExpr(location, items)
 
-        raise CompilationError(self.peek().location, "expected expression", self._source)
+        raise CompilationError(
+            self.peek().location, "expected expression", self._source
+        )
 
 
 def parse(source: Source) -> Module:

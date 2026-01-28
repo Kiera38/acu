@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from acu.errors import CompilationError, TypeError, ValidationError
+from acu.errors import CompilationError
 from acu.semanal.ir import (
     AddressOf,
     Arg,
@@ -169,16 +169,16 @@ class TypeAnalyzer(InstVisitor[None]):
         if inst.op == UnaryOp.NOT:
             self.add_type(inst, bool_type, inst.location)
             if not type.can_convert(bool_type):
-                raise TypeError(
+                raise CompilationError(
                     inst.location, f"cannot convert type {type}", self._source
                 )
         elif inst.op == UnaryOp.BIT_NOT:
             if not isinstance(type, IntType):
-                raise TypeError(inst.location, "unsupported operation", self._source)
+                raise CompilationError(inst.location, "unsupported operation", self._source)
             self.add_type(inst, type, inst.location)
         else:
             if not isinstance(type, (IntType, FloatType)):
-                raise TypeError(inst.location, "unsupported operation", self._source)
+                raise CompilationError(inst.location, "unsupported operation", self._source)
             self.add_type(inst, type, inst.location)
 
     def get_block_type_var(self, block: Block) -> Type | None:
@@ -191,12 +191,12 @@ class TypeAnalyzer(InstVisitor[None]):
         if not left:
             return
         if not left.can_convert(bool_type):
-            raise TypeError(inst.location, "cannot convert type", self._source)
+            raise CompilationError(inst.location, "cannot convert type", self._source)
         right = self.get_block_type_var(inst.right)
         if not right:
             return
         if not right.can_convert(bool_type):
-            raise TypeError(inst.location, "cannot convert type", self._source)
+            raise CompilationError(inst.location, "cannot convert type", self._source)
 
     def comparison(self, inst: Comparison) -> None:
         self.add_type(inst, bool_type, inst.location)
@@ -210,7 +210,7 @@ class TypeAnalyzer(InstVisitor[None]):
                 return
             right_type = right
             if not unify_types((left_type, right_type)):
-                raise TypeError(inst.location, "cannot unify types", self._source)
+                raise CompilationError(inst.location, "cannot unify types", self._source)
             left_type = right_type
 
     def call(self, inst: Call) -> None:
@@ -225,7 +225,7 @@ class TypeAnalyzer(InstVisitor[None]):
                     return
                 arg_type = arg_type
                 if not arg_type.can_convert(type):
-                    raise TypeError(
+                    raise CompilationError(
                         inst.location,
                         f"cannot convert type {type} to {arg_type}",
                         self._source,
@@ -238,10 +238,10 @@ class TypeAnalyzer(InstVisitor[None]):
                     return
                 arg_type = arg_type
                 if not arg_type.can_convert(field.type):
-                    raise TypeError(inst.location, "cannot convert type", self._source)
+                    raise CompilationError(inst.location, "cannot convert type", self._source)
             self.add_type(inst, value_type.struct, inst.location)
         else:
-            raise TypeError(inst.location, "type not callable", self._source)
+            raise CompilationError(inst.location, "type not callable", self._source)
 
     def loop(self, inst: Loop) -> None:
         self.propagate_block(inst.block)
@@ -252,7 +252,7 @@ class TypeAnalyzer(InstVisitor[None]):
         if not cond_type:
             return
         if not cond_type.can_convert(bool_type):
-            raise TypeError(inst.location, "cannot convert type", self._source)
+            raise CompilationError(inst.location, "cannot convert type", self._source)
         self.propagate_block(inst.then_block)
         self.propagate_block(inst.else_block)
         self.add_type(inst, nothing_type, inst.location)
@@ -260,13 +260,13 @@ class TypeAnalyzer(InstVisitor[None]):
     def return_inst(self, inst: Return) -> None:
         if inst.value is None:
             if self.func.type.return_type != nothing_type:
-                raise ValidationError(inst.location, "need return value", self._source)
+                raise CompilationError(inst.location, "need return value", self._source)
         else:
             value_type = self.func.get_type(inst.value)
             if not value_type:
                 return
             if not value_type.can_convert(self.func.type.return_type):
-                raise TypeError(inst.location, "cannot convert type", self._source)
+                raise CompilationError(inst.location, "cannot convert type", self._source)
         self.add_type(inst, nothing_type, inst.location)
 
     def break_inst(self, inst: Break) -> None:
@@ -280,9 +280,9 @@ class TypeAnalyzer(InstVisitor[None]):
         if not type:
             return
         if isinstance(type, StructType):
-            raise TypeError(inst.location, "unsupported operation", self._source)
+            raise CompilationError(inst.location, "unsupported operation", self._source)
         if isinstance(type, FuncType):
-            raise TypeError(
+            raise CompilationError(
                 inst.location, "func pointer type unsupported", self._source
             )
         self.add_type(inst, PointerType(type), inst.location)
@@ -293,9 +293,9 @@ class TypeAnalyzer(InstVisitor[None]):
         if not value_type or not index_type:
             return
         if not isinstance(value_type, (PointerType, ArrayType)):
-            raise TypeError(inst.location, "unsupported get item", self._source)
+            raise CompilationError(inst.location, "unsupported get item", self._source)
         if not index_type.can_convert(int_type):
-            raise TypeError(
+            raise CompilationError(
                 inst.location, "index type is not converted to int", self._source
             )
         self.add_type(inst, value_type.type, inst.location)
@@ -314,13 +314,13 @@ class TypeAnalyzer(InstVisitor[None]):
         if not var_type or not index_type or not value_type:
             return
         if not isinstance(var_type, (PointerType, ArrayType)):
-            raise TypeError(inst.location, "unsupported set item", self._source)
+            raise CompilationError(inst.location, "unsupported set item", self._source)
         if not index_type.can_convert(int_type):
-            raise TypeError(
+            raise CompilationError(
                 inst.location, "index type is not converted to int", self._source
             )
         if not value_type.can_convert(var_type.type):
-            raise TypeError(inst.location, "cannot convert type", self._source)
+            raise CompilationError(inst.location, "cannot convert type", self._source)
         self.add_type(inst, nothing_type, inst.location)
 
     def set_attr(self, inst: SetAttr) -> None:
@@ -329,23 +329,23 @@ class TypeAnalyzer(InstVisitor[None]):
         if not var_type or not value_type:
             return
         if not isinstance(var_type, Struct):
-            raise TypeError(
+            raise CompilationError(
                 inst.location, "set attr supported only for structs", self._source
             )
         if field := var_type.fields.get(inst.name):
             if not value_type.can_convert(field.type):
-                raise TypeError(inst.location, "cannot convert type", self._source)
+                raise CompilationError(inst.location, "cannot convert type", self._source)
             # inst.field = field
             self.add_type(inst, nothing_type, inst.location)
         else:
-            raise NameError(inst.location, "field not found", self._source)
+            raise CompilationError(inst.location, "field not found", self._source)
 
     def deref(self, inst: Deref) -> None:
         value_type = self.func.get_type(inst.value)
         if not value_type:
             return
         if not isinstance(value_type, PointerType):
-            raise TypeError(
+            raise CompilationError(
                 inst.location, "deref supported only for pointers", self._source
             )
         self.add_type(inst, value_type.type, inst.location)
@@ -353,7 +353,7 @@ class TypeAnalyzer(InstVisitor[None]):
     def array(self, inst: Array) -> None:
         # Infer array element type from items
         if not inst.items:
-            raise ValidationError(inst.location, "empty array literal", self._source)
+            raise CompilationError(inst.location, "empty array literal", self._source)
         types = []
         for item in inst.items:
             type = self.func.get_type(item)
@@ -362,7 +362,7 @@ class TypeAnalyzer(InstVisitor[None]):
             types.append(type)
         unified = unify_types(types)
         if unified is None:
-            raise TypeError(
+            raise CompilationError(
                 inst.location, "cannot unify array element types", self._source
             )
         self.add_type(inst, ArrayType(unified, len(inst.items)), inst.location)
@@ -373,18 +373,18 @@ class TypeAnalyzer(InstVisitor[None]):
             return
         type = value_type
         if not isinstance(type, Struct):
-            raise TypeError(
+            raise CompilationError(
                 inst.location, "get attr supported only from structs", self._source
             )
         if field := type.fields.get(inst.name):
             self.add_type(inst, field.type, inst.location)
         else:
-            raise NameError(inst.location, "field not found", self._source)
+            raise CompilationError(inst.location, "field not found", self._source)
 
     def as_inst(self, inst: AsInst) -> None:
         value_type = self.func.get_type(inst.value)
         if not value_type:
             return
         if not value_type.can_explicit_convert(inst.type):
-            raise TypeError(inst.location, "cannot convert type", self._source)
+            raise CompilationError(inst.location, "cannot convert type", self._source)
         self.add_type(inst, inst.type, inst.location)

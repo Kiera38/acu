@@ -5,57 +5,44 @@ from typing import List
 from acu.source import Location, Source
 
 
+@dataclass
+class Note:
+    message: str
+    location: Location | None = None
+
+
 class CompilationError(Exception):
     """Базовый класс для всех ошибок компиляции"""
 
-    def __init__(self, location: Location, message: str, source: Source | None = None):
+    def __init__(
+        self,
+        location: Location,
+        message: str,
+        source: Source,
+        notes: list[Note] | None = None,
+        helps: list[Note] | None = None,
+    ):
         self.location = location
         self.message = message
         self.source = source
-        super().__init__(self.format_message())
+        self.notes = notes or []
+        self.helps = helps or []
+        super().__init__(message)
 
     def format_message(self) -> str:
-        if self.source is None:
-            return f"Error at line {self.location.line}, column {self.location.column}: {self.message}"
+        output = [f"Error: {self.message}"]
+        output.append(f"  at {self.source.name}:{self.location.line}:{self.location.column}")
+        output.append("    |")
+        output.append(f"{self.location.line:3} | {self.source.lines[self.location.line - 1]}")
+        print(self.location)
+        pointer = " " * (self.location.column - 1) + "^" * (self.location.end_column - self.location.column + 1)
+        output.append(f"    | {pointer}")
 
-        lines = self.source.lines
-        line_idx = self.location.line - 1  # assuming 1-based
-        if 0 <= line_idx < len(lines):
-            line = lines[line_idx]
-            pointer = " " * (self.location.column - 1) + "^"
-            return f"Error in {self.source.name}:{self.location.line}:{self.location.column}:\n{line}\n{pointer}\n{self.message}"
-        else:
-            return f"Error in {self.source.name}:{self.location.line}:{self.location.column}: {self.message}"
-
-
-class SyntaxError(CompilationError):
-    """Ошибка синтаксического анализа"""
-
-    pass
-
-
-class SemanticError(CompilationError):
-    """Ошибка семантического анализа"""
-
-    pass
-
-
-class TypeError(CompilationError):
-    """Ошибка типа"""
-
-    pass
-
-
-class NameError(CompilationError):
-    """Ошибка имени (переменная/функция не найдена)"""
-
-    pass
-
-
-class ValidationError(CompilationError):
-    """Ошибка валидации"""
-
-    pass
+        for note in self.notes:
+            output.append(f"    | note: {note.message}")
+        for help in self.helps:
+            output.append(f"    = help: {help.message}")
+        return "\n".join(output)
 
 
 class ErrorCollector:
@@ -89,7 +76,7 @@ class ErrorCollector:
     def report_errors(self):
         """Вывести все накопленные ошибки"""
         for error in self.errors:
-            print(error, file=sys.stderr)
+            print(error.format_message(), file=sys.stderr)
 
     def reset(self):
         """Сбросить все ошибки"""
