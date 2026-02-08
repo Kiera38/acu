@@ -5,7 +5,6 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Set
 
 from acu import codegen, refanal, semanal
 from acu.errors import CompilationError, Note
@@ -20,7 +19,7 @@ class ModuleInfo:
 
     source: Source  # Исходный код
     ast: Module  # Распарсенный AST
-    imports: Set[str]  # Множество импортированных модулей
+    imports: set[str]  # Множество импортированных модулей
 
 
 class Package:
@@ -29,25 +28,27 @@ class Package:
         if not path.is_dir():
             raise ValueError(f"Package path must be a directory: {path}")
         self.path = path
-        self.modules: Dict[str, ModuleInfo] = {}
-        self.ir_modules: List[semanal.ir.Module] = []
+        self.modules: dict[str, ModuleInfo] = {}
+        self.ir_modules: list[semanal.ir.Module] = []
         self.funcs = []
 
-    def load_modules(self) -> None:
+    def load_modules(self, path: Path | None = None) -> None:
         """Загружает все модули пакета из папки"""
-        acu_files = sorted(self.path.glob("*.acu"))
-        if not acu_files:
-            raise ValueError(f"No .acu files found in package: {self.path}")
+        if path is None:
+            path = self.path
 
-        for file_path in acu_files:
+        for file_path in path.glob("*.acu"):
             module_name = file_path.stem  # Имя без расширения
-            with open(file_path, "r", encoding="utf-8") as f:
-                code = f.read()
+            code = file_path.read_text()
             source = Source(module_name, str(file_path), code)
             ast = parse(source)
-            imports: Set[str] = {import_stmt.module_name for import_stmt in ast.imports}
+            imports: set[str] = {import_stmt.module_name for import_stmt in ast.imports}
             module_info = ModuleInfo(source=source, ast=ast, imports=imports)
             self.modules[module_name] = module_info
+        
+        for dir in path.iterdir():
+            if dir.is_dir():
+                self.load_modules(dir)
 
     def _validate_imports(self) -> None:
         """

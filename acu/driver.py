@@ -15,7 +15,7 @@ def create_source(file: str):
 
 def is_package_path(path: Path) -> bool:
     """Проверяет, является ли путь папкой пакета (содержит .acu файлы)"""
-    return path.is_dir() and bool(list(path.glob("*.acu")))
+    return path.is_dir()
 
 
 def parse_args():
