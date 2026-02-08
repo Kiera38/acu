@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any, Generator
 
-from acu.errors import (
-    CompilationError,
-    ErrorCollector,
-    Note,
-)
+from acu.errors import CompilationError, Note
 from acu.parser import ExprVisitor, Location, StmtVisitor, nodes
 from acu.semanal import ir, types
+from acu.semanal.context import Context
 from acu.source import Source
 
 builtin_types = {
@@ -38,132 +34,16 @@ def get_int_constant(expr: nodes.Expr, source: Source) -> int:
             expr.location,
             "must be a literal",
             source,
-            helps=[Note("Use a numeric literal like 10, 42, etc.")]
+            helps=[Note("Use a numeric literal like 10, 42, etc.")],
         )
     if not isinstance(expr.value, int):
         raise CompilationError(
             expr.location,
             "not a int",
             source,
-            helps=[Note("Expected an integer literal, got a different type")]
+            helps=[Note("Expected an integer literal, got a different type")],
         )
     return expr.value
-
-
-@dataclass
-class Scope:
-    vars: dict[str, ir.VarDecl | ir.Arg]
-    funcs: dict[str, ir.Func]
-    structs: dict[str, types.Struct]
-    is_loop: bool
-    is_function: bool
-
-
-class Context:
-    def __init__(self, source: Source) -> None:
-        self.source = source
-        self.scopes: list[Scope] = []
-        self.push_scope()
-        self.blocks: list[ir.Block] = []
-        # Импорты: для "using module" -> {module_name: module_context}
-        #          для "from module using names" -> {local_name: item}
-        self.qualified_imports: dict[str, Context] = {}  # {module_name: module_context}
-        self.unqualified_imports: dict[str, ir.Func | types.Struct] = {}  # {local_name: item}
-
-    def add_qualified_import(self, module_name: str, module_context: Context) -> None:
-        """Добавить qualified import (using module_name)"""
-        self.qualified_imports[module_name] = module_context
-
-    def add_unqualified_import(self, local_name: str, item: ir.Func | types.Struct) -> None:
-        """Добавить unqualified import (from module using name)"""
-        self.unqualified_imports[local_name] = item
-
-    def push_scope(self, is_loop: bool = False, is_function: bool = False) -> None:
-        self.scopes.append(Scope({}, {}, {}, is_loop, is_function))
-
-    def pop_scope(self) -> None:
-        self.scopes.pop()
-
-    @contextmanager
-    def block(self, block: ir.Block):
-        self.blocks.append(block)
-        yield
-        self.blocks.pop()
-
-    def add(self, inst: ir.Inst):
-        self.blocks[-1].code.append(inst)
-        return inst
-
-    def find(
-        self, name: str, location: Location
-    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context:
-        # Сначала проверяем локальные переменные, функции и структуры
-        for scope in reversed(self.scopes):
-            if var := scope.vars.get(name):
-                return var
-            if func := scope.funcs.get(name):
-                return func
-            if struct := scope.structs.get(name):
-                return struct
-        
-        # Проверяем unqualified imports (from module using name)
-        if item := self.unqualified_imports.get(name):
-            return item
-        
-        if name in self.qualified_imports:
-            return self.qualified_imports[name]
-        
-        raise CompilationError(
-            location,
-            f"name '{name}' not found",
-            self.source,
-            helps=[Note(f"Check that '{name}' is defined before use, or that it's spelled correctly")]
-        )
-
-    def find_qualified(
-        self, module_name: str, name: str, location: Location
-    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context:
-        """Найти символ в конкретном модуле (module.name)"""
-        return self.qualified_imports[module_name].find(name, location)
-
-    def add_var(self, var: ir.VarDecl | ir.Arg) -> None:
-        self.scopes[-1].vars[var.name] = var
-
-    def add_struct(self, name: str, location: Location) -> types.Struct:
-        s = self.scopes[-1].structs[name] = types.Struct(name, {}, location, self.source.name)
-        return s
-
-    def get_struct(self, name: str) -> types.Struct:
-        for scope in reversed(self.scopes):
-            if name in scope.structs:
-                return scope.structs[name]
-        raise ValueError(f"Struct '{name}' not found in any scope")
-
-    def add_func(self, name: str, location: Location) -> ir.Func:
-        f = self.scopes[-1].funcs[name] = ir.Func(
-            name, 0, types.Type(), ir.Block([]), location, self.source.name
-        )
-        return f
-
-    def get_func(self, name: str) -> ir.Func:
-        for scope in reversed(self.scopes):
-            if name in scope.funcs:
-                return scope.funcs[name]
-        raise ValueError(f"Function '{name}' not found in any scope")
-
-    @property
-    def in_function(self) -> bool:
-        for scope in reversed(self.scopes):
-            if scope.is_function:
-                return True
-        return False
-
-    @property
-    def in_loop(self) -> bool:
-        for scope in reversed(self.scopes):
-            if scope.is_loop:
-                return True
-        return False
 
 
 class TypeConverter(ExprVisitor[types.Type]):
@@ -176,7 +56,9 @@ class TypeConverter(ExprVisitor[types.Type]):
             return type
         if struct := self.context.find(expr.name, expr.location):
             if not isinstance(struct, ir.Struct):
-                raise CompilationError(expr.location, "is not struct", self.context.source)
+                raise CompilationError(
+                    expr.location, "is not struct", self.context.source
+                )
             return types.StructType(struct)
         raise CompilationError(expr.location, "unknown type", self.context.source)
 
@@ -186,14 +68,18 @@ class TypeConverter(ExprVisitor[types.Type]):
 
         if expr.value.name == "Array":
             if len(expr.args) != 2:
-                raise CompilationError(expr.location, "unknown type", self.context.source)
+                raise CompilationError(
+                    expr.location, "unknown type", self.context.source
+                )
             type = expr.args[0].accept(self)
             length = get_int_constant(expr.args[1], self.context.source)
             return types.ArrayType(type, length)
 
         if expr.value.name == "Ptr":
             if len(expr.args) != 1:
-                raise CompilationError(expr.location, "unknown type", self.context.source)
+                raise CompilationError(
+                    expr.location, "unknown type", self.context.source
+                )
             return types.PointerType(expr.args[0].accept(self))
 
         raise CompilationError(expr.location, "unknown type", self.context.source)
@@ -248,7 +134,7 @@ class ExprConverter(ExprVisitor[ir.Inst]):
             self.accept(expr)
         return block
 
-    def name(self, expr: nodes.NameExpr) -> ir.Inst:        
+    def name(self, expr: nodes.NameExpr) -> ir.Inst:
         var = self.context.find(expr.name, expr.location)
         if isinstance(var, (ir.Func, types.Struct)):
             return ir.Literal(expr.location, var)
@@ -322,7 +208,7 @@ class ExprConverter(ExprVisitor[ir.Inst]):
                     f"'{attr_name}' in module '{module_name}' is not a function or struct",
                     self.context.source,
                 )
-        
+
         return ir.GetAttr(expr.location, self.accept(expr.value), expr.name)
 
     def array(self, expr: nodes.ArrayExpr) -> ir.Inst:
@@ -512,18 +398,17 @@ class StmtConverter(StmtVisitor[None]):
 
 def convert_struct(
     struct: nodes.Struct, typeconv: TypeConverter, context: Context
-) -> ir.Struct:
+) -> None:
     ir_struct = context.get_struct(struct.name)
     ir_struct.fields = {
         field.name: types.StructField(field.type.accept(typeconv), i, field.location)
         for i, field in enumerate(struct.fields)
     }
-    return ir_struct
 
 
 def convert_func(
     func: nodes.Func, typeconv: TypeConverter, stmts: StmtConverter, context: Context
-) -> ir.Func:
+) -> None:
     ir_func = context.get_func(func.name)
     ir_func.arg_count = len(func.args)
     context.push_scope(is_function=True)
@@ -549,34 +434,41 @@ def convert_func(
                     func.location, "missing return statement", context.source
                 )
     context.pop_scope()
-    return ir_func
 
 
-def create_module_context(module: nodes.Module, source: Source) -> Context:
-    context = Context(source)
-    for struct in module.structs:
-        context.add_struct(struct.name, struct.location)
+def create_module(module: nodes.Module) -> ir.Module:
+    funcs = []
+    structs = []
     for func in module.funcs:
-        context.add_func(func.name, func.location)
-    return context
+        funcs.append(ir.Func(func.name, 0, types.Type(), ir.Block([]), func.location))
+    for struct in module.structs:
+        structs.append(types.Struct(struct.name, {}, struct.location))
+    return ir.Module(funcs, structs)
 
 
-def add_imports(module: nodes.Module, context: Context, modules: dict[str, Context]) -> None:
+def add_imports(
+    module: nodes.Module, context: Context, modules: dict[str, Context]
+) -> None:
     for import_stmt in module.imports:
         if isinstance(import_stmt, nodes.UseStmt):
-            context.add_qualified_import(import_stmt.module_name, modules[import_stmt.module_name])
+            context.add_qualified_import(
+                import_stmt.module_name, modules[import_stmt.module_name]
+            )
         elif isinstance(import_stmt, nodes.FromUseStmt):
             for item in import_stmt.items:
                 local_name = item.alias if item.alias else item.name
                 item = modules[import_stmt.module_name].find(item.name, item.location)
-                assert not isinstance(item, (ir.VarDecl, ir.Arg, Context)), "Импортировать можно только функции и структуры"
+                assert not isinstance(
+                    item, (ir.VarDecl, ir.Arg, Context)
+                ), "Импортировать можно только функции и структуры"
                 context.add_unqualified_import(local_name, item)
 
 
-def convert(module: nodes.Module, context: Context) -> ir.Module:
+def convert(module: nodes.Module, context: Context) -> None:
     types_conv = TypeConverter(context)
     exprs = ExprConverter(types_conv, context)
     stmts = StmtConverter(types_conv, exprs, context)
-    structs = [convert_struct(struct, types_conv, context) for struct in module.structs]
-    funcs = [convert_func(func, types_conv, stmts, context) for func in module.funcs]
-    return ir.Module(funcs, structs)
+    for struct in module.structs:
+        convert_struct(struct, types_conv, context)
+    for func in module.funcs:
+        convert_func(func, types_conv, stmts, context)

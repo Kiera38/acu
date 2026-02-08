@@ -344,7 +344,6 @@ class Func:
     return_type: Type
     code: Block
     location: Location
-    module_name: str = "main"  # Имя модуля, из которого функция
 
     def get_type(self):
         arg_types = []

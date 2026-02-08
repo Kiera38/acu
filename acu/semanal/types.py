@@ -136,7 +136,6 @@ class Struct(Type):
     name: str
     fields: dict[str, StructField]
     location: Location
-    module_name: str = "main"  # Имя модуля, из которого структура
 
     @cached_property
     def field_list(self):

@@ -70,6 +70,11 @@ def main():
     error_collector = ErrorCollector()
 
     path = Path(args.file)
+    if args.exe or args.static_lib or args.dynamic_lib:
+        if args.object is None:
+            args.object = str(
+                path.with_suffix(".obj" if sys.platform == "win32" else ".o")
+            )
 
     try:
         # Проверяем, является ли это пакетом (папкой с .acu файлами) или одиночным файлом
@@ -100,11 +105,6 @@ def main():
                 asm_path=args.asm,
                 opt=args.opt,
             )
-        if args.exe or args.static_lib or args.dynamic_lib:
-            if args.object is None:
-                args.object = str(
-                    path.with_suffix(".obj" if sys.platform == "win32" else ".o")
-                )
 
             codegen.link(
                 [args.object],
