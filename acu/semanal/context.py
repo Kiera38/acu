@@ -86,8 +86,8 @@ class Context:
         if item := self.unqualified_imports.get(name):
             return item
 
-        if name in self.qualified_imports:
-            return self.qualified_imports[name]
+        if (name,) in self.qualified_imports:
+            return self.qualified_imports[(name,)]
         
         if (name,) in self.used_packages:
             return UsedPackage(self, [name])
@@ -102,12 +102,20 @@ class Context:
                 )
             ],
         )
+    
+    def find_in_module(self, context: Context, name: str, location: Location):
+        """Ищет в context, затем ищет подходящие импортированнные пакеты и модули"""
+        try:
+            return context.find(name, location)
+        except CompilationError:
+            module_name = (*context.source.name.split('.'), name)
+            if mod_context := self.qualified_imports.get(module_name):
+                return mod_context
+            
+            if module_name in self.used_packages:
+                return UsedPackage(self, list(module_name))
 
-    def find_qualified(
-        self, module_name: list[str], name: str, location: Location
-    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context:
-        """Найти символ в конкретном модуле (module.name)"""
-        return self.qualified_imports[tuple(module_name)].find(name, location)
+            raise
     
     def find_in_package(self, package_name: list[str], name: str, location: Location):
         module_name = (*package_name, name)

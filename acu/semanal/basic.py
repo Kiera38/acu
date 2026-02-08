@@ -138,7 +138,9 @@ class GetAttrConverter(ExprVisitor[ir.Inst | Context | UsedPackage]):
             self.context.add(value)
             return ir.GetAttr(expr.location, value, expr.name)
         if isinstance(value, Context):
-            result = value.find(expr.name, expr.location)
+            result = self.context.find_in_module(value, expr.name, expr.location)
+            if isinstance(result, (Context, UsedPackage)):
+                return result
             assert isinstance(result, (ir.Func, types.Struct))
             return ir.Literal(expr.location, result)
         assert isinstance(value, UsedPackage)
@@ -255,7 +257,7 @@ class StoreConverter(ExprVisitor[ir.Inst]):
 
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
         var = self.context.find(expr.name, expr.location)
-        if isinstance(var, (ir.Func, types.Struct, Context)):
+        if isinstance(var, (ir.Func, types.Struct, Context, UsedPackage)):
             raise CompilationError(
                 expr.location,
                 "function, struct or module cannot be assigned to",
@@ -471,8 +473,8 @@ def add_imports(
                 item = modules[".".join(import_stmt.module_name)].find(
                     item.name, item.location
                 )
-                assert not isinstance(
-                    item, (ir.VarDecl, ir.Arg, Context)
+                assert isinstance(
+                    item, (ir.Func, types.Struct)
                 ), "Импортировать можно только функции и структуры"
                 context.add_unqualified_import(local_name, item)
 

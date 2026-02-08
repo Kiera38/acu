@@ -37,16 +37,17 @@ class Package:
         if path is None:
             path = self.path
 
+        root_module_path = path / "package.acu"
+        if root_module_path.exists():
+            self._load_module(root_module_path, package_name)
+
         for file_path in path.glob("*.acu"):
             module_name = file_path.stem  # Имя без расширения
+            if module_name == 'package':
+                continue
             if package_name:
                 module_name = '.'.join((package_name, module_name))
-            code = file_path.read_text()
-            source = Source(module_name, str(file_path), code)
-            ast = parse(source)
-            imports = {tuple(import_stmt.module_name) for import_stmt in ast.imports}
-            module_info = ModuleInfo(source=source, ast=ast, imports=imports)
-            self.modules[module_name] = module_info
+            self._load_module(file_path, module_name)
         
         for dir in path.iterdir():
             if dir.is_dir():
@@ -54,6 +55,14 @@ class Package:
                 if package_name:
                     name = '.'.join((package_name, name))
                 self.load_modules(dir, name)
+
+    def _load_module(self, file_path: Path, module_name: str):
+        code = file_path.read_text()
+        source = Source(module_name, str(file_path), code)
+        ast = parse(source)
+        imports = {tuple(import_stmt.module_name) for import_stmt in ast.imports}
+        module_info = ModuleInfo(source=source, ast=ast, imports=imports)
+        self.modules[module_name] = module_info
 
     def _validate_imports(self) -> None:
         """
