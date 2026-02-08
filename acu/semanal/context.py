@@ -17,6 +17,15 @@ class Scope:
     is_function: bool
 
 
+@dataclass
+class UsedPackage:
+    context: Context
+    name: list[str]
+
+    def find(self, name: str, location: Location):
+        return self.context.find_in_package(self.name, name, location)
+
+
 class Context:
     def __init__(self, source: Source) -> None:
         self.source = source
@@ -25,14 +34,23 @@ class Context:
         self.blocks: list[ir.Block] = []
         # Импорты: для "using module" -> {module_name: module_context}
         #          для "from module using names" -> {local_name: item}
-        self.qualified_imports: dict[str, Context] = {}  # {module_name: module_context}
-        self.unqualified_imports: dict[str, ir.Func | types.Struct] = {}  # {local_name: item}
+        self.qualified_imports: dict[tuple[str, ...], Context] = {}
+        # используемые, но не импортированные пакеты (для поиска элементов по типу pkg.module.func())
+        self.used_packages: set[tuple[str, ...]] = set()
+        self.unqualified_imports: dict[str, ir.Func | types.Struct] = {}
 
-    def add_qualified_import(self, module_name: str, module_context: Context) -> None:
+    def add_qualified_import(
+        self, module_name: list[str], module_context: Context
+    ) -> None:
         """Добавить qualified import (using module_name)"""
-        self.qualified_imports[module_name] = module_context
+        name = tuple(module_name)
+        for i in range(1, len(module_name)):
+            self.used_packages.add(name[:i])
+        self.qualified_imports[name] = module_context
 
-    def add_unqualified_import(self, local_name: str, item: ir.Func | types.Struct) -> None:
+    def add_unqualified_import(
+        self, local_name: str, item: ir.Func | types.Struct
+    ) -> None:
         """Добавить unqualified import (from module using name)"""
         self.unqualified_imports[local_name] = item
 
@@ -54,7 +72,7 @@ class Context:
 
     def find(
         self, name: str, location: Location
-    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context:
+    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context | UsedPackage:
         # Сначала проверяем локальные переменные, функции и структуры
         for scope in reversed(self.scopes):
             if var := scope.vars.get(name):
@@ -63,26 +81,52 @@ class Context:
                 return func
             if struct := scope.structs.get(name):
                 return struct
-        
+
         # Проверяем unqualified imports (from module using name)
         if item := self.unqualified_imports.get(name):
             return item
-        
+
         if name in self.qualified_imports:
             return self.qualified_imports[name]
         
+        if (name,) in self.used_packages:
+            return UsedPackage(self, [name])
+
         raise CompilationError(
             location,
             f"name '{name}' not found",
             self.source,
-            helps=[Note(f"Check that '{name}' is defined before use, or that it's spelled correctly")]
+            helps=[
+                Note(
+                    f"Check that '{name}' is defined before use, or that it's spelled correctly"
+                )
+            ],
         )
 
     def find_qualified(
-        self, module_name: str, name: str, location: Location
+        self, module_name: list[str], name: str, location: Location
     ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context:
         """Найти символ в конкретном модуле (module.name)"""
-        return self.qualified_imports[module_name].find(name, location)
+        return self.qualified_imports[tuple(module_name)].find(name, location)
+    
+    def find_in_package(self, package_name: list[str], name: str, location: Location):
+        module_name = (*package_name, name)
+        if context := self.qualified_imports.get(module_name):
+            return context
+        
+        if module_name in self.used_packages:
+            return UsedPackage(self, list(module_name))
+        
+        raise CompilationError(
+            location,
+            f"name '{name}' is not imported from '{package_name}'",
+            self.source,
+            helps=[
+                Note(
+                    f"Check that '{name}' is defined before use, or that it's spelled correctly"
+                )
+            ],
+        )
 
     def add_var(self, var: ir.VarDecl | ir.Arg) -> None:
         self.scopes[-1].vars[var.name] = var
@@ -118,7 +162,7 @@ class Context:
             if scope.is_loop:
                 return True
         return False
-    
+
 
 def create_context(module: ir.Module, source: Source):
     context = Context(source)

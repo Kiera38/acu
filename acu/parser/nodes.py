@@ -354,7 +354,7 @@ class OpAssignStmt(Stmt):
 @dataclass
 class UseStmt(Stmt):
     """using module_name - квалифицированный импорт"""
-    module_name: str
+    module_name: list[str]
 
     def accept[T](self, visitor: StmtVisitor[T]) -> T:
         return visitor.use_stmt(self)
@@ -373,7 +373,7 @@ class UseItem(Node):
 @dataclass
 class FromUseStmt(Stmt):
     """from module_name using name1, name2"""
-    module_name: str
+    module_name: list[str]
     items: list[UseItem]
 
     def accept[T](self, visitor: StmtVisitor[T]) -> T:

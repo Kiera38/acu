@@ -19,7 +19,7 @@ class ModuleInfo:
 
     source: Source  # Исходный код
     ast: Module  # Распарсенный AST
-    imports: set[str]  # Множество импортированных модулей
+    imports: set[tuple[str, ...]]  # Множество импортированных модулей
 
 
 class Package:
@@ -32,23 +32,28 @@ class Package:
         self.ir_modules: list[semanal.ir.Module] = []
         self.funcs = []
 
-    def load_modules(self, path: Path | None = None) -> None:
+    def load_modules(self, path: Path | None = None, package_name: str = '') -> None:
         """Загружает все модули пакета из папки"""
         if path is None:
             path = self.path
 
         for file_path in path.glob("*.acu"):
             module_name = file_path.stem  # Имя без расширения
+            if package_name:
+                module_name = '.'.join((package_name, module_name))
             code = file_path.read_text()
             source = Source(module_name, str(file_path), code)
             ast = parse(source)
-            imports: set[str] = {import_stmt.module_name for import_stmt in ast.imports}
+            imports = {tuple(import_stmt.module_name) for import_stmt in ast.imports}
             module_info = ModuleInfo(source=source, ast=ast, imports=imports)
             self.modules[module_name] = module_info
         
         for dir in path.iterdir():
             if dir.is_dir():
-                self.load_modules(dir)
+                name = dir.stem
+                if package_name:
+                    name = '.'.join((package_name, name))
+                self.load_modules(dir, name)
 
     def _validate_imports(self) -> None:
         """
@@ -57,6 +62,7 @@ class Package:
         Raises:
             CompilationError: Если импортированный модуль не найден
         """
+        # todo: меня как-то смущает этот код
         for module_info in self.modules.values():
             for imported_module in module_info.imports:
                 if imported_module not in self.modules:

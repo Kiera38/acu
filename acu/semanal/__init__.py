@@ -37,7 +37,9 @@ def analyze(
     modules: list[tuple[nodes.Module, Source]], error_collector: ErrorCollector
 ) -> tuple[list[ir.Module], list[types.TypedFunc]]:
     ir_modules = [(create_module(module), source) for module, source in modules]
-    contexts = {source.name: create_context(module, source) for module, source in ir_modules}
+    contexts = {
+        source.name: create_context(module, source) for module, source in ir_modules
+    }
     for module_ast, source in modules:
         add_imports(module_ast, contexts[source.name], contexts)
     funcs = []

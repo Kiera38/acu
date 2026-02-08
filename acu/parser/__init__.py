@@ -125,16 +125,20 @@ class Parser:
     def parse_use_stmt(self) -> UseStmt:
         """using module_name"""
         location = self.peek(-1).location  # 'using' token location
-        module_name_token = self.expect(TokenType.IDENTIFIER, "Expected module name after 'using'")
-        module_name = cast(str, module_name_token.value)
+        module_name = self.parse_module_name()
         self.expect(TokenType.NEW_LINE, "Expected newline after import statement")
         return UseStmt(location, module_name)
+    
+    def parse_module_name(self) -> list[str]:
+        name = [cast(str, self.expect(TokenType.IDENTIFIER, "Expected module name after 'using'").value)]
+        while self.match(TokenType.DOT):
+            name.append(cast(str, self.expect(TokenType.IDENTIFIER, "Expected module name after 'using'").value))
+        return name
 
     def parse_from_use_stmt(self) -> FromUseStmt:
         """from module_name using name1, name2"""
         location = self.peek(-1).location  # 'from' token location
-        module_name_token = self.expect(TokenType.IDENTIFIER, "Expected module name after 'from'")
-        module_name = cast(str, module_name_token.value)
+        module_name = self.parse_module_name()
         self.expect(TokenType.USING, "Expected 'using' after module name")
         
         items: list[UseItem] = []

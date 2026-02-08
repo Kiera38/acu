@@ -6,7 +6,7 @@ from typing import Any, Generator
 from acu.errors import CompilationError, Note
 from acu.parser import ExprVisitor, Location, StmtVisitor, nodes
 from acu.semanal import ir, types
-from acu.semanal.context import Context
+from acu.semanal.context import Context, UsedPackage
 from acu.source import Source
 
 builtin_types = {
@@ -119,10 +119,37 @@ comparison_op = {
 }
 
 
+class GetAttrConverter(ExprVisitor[ir.Inst | Context | UsedPackage]):
+    def __init__(self, context: Context) -> None:
+        super().__init__()
+        self.context = context
+
+    def name(self, expr: nodes.NameExpr) -> ir.Inst | Context | UsedPackage:
+        var = self.context.find(expr.name, expr.location)
+        if isinstance(var, (ir.Func, types.Struct)):
+            return ir.Literal(expr.location, var)
+        if isinstance(var, (Context, UsedPackage)):
+            return var
+        return ir.Load(expr.location, var)
+    
+    def get_attr(self, expr: nodes.GetAttrExpr) -> ir.Inst | Context | UsedPackage:
+        value = expr.value.accept(self)
+        if isinstance(value, ir.Inst):
+            self.context.add(value)
+            return ir.GetAttr(expr.location, value, expr.name)
+        if isinstance(value, Context):
+            result = value.find(expr.name, expr.location)
+            assert isinstance(result, (ir.Func, types.Struct))
+            return ir.Literal(expr.location, result)
+        assert isinstance(value, UsedPackage)
+        return value.find(expr.name, expr.location)
+
+
 class ExprConverter(ExprVisitor[ir.Inst]):
-    def __init__(self, typeconv: TypeConverter, context: Context) -> None:
+    def __init__(self, typeconv: TypeConverter, get_attr_conv: GetAttrConverter, context: Context) -> None:
         super().__init__()
         self.types = typeconv
+        self.get_attr_conv = get_attr_conv
         self.context = context
 
     def accept(self, expr: nodes.Expr) -> ir.Inst:
@@ -135,11 +162,9 @@ class ExprConverter(ExprVisitor[ir.Inst]):
         return block
 
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
-        var = self.context.find(expr.name, expr.location)
-        if isinstance(var, (ir.Func, types.Struct)):
-            return ir.Literal(expr.location, var)
-        assert not isinstance(var, Context)
-        return ir.Load(expr.location, var)
+        var = expr.accept(self.get_attr_conv)
+        assert isinstance(var, ir.Inst)
+        return var
 
     def literal(self, expr: nodes.LiteralExpr) -> ir.Inst:
         return ir.Literal(expr.location, expr.value)
@@ -193,23 +218,9 @@ class ExprConverter(ExprVisitor[ir.Inst]):
         )
 
     def get_attr(self, expr: nodes.GetAttrExpr) -> ir.Inst:
-        # Проверяем, не является ли это квалифицированным импортом (module.name)
-        if isinstance(expr.value, nodes.NameExpr):
-            module_name = expr.value.name
-            attr_name = expr.name
-            if module_name in self.context.qualified_imports:
-                item = self.context.find_qualified(
-                    module_name, attr_name, expr.location
-                )
-                if isinstance(item, (ir.Func, types.Struct)):
-                    return ir.Literal(expr.location, item)
-                raise CompilationError(
-                    expr.location,
-                    f"'{attr_name}' in module '{module_name}' is not a function or struct",
-                    self.context.source,
-                )
-
-        return ir.GetAttr(expr.location, self.accept(expr.value), expr.name)
+        var = expr.accept(self.get_attr_conv)
+        assert isinstance(var, ir.Inst)
+        return var
 
     def array(self, expr: nodes.ArrayExpr) -> ir.Inst:
         return ir.Array(expr.location, [self.accept(item) for item in expr.items])
@@ -452,12 +463,14 @@ def add_imports(
     for import_stmt in module.imports:
         if isinstance(import_stmt, nodes.UseStmt):
             context.add_qualified_import(
-                import_stmt.module_name, modules[import_stmt.module_name]
+                import_stmt.module_name, modules[".".join(import_stmt.module_name)]
             )
         elif isinstance(import_stmt, nodes.FromUseStmt):
             for item in import_stmt.items:
                 local_name = item.alias if item.alias else item.name
-                item = modules[import_stmt.module_name].find(item.name, item.location)
+                item = modules[".".join(import_stmt.module_name)].find(
+                    item.name, item.location
+                )
                 assert not isinstance(
                     item, (ir.VarDecl, ir.Arg, Context)
                 ), "Импортировать можно только функции и структуры"
@@ -466,7 +479,8 @@ def add_imports(
 
 def convert(module: nodes.Module, context: Context) -> None:
     types_conv = TypeConverter(context)
-    exprs = ExprConverter(types_conv, context)
+    get_attr_conv = GetAttrConverter(context)
+    exprs = ExprConverter(types_conv, get_attr_conv, context)
     stmts = StmtConverter(types_conv, exprs, context)
     for struct in module.structs:
         convert_struct(struct, types_conv, context)

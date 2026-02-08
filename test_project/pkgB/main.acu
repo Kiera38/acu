@@ -1,7 +1,7 @@
-using math
+using pkgA.math
 
 func main() Int:
-    var x: Int = math.add(5, 3)
-    var y: Int = math.multiply(4, 2)
-    var z: Int = math.add(x, y)
+    var x: Int = pkgA.math.add(5, 3)
+    var y: Int = pkgA.math.multiply(4, 2)
+    var z: Int = pkgA.math.add(x, y)
     return 0
