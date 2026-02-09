@@ -573,6 +573,10 @@ class FuncIR:
     blocks: list[BasicBlock]
     return_type: Type = field(default_factory=lambda: nothing_type)
 
+    @property
+    def qual_name(self):
+        return f'{self.source.name}.{self.name}'
+
 
 class OpVisitor[T]:
     def op(self, op: Op) -> T:  # type: ignore

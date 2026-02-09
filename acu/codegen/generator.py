@@ -83,7 +83,7 @@ class LLVMGenerator(OpVisitor[llir.Value]):
             llir.FunctionType(
                 self.type(func.return_type), [self.type(arg.type) for arg in func.args]
             ),
-            func.name,
+            func.qual_name,
         )
 
     def generate(self, func: FuncIR):
