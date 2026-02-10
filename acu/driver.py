@@ -4,7 +4,7 @@ from pathlib import Path
 
 from acu import codegen, parser, refanal, semanal
 from acu.errors import CompilationError, ErrorCollector
-from acu.package import Package
+from acu.package import CodegenParams, Project
 from acu.source import Source
 
 
@@ -21,48 +21,41 @@ def is_package_path(path: Path) -> bool:
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("file")
+    parser.add_argument("-o", "--output")
 
     emit_options = [
-        ("llvm_ir", ".ll"),
-        ("llvm_bc", ".bc"),
-        ("object", ".obj" if sys.platform == "win32" else ".o"),
-        ("asm", ".asm"),
-        ("exe", ".exe" if sys.platform == "win32" else ""),
-        ("static_lib", ".lib" if sys.platform == "win32" else ".a"),
-        ("dynamic_lib", ".dll" if sys.platform == "win32" else ".so"),
+        "llvm_ir",
+        "llvm_bc",
+        "object",
+        "asm",
+        "exe",
+        "static_lib",
+        "dynamic_lib",
     ]
-    for option, _ in emit_options:
-        parser.add_argument(
-            f"--{option.replace('_', '-')}",
-            nargs="?",
-            const="file",
-            default=None,
-        )
-    parser.add_argument(
-        "--shared-lib", nargs="?", const="file", default=None, dest="dynamic_lib"
-    )
+    for option in emit_options:
+        parser.add_argument(f"--{option.replace('_', '-')}", nargs="?")
+    parser.add_argument("--shared-lib", nargs="?", dest="dynamic_lib")
 
     parser.add_argument("--opt", type=int, choices=[0, 1, 2, 3], default=0)
     args = parser.parse_args()
-    file = Path(args.file)
-    has_arg = False
-    for option, suffix in emit_options:
-        val = getattr(args, option)
-        if val == "file":
-            setattr(args, option, str(file.with_suffix(suffix)))
-            has_arg = True
-        elif val is not None:
-            val_path = Path(val)
-            if val_path.suffix != suffix:
-                if suffix:
-                    print(f"неправильное расширение у файла {val}")
-                setattr(args, option, str(file.with_suffix(suffix)))
-            has_arg = True
+    has_arg = any(getattr(args, option) for option in emit_options)
     if not has_arg:
-        suffix = ".exe" if sys.platform == "win32" else ""
-        args.exe = str(file.with_suffix(suffix))
-
+        args.exe = True
+    if not args.output:
+        path = Path(args.file)
+        if path.is_dir():
+            args.output = str(path)
+        else:
+            args.output = str(path.parent)
     return args
+
+
+def get_codegen_params(args):
+    if args.exe or args.static_lib or args.dynamic_lib:
+        args.object = True
+    return CodegenParams(
+        Path(args.output), args.llvm_ir, args.llvm_bc, args.object, args.asm, args.opt
+    )
 
 
 def main():
@@ -70,26 +63,19 @@ def main():
     error_collector = ErrorCollector()
 
     path = Path(args.file)
-    if args.exe or args.static_lib or args.dynamic_lib:
-        if args.object is None:
-            args.object = str(
-                path.with_suffix(".obj" if sys.platform == "win32" else ".o")
-            )
 
     try:
         # Проверяем, является ли это пакетом (папкой с .acu файлами) или одиночным файлом
         if is_package_path(path):
             # Компиляция пакета
-            package = Package(path)
-            package.load_modules()
-            package.semanal(error_collector)
-            package.refanal(error_collector)
-            package.codegen(
-                llvm_ir_path=args.llvm_ir,
-                llvm_bc_path=args.llvm_bc,
-                object_path=args.object,
-                asm_path=args.asm,
-                opt=args.opt,
+            project = Project()
+            project.compile(error_collector, path, get_codegen_params(args))
+            output = Path(args.output)
+            codegen.link(
+                [str(o) for o in output.glob("**/*.obj")],
+                str(output / "output.exe") if args.exe else None,
+                str(output / "output.lib") if args.static_lib else None,
+                str(output / "output.dll") if args.dynamic_lib else None,
             )
         else:
             # Компиляция одного файла (старый режим)

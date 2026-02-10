@@ -1,9 +1,15 @@
-using pkgA.math
-using pkgA
+func add(a: Int, b: Int) Int:
+    return a + b
+
+func multiply(a: Int, b: Int) Int:
+    return a * b
+
+func sub(a: Int, b: Int) Int:
+    return a - b
 
 func main() Int:
-    var x: Int = pkgA.math.add(5, 3)
-    var y: Int = pkgA.math.multiply(4, 2)
-    var z: Int = pkgA.math.add(x, y)
-    var c = pkgA.sub(5, 2)
+    var x: Int = add(5, 3)
+    var y: Int = multiply(4, 2)
+    var z: Int = add(x, y)
+    var c = sub(5, 2)
     return 0
