@@ -6,7 +6,7 @@ from typing import Any, Generator
 from acu.errors import CompilationError, Note
 from acu.parser import ExprVisitor, Location, StmtVisitor, nodes
 from acu.semanal import ir, types
-from acu.semanal.context import Context, UsedPackage
+from acu.semanal.context import Context, PackageContext, UsedPackage
 from acu.source import Source
 
 builtin_types = {
@@ -119,36 +119,38 @@ comparison_op = {
 }
 
 
-class GetAttrConverter(ExprVisitor[ir.Inst | Context | UsedPackage]):
+class GetAttrConverter(ExprVisitor[ir.Inst | Context | ir.Module | UsedPackage]):
     def __init__(self, context: Context) -> None:
         super().__init__()
         self.context = context
 
-    def name(self, expr: nodes.NameExpr) -> ir.Inst | Context | UsedPackage:
+    def name(self, expr: nodes.NameExpr) -> ir.Inst | Context | ir.Module | UsedPackage:
         var = self.context.find(expr.name, expr.location)
-        if isinstance(var, (ir.Func, types.Struct)):
+        if isinstance(var, (ir.Func, ir.UsedFunc, types.Struct)):
             return ir.Literal(expr.location, var)
-        if isinstance(var, (Context, UsedPackage)):
+        if isinstance(var, (Context, ir.Module, UsedPackage)):
             return var
         return ir.Load(expr.location, var)
-    
-    def get_attr(self, expr: nodes.GetAttrExpr) -> ir.Inst | Context | UsedPackage:
+
+    def get_attr(self, expr: nodes.GetAttrExpr) -> ir.Inst | Context | ir.Module | UsedPackage:
         value = expr.value.accept(self)
         if isinstance(value, ir.Inst):
             self.context.add(value)
             return ir.GetAttr(expr.location, value, expr.name)
-        if isinstance(value, Context):
+        if isinstance(value, (Context, ir.Module)):
             result = self.context.find_in_module(value, expr.name, expr.location)
-            if isinstance(result, (Context, UsedPackage)):
+            if isinstance(result, (Context, ir.Module, UsedPackage)):
                 return result
-            assert isinstance(result, (ir.Func, types.Struct))
+            assert isinstance(result, (ir.Func, ir.UsedFunc, types.Struct))
             return ir.Literal(expr.location, result)
         assert isinstance(value, UsedPackage)
         return value.find(expr.name, expr.location)
 
 
 class ExprConverter(ExprVisitor[ir.Inst]):
-    def __init__(self, typeconv: TypeConverter, get_attr_conv: GetAttrConverter, context: Context) -> None:
+    def __init__(
+        self, typeconv: TypeConverter, get_attr_conv: GetAttrConverter, context: Context
+    ) -> None:
         super().__init__()
         self.types = typeconv
         self.get_attr_conv = get_attr_conv
@@ -257,7 +259,7 @@ class StoreConverter(ExprVisitor[ir.Inst]):
 
     def name(self, expr: nodes.NameExpr) -> ir.Inst:
         var = self.context.find(expr.name, expr.location)
-        if isinstance(var, (ir.Func, types.Struct, Context, UsedPackage)):
+        if isinstance(var, (ir.Func, types.Struct, Context, ir.Module, UsedPackage)):
             raise CompilationError(
                 expr.location,
                 "function, struct or module cannot be assigned to",
@@ -449,30 +451,67 @@ def convert_func(
     context.pop_scope()
 
 
-def create_module(module: nodes.Module) -> ir.Module:
+def create_module(source: Source, module: nodes.Module) -> ir.Module:
     funcs = []
     structs = []
+    items = {}
     for func in module.funcs:
-        funcs.append(ir.Func(func.name, 0, types.Type(), ir.Block([]), func.location))
+        func = ir.Func(func.name, 0, types.Type(), ir.Block([]), func.location)
+        funcs.append(func)
+        items[func.name] = func
+        
     for struct in module.structs:
-        structs.append(types.Struct(struct.name, {}, struct.location))
-    return ir.Module(funcs, structs)
+        struct = types.Struct(struct.name, {}, struct.location)
+        structs.append(struct)
+        items[struct.name] = struct
+    return ir.Module(source, funcs, structs, items)
+
+
+def find_module(
+    name: str,
+    modules: dict[str, Context],
+    packages: dict[str, PackageContext],
+    location: Location,
+    source: Source,
+):
+    if module := modules.get(name):
+        return module
+    package_name = name.rsplit(".", 1)[0]
+    if package := packages.get(package_name):
+        if module := package.modules.get(name):
+            return module
+
+    raise CompilationError(location, f"module '{name}' not found", source)
 
 
 def add_imports(
-    module: nodes.Module, context: Context, modules: dict[str, Context]
+    module: nodes.Module,
+    context: Context,
+    modules: dict[str, Context],
+    packages: dict[str, PackageContext],
 ) -> None:
     for import_stmt in module.imports:
         if isinstance(import_stmt, nodes.UseStmt):
             context.add_qualified_import(
-                import_stmt.module_name, modules[".".join(import_stmt.module_name)]
+                import_stmt.module_name,
+                find_module(
+                    ".".join(import_stmt.module_name),
+                    modules,
+                    packages,
+                    import_stmt.location,
+                    context.source,
+                ),
             )
         elif isinstance(import_stmt, nodes.FromUseStmt):
             for item in import_stmt.items:
                 local_name = item.alias if item.alias else item.name
-                item = modules[".".join(import_stmt.module_name)].find(
-                    item.name, item.location
-                )
+                item = find_module(
+                    ".".join(import_stmt.module_name),
+                    modules,
+                    packages,
+                    import_stmt.location,
+                    context.source,
+                ).find(item.name, item.location)
                 assert isinstance(
                     item, (ir.Func, types.Struct)
                 ), "Импортировать можно только функции и структуры"

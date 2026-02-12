@@ -32,6 +32,7 @@ from acu.semanal.ir import (
     Store,
     Unary,
     UnaryOp,
+    UsedFunc,
     VarDecl,
 )
 from acu.semanal.types import (
@@ -111,6 +112,8 @@ class TypeAnalyzer(InstVisitor[None]):
                 self.lock_type(inst, float_type, inst.location)
             case Func():
                 self.lock_type(inst, inst.value.get_type(), inst.location)
+            case UsedFunc():
+                self.lock_type(inst, inst.value.func.get_type(), inst.location)
             case Struct():
                 self.lock_type(inst, StructType(inst.value), inst.location)
             case _:

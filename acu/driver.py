@@ -81,7 +81,9 @@ def main():
             # Компиляция одного файла (старый режим)
             source = create_source(args.file)
             ast = parser.parse(source)
-            ir, funcs = semanal.analyze([(ast, source)], error_collector)
+            ir, funcs = semanal.analyze(
+                [(ast, semanal.create_module(source, ast), source)], {}, error_collector
+            )
             fg_ir = refanal.analyze(funcs, error_collector)
             codegen.emit_files(
                 fg_ir,

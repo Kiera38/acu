@@ -233,7 +233,7 @@ class RegisterOp(Op):
 
 
 class Call(RegisterOp):
-    def __init__(self, location: Location, fn: FuncIR, args: Sequence[Value]):
+    def __init__(self, location: Location, fn: FuncIR | UsedFuncIR, args: Sequence[Value]):
         super().__init__(location)
         self.fn = fn
         # assert len(args) == len(fn.args), f"expected {len(fn.args)} args, got {len(args)} in call to {fn.name}"
@@ -575,7 +575,24 @@ class FuncIR:
 
     @property
     def qual_name(self):
-        return f'{self.source.name}.{self.name}'
+        if self.source.name:
+            return f'{self.source.name}.{self.name}'
+        return self.name
+    
+
+@dataclass(eq=False)
+class UsedFuncIR:
+    location: Location
+    source: Source
+    name: str
+    arg_types: list[Type]
+    return_type: Type
+
+    @property
+    def qual_name(self):
+        if self.source.name:
+            return f'{self.source.name}.{self.name}'
+        return self.name
 
 
 class OpVisitor[T]:

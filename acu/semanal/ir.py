@@ -5,8 +5,10 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, cast
 
+from acu.errors import CompilationError
 from acu.parser import Location
 from acu.semanal.types import FuncType, Struct, StructField, Type
+from acu.source import Source
 
 
 class InstVisitor[T]:
@@ -358,12 +360,29 @@ class Func:
 
     def iter_code(self):
         return CodeIterator(self.code)
+    
+
+@dataclass(eq=False)
+class UsedFunc:
+    func: Func
+    module: Module
 
 
 @dataclass
 class Module:
+    source: Source
     funcs: list[Func]
     structs: list[Struct]
+    items: dict[str, Func | Struct]
+
+    def find(self, name: str, location: Location):
+        if item := self.items.get(name):
+            if isinstance(item, Func):
+                return UsedFunc(item, self)
+            return item
+        raise CompilationError(
+            location, f"module not contain item '{name}'", self.source
+        )
 
 
 class CodeIterator(Iterable, InstVisitor[Iterator[Inst]]):

@@ -34,13 +34,13 @@ class Context:
         self.blocks: list[ir.Block] = []
         # Импорты: для "using module" -> {module_name: module_context}
         #          для "from module using names" -> {local_name: item}
-        self.qualified_imports: dict[tuple[str, ...], Context] = {}
+        self.qualified_imports: dict[tuple[str, ...], Context | ir.Module] = {}
         # используемые, но не импортированные пакеты (для поиска элементов по типу pkg.module.func())
         self.used_packages: set[tuple[str, ...]] = set()
         self.unqualified_imports: dict[str, ir.Func | types.Struct] = {}
 
     def add_qualified_import(
-        self, module_name: list[str], module_context: Context
+        self, module_name: list[str], module_context: Context | ir.Module
     ) -> None:
         """Добавить qualified import (using module_name)"""
         name = tuple(module_name)
@@ -72,7 +72,7 @@ class Context:
 
     def find(
         self, name: str, location: Location
-    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context | UsedPackage:
+    ) -> ir.VarDecl | ir.Arg | ir.Func | types.Struct | Context | ir.Module | UsedPackage:
         # Сначала проверяем локальные переменные, функции и структуры
         for scope in reversed(self.scopes):
             if var := scope.vars.get(name):
@@ -88,7 +88,7 @@ class Context:
 
         if (name,) in self.qualified_imports:
             return self.qualified_imports[(name,)]
-        
+
         if (name,) in self.used_packages:
             return UsedPackage(self, [name])
 
@@ -102,29 +102,29 @@ class Context:
                 )
             ],
         )
-    
-    def find_in_module(self, context: Context, name: str, location: Location):
+
+    def find_in_module(self, context: Context | ir.Module, name: str, location: Location):
         """Ищет в context, затем ищет подходящие импортированнные пакеты и модули"""
         try:
             return context.find(name, location)
         except CompilationError:
-            module_name = (*context.source.name.split('.'), name)
+            module_name = (*context.source.name.split("."), name)
             if mod_context := self.qualified_imports.get(module_name):
                 return mod_context
-            
+
             if module_name in self.used_packages:
                 return UsedPackage(self, list(module_name))
 
             raise
-    
+
     def find_in_package(self, package_name: list[str], name: str, location: Location):
         module_name = (*package_name, name)
         if context := self.qualified_imports.get(module_name):
             return context
-        
+
         if module_name in self.used_packages:
             return UsedPackage(self, list(module_name))
-        
+
         raise CompilationError(
             location,
             f"name '{name}' is not imported from '{package_name}'",
@@ -179,3 +179,8 @@ def create_context(module: ir.Module, source: Source):
     for struct in module.structs:
         context.add_struct(struct)
     return context
+
+
+@dataclass
+class PackageContext:
+    modules: dict[str, ir.Module]

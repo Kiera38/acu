@@ -1,7 +1,7 @@
 from acu.errors import CompilationError, ErrorCollector
 from acu.parser import nodes
 from acu.semanal.basic import add_imports, create_module, convert
-from acu.semanal.context import create_context
+from acu.semanal.context import PackageContext, create_context
 from acu.semanal.typeanal import TypeAnalyzer
 from acu.semanal import ir, types
 from acu.source import Source
@@ -34,18 +34,17 @@ def type_analyze(
 
 
 def analyze(
-    modules: list[tuple[nodes.Module, Source]], error_collector: ErrorCollector
+    modules: list[tuple[nodes.Module, ir.Module, Source]], packages: dict[str, PackageContext], error_collector: ErrorCollector
 ) -> tuple[list[ir.Module], list[types.TypedFunc]]:
-    ir_modules = [(create_module(module), source) for module, source in modules]
     contexts = {
-        source.name: create_context(module, source) for module, source in ir_modules
+        source.name: create_context(ir_module, source) for module_ast, ir_module, source in modules
     }
-    for module_ast, source in modules:
-        add_imports(module_ast, contexts[source.name], contexts)
+    for module_ast, ir_module, source in modules:
+        add_imports(module_ast, contexts[source.name], contexts, packages)
     funcs = []
-    for (module_ast, source), (ir_module, source) in zip(modules, ir_modules):
+    for module_ast, ir_module, source in modules:
         convert(module_ast, contexts[source.name])
         funcs.extend([(func, source) for func in ir_module.funcs])
 
     typed_funcs = type_analyze(funcs, error_collector)
-    return [module for module, _ in ir_modules], typed_funcs
+    return [ir_module for module_ast, ir_module, _ in modules], typed_funcs

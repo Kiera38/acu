@@ -24,6 +24,7 @@ from acu.refanal.flow_graph_ir import (
     Store,
     Unary,
     Undef,
+    UsedFuncIR,
     Value,
 )
 from acu.semanal import ir
@@ -37,7 +38,7 @@ from acu.semanal.types import (
 
 
 class IRBuilder(ir.InstVisitor[Value]):
-    def __init__(self, func_map: dict[str, FuncIR], func: TypedFunc):
+    def __init__(self, func_map: dict[ir.Func, FuncIR], func: TypedFunc):
         self.func_map = func_map
         self.func = func
         self.value_map: dict[ir.Inst, Value] = {}
@@ -330,12 +331,26 @@ class IRBuilder(ir.InstVisitor[Value]):
                     inst.location, [self.value(a) for a in inst.args], fn_inst.value
                 )
             )
+        
+        if isinstance(fn_inst.value, ir.UsedFunc):
+            arg_types = [self.type(a) for a in inst.args]
+            return_type = fn_inst.value.func.return_type
+            fn = UsedFuncIR(
+                location=fn_inst.location,
+                source=fn_inst.value.module.source,
+                name=fn_inst.value.func.name,
+                arg_types=arg_types,
+                return_type=return_type,
+            )
+            args_vals = [self.value(a) for a in inst.args]
+            op = Call(location=inst.location, fn=fn, args=args_vals)
+            return self.add(op)
         assert isinstance(fn_inst.value, ir.Func), (
             "Function call target must be a function"
         )
-        fn = self.func_map.get(fn_inst.value.name)
+        fn = self.func_map.get(fn_inst.value)
         assert fn is not None, (
-            f"Function {getattr(fn_inst, 'name', None)} not found in func_map"
+            f"Function {fn_inst.value.name} not found in func_map"
         )
         args_vals = [self.value(a) for a in inst.args]
         op = Call(location=inst.location, fn=fn, args=args_vals)
@@ -503,7 +518,7 @@ class IRBuilder(ir.InstVisitor[Value]):
 
 
 def build_func(
-    func_map: dict[str, FuncIR],
+    func_map: dict[ir.Func, FuncIR],
     func: TypedFunc,
     ir_func: FuncIR,
 ) -> FuncIR:
@@ -519,17 +534,17 @@ def build_func(
 
 
 def build_module(funcs: list[TypedFunc]) -> list[FuncIR]:
-    func_map: dict[str, FuncIR] = {}
+    func_map: dict[ir.Func, FuncIR] = {}
 
     # First pass: create stubs
     for func in funcs:
         stub = FuncIR(
             name=func.func.name, args=[], blocks=[], location=func.func.location, source=func.source
         )
-        func_map[func.func.name] = stub
+        func_map[func.func] = stub
 
     # Second pass: build each function with resolved call targets
     for func in funcs:
-        build_func(func_map, func, func_map[func.func.name])
+        build_func(func_map, func, func_map[func.func])
 
     return list(func_map.values())

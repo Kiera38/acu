@@ -1,0 +1,5 @@
+using pkgB.main
+
+func main() Int:
+    pkgB.main.main()
+    return 0

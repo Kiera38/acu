@@ -25,6 +25,7 @@ from acu.refanal.flow_graph_ir import (
     StorePtr,
     Unary,
     Unreachable,
+    UsedFuncIR,
     Value,
 )
 from acu.semanal.ir import BinaryOp, ComparisonOp, UnaryOp
@@ -47,6 +48,7 @@ class LLVMGenerator(OpVisitor[llir.Value]):
         self.module = module
         self.builder = llir.IRBuilder()
         self.funcs: dict[FuncIR, llir.Function] = {}
+        self.used_funcs: dict[str, llir.Function] = {}
         self.const_int_type = llir.IntType(32)
 
     def int_const(self, value: int, type: IntType | None = None) -> llir.Value:
@@ -177,7 +179,20 @@ class LLVMGenerator(OpVisitor[llir.Value]):
     def unreachable(self, op: Unreachable) -> llir.Value:
         return self.builder.unreachable()
 
-    def func(self, func: FuncIR) -> llir.Function:
+    def func(self, func: FuncIR | UsedFuncIR) -> llir.Function:
+        if isinstance(func, UsedFuncIR):
+            llfunc = self.used_funcs.get(func.qual_name)
+            if llfunc is None:
+                llfunc = llir.Function(
+                    self.module,
+                    llir.FunctionType(
+                        self.type(func.return_type),
+                        [self.type(PointerType(arg)) for arg in func.arg_types],
+                    ),
+                    func.qual_name,
+                )
+                self.used_funcs[func.qual_name] = llfunc
+            return llfunc
         return self.funcs[func]
 
     def call(self, op: Call) -> llir.Value:
@@ -295,7 +310,7 @@ class LLVMGenerator(OpVisitor[llir.Value]):
                     case IntType(size=64):
                         return self.builder.inttoptr(
                             self.value(op.obj), self.type(op.type)
-                        ) # type: ignore
+                        )  # type: ignore
                     case ArrayType():
                         assert op.obj.type.type == op.type.type
                         return self.value(op.obj)

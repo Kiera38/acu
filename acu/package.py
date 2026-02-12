@@ -12,6 +12,7 @@ from acu import codegen, refanal, semanal
 from acu.errors import CompilationError, Note
 from acu.parser import parse
 from acu.parser.nodes import Module, UseStmt, FromUseStmt
+from acu.semanal.context import PackageContext
 from acu.source import Source
 
 
@@ -32,6 +33,7 @@ class ModuleInfo:
     source: Source  # Исходный код
     ast: Module  # Распарсенный AST
     imports: set[tuple[str, ...]]  # Множество импортированных модулей
+    ir: semanal.ir.Module
 
 
 class Package:
@@ -74,7 +76,12 @@ class Package:
         source = Source(module_name, str(file_path), code)
         ast = parse(source)
         imports = {tuple(import_stmt.module_name) for import_stmt in ast.imports}
-        module_info = ModuleInfo(source=source, ast=ast, imports=imports)
+        module_info = ModuleInfo(
+            source=source,
+            ast=ast,
+            imports=imports,
+            ir=semanal.create_module(source, ast),
+        )
         self.modules[module_name] = module_info
 
     def _validate_imports(self) -> None:
@@ -108,14 +115,18 @@ class Package:
         if name not in self.modules:
             raise ValueError(f"Module '{name}' not found")
         return self.modules[name]
+    
+    def create_context(self):
+        return PackageContext({name: module_info.ir for name, module_info in self.modules.items()})
 
-    def semanal(self, error_collector) -> None:
+    def semanal(self, packages: dict[str, PackageContext], error_collector) -> None:
         self._validate_imports()
         self.ir_modules, self.funcs = semanal.analyze(
             [
-                (module_info.ast, module_info.source)
+                (module_info.ast, module_info.ir, module_info.source)
                 for module_info in self.modules.values()
             ],
+            packages,
             error_collector,
         )
 
@@ -147,8 +158,9 @@ class Project:
         self, error_collector, path: Path, codegen_params: CodegenParams, name: str = ""
     ):
         self.find_packages(path, name)
+        packages = {package.name: package.create_context() for package in self.packages}
         for package in self.packages:
-            package.semanal(error_collector)
+            package.semanal(packages, error_collector)
         for package in self.packages:
             package.refanal(error_collector)
         for package in self.packages:
