@@ -1,0 +1,12 @@
+Checks:
+  bugprone-*,
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  -modernize-use-trailing-return-type,
+  -misc-no-recursion,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-avoid-magic-numbers
+  
