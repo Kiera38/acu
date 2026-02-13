@@ -1,54 +1,58 @@
 #include "lexer.h"
-#include <stdexcept>
-#include <unordered_map>
-#include <cctype>
-#include <algorithm>
-#include <string_view>
+
+#include <array>
 #include <optional>
+#include <span>
+#include <stdexcept>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
-#include <locale>
-#include <codecvt>
 
 namespace acu::parser {
-
-// Helper functions for UTF-8 handling
-inline bool Lexer::is_utf8_start_byte(unsigned char c) const {
-    return (c & 0x80) == 0 || (c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 || (c & 0xF8) == 0xF0;
+namespace {
+// Helper functions for UTF-8 handling (moved outside class)
+inline bool is_utf8_start_byte(unsigned char c) {
+    return (c & 0x80) == 0 || (c & 0xE0) == 0xC0 || (c & 0xF0) == 0xE0 ||
+           (c & 0xF8) == 0xF0;
 }
 
-inline std::pair<char32_t, size_t> Lexer::decode_utf8(const std::string& str, size_t pos) const {
+inline std::pair<char32_t, size_t> decode_utf8(
+    std::string_view str, size_t pos
+) {
     if (pos >= str.size()) {
         return {U'\0', 0};
     }
-    
-    unsigned char byte1 = static_cast<unsigned char>(str[pos]);
-    
-    if ((byte1 & 0x80) == 0) { // ASCII
+
+    auto byte1 = static_cast<unsigned char>(str[pos]);
+
+    if ((byte1 & 0x80) == 0) {  // ASCII
         return {static_cast<char32_t>(byte1), 1};
-    } else if ((byte1 & 0xE0) == 0xC0) { // 2-byte sequence
+    } else if ((byte1 & 0xE0) == 0xC0) {  // 2-byte sequence
         if (pos + 1 >= str.size()) return {U'\0', 0};
-        unsigned char byte2 = static_cast<unsigned char>(str[pos + 1]);
+        auto byte2 = static_cast<unsigned char>(str[pos + 1]);
         char32_t ch = ((byte1 & 0x1F) << 6) | (byte2 & 0x3F);
         return {ch, 2};
-    } else if ((byte1 & 0xF0) == 0xE0) { // 3-byte sequence
+    } else if ((byte1 & 0xF0) == 0xE0) {  // 3-byte sequence
         if (pos + 2 >= str.size()) return {U'\0', 0};
-        unsigned char byte2 = static_cast<unsigned char>(str[pos + 1]);
-        unsigned char byte3 = static_cast<unsigned char>(str[pos + 2]);
-        char32_t ch = ((byte1 & 0x0F) << 12) | ((byte2 & 0x3F) << 6) | (byte3 & 0x3F);
+        auto byte2 = static_cast<unsigned char>(str[pos + 1]);
+        auto byte3 = static_cast<unsigned char>(str[pos + 2]);
+        char32_t ch =
+            ((byte1 & 0x0F) << 12) | ((byte2 & 0x3F) << 6) | (byte3 & 0x3F);
         return {ch, 3};
-    } else if ((byte1 & 0xF8) == 0xF0) { // 4-byte sequence
+    } else if ((byte1 & 0xF8) == 0xF0) {  // 4-byte sequence
         if (pos + 3 >= str.size()) return {U'\0', 0};
-        unsigned char byte2 = static_cast<unsigned char>(str[pos + 1]);
-        unsigned char byte3 = static_cast<unsigned char>(str[pos + 2]);
-        unsigned char byte4 = static_cast<unsigned char>(str[pos + 3]);
-        char32_t ch = ((byte1 & 0x07) << 18) | ((byte2 & 0x3F) << 12) | ((byte3 & 0x3F) << 6) | (byte4 & 0x3F);
+        auto byte2 = static_cast<unsigned char>(str[pos + 1]);
+        auto byte3 = static_cast<unsigned char>(str[pos + 2]);
+        auto byte4 = static_cast<unsigned char>(str[pos + 3]);
+        char32_t ch = ((byte1 & 0x07) << 18) | ((byte2 & 0x3F) << 12) |
+                      ((byte3 & 0x3F) << 6) | (byte4 & 0x3F);
         return {ch, 4};
     }
-    
-    return {U'\0', 0}; // Invalid UTF-8
+
+    return {U'\0', 0};  // Invalid UTF-8
 }
 
-inline size_t Lexer::encode_utf8(char32_t ch, char* buffer) const {
+inline size_t encode_utf8(char32_t ch, std::span<char, 4> buffer) {
     if (ch < 0x80) {
         buffer[0] = static_cast<char>(ch);
         return 1;
@@ -68,30 +72,47 @@ inline size_t Lexer::encode_utf8(char32_t ch, char* buffer) const {
         buffer[3] = static_cast<char>(0x80 | (ch & 0x3F));
         return 4;
     }
-    return 0; // Invalid Unicode
+    return 0;  // Invalid Unicode
+}
 }
 
-Token Lexer::make_token(TokenType type, const Position& start_pos) const {
+Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index) const {
     Location loc;
-    if (start_pos.byte_index != 0 || start_pos.line != 1 || start_pos.column != 1) {
-        loc.start = static_cast<std::uint32_t>(start_pos.byte_index);
-        loc.end = static_cast<std::uint32_t>(pos_.byte_index);
+    if (start_byte_index != 0) {
+        loc.start = start_byte_index;
+        loc.end = byte_index_;
     } else {
-        loc.start = static_cast<std::uint32_t>(pos_.byte_index > 0 ? pos_.byte_index - 1 : pos_.byte_index);
-        loc.end = static_cast<std::uint32_t>(pos_.byte_index);
+        loc.start = byte_index_ > 0 ? byte_index_ - 1 : byte_index_;
+        loc.end = byte_index_;
     }
-    return Token{type, loc, false};
+    return Token {.type = type, .location = loc, .value = {false}};
 }
 
-Lexer::Lexer(const Source& source) : source_(&source), source_text_(source.content), pos_({0, 1, 1}), begin_of_line_(true), dedents_(0) {
-    indent_stack_.emplace_back(std::string_view(""));
+Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index, Token::Value value) const {
+    Location loc;
+    if (start_byte_index != 0) {
+        loc.start = start_byte_index;
+        loc.end = byte_index_;
+    } else {
+        loc.start = byte_index_ > 0 ? byte_index_ - 1 : byte_index_;
+        loc.end = byte_index_;
+    }
+    return Token{.type=type, .location=loc, .value={value}};
+}
+
+Lexer::Lexer(const Source& source)
+    : source_(&source),
+      source_text_(source.content),
+      begin_of_line_(true),
+      dedents_(0) {
+    indent_stack_.emplace_back("");
 }
 
 char32_t Lexer::peek() const {
     if (at_end()) {
         return U'\0';
     }
-    auto [ch, len] = decode_utf8(std::string(source_text_), pos_.byte_index);
+    auto [ch, len] = decode_utf8(source_text_, byte_index_);
     return ch;
 }
 
@@ -99,23 +120,14 @@ char32_t Lexer::next() {
     if (at_end()) {
         return U'\0';
     }
-    auto [ch, len] = decode_utf8(std::string(source_text_), pos_.byte_index);
-    if (ch == U'\n') {
-        pos_.byte_index += len;
-        pos_.line++;
-        pos_.column = 1;
-    } else {
-        pos_.byte_index += len;
-        pos_.column++;
-    }
+    auto [ch, len] = decode_utf8(source_text_, byte_index_);
+    byte_index_ += len;
     return ch;
 }
 
-bool Lexer::at_end() const {
-    return pos_.byte_index >= source_text_.size();
-}
+bool Lexer::at_end() const { return byte_index_ >= source_text_.size(); }
 
-bool Lexer::at_end_index(std::size_t idx) const {
+bool Lexer::at_end_index(std::uint32_t idx) const {
     return idx >= source_text_.size();
 }
 
@@ -126,7 +138,6 @@ bool Lexer::match(char32_t c) {
     }
     return false;
 }
-
 
 void Lexer::skip_whitespace() {
     while (!at_end() && (peek() == U' ' || peek() == U'\t')) {
@@ -148,73 +159,82 @@ std::optional<Token> Lexer::check_indent() {
         }
         return make_token(TokenType::Dedent);
     }
-    
+
     if (at_end() && indent_stack_.size() > 1) {
         indent_stack_.pop_back();
         return make_token(TokenType::Dedent);
     }
-    
+
     while (!at_end()) {
-        Position start = pos_;
+        std::uint32_t start_byte_index = byte_index_;
+
         while (peek() == U' ' || peek() == U'\t') {
             next();
         }
-        
+
         if (match(U'#')) {
             skip_comment();
             continue;
         }
-        
+
         if (peek() == U'\n' || peek() == U'\r') {
             next();
             continue;
         }
-        
+
         if (at_end()) {
             return std::nullopt;
         }
-        
-        std::string_view indent = source_text_.substr(start.byte_index, pos_.byte_index - start.byte_index);
+
+        std::string_view indent = source_text_.substr(
+            start_byte_index, byte_index_ - start_byte_index
+        );
         std::string_view prev_indent = indent_stack_.back();
-        
+
         if (indent == prev_indent) {
             begin_of_line_ = false;
             return std::nullopt;
         }
-        
+
         if (indent.length() > prev_indent.length()) {
             if (indent.substr(0, prev_indent.length()) != prev_indent) {
-                throw std::runtime_error("Incorrect indentation: inconsistent tabs and spaces");
+                throw std::runtime_error(
+                    "Incorrect indentation: inconsistent tabs and spaces"
+                );
             }
             indent_stack_.push_back(indent);
             begin_of_line_ = false;
-            return make_token(TokenType::Indent, start);
+            return make_token(TokenType::Indent, start_byte_index);
         }
-        
+
         while (indent.length() < prev_indent.length()) {
-            if (prev_indent.substr(0, indent.length()) != indent) {
-                throw std::runtime_error("Incorrect indentation: inconsistent tabs and spaces");
+            if (!prev_indent.starts_with(indent)) {
+                throw std::runtime_error(
+                    "Incorrect indentation: inconsistent tabs and spaces"
+                );
             }
             dedents_++;
             indent_stack_.pop_back();
             prev_indent = indent_stack_.back();
         }
-        
+
         if (indent.length() != prev_indent.length()) {
             throw std::runtime_error("Incorrect indentation size");
         }
-        
+
         if (prev_indent != indent) {
-            throw std::runtime_error("Incorrect indentation: inconsistent tabs and spaces");
+            throw std::runtime_error(
+                "Incorrect indentation: inconsistent tabs and spaces"
+            );
         }
-        
+
         dedents_--;
         if (dedents_ == 0) {
             begin_of_line_ = false;
         }
-        return make_token(TokenType::Dedent, start);
+        return make_token(TokenType::Dedent, start_byte_index);
     }
-    
+
     return std::nullopt;
 }
 
@@ -225,15 +245,18 @@ bool Lexer::is_unicode_alpha(char32_t c) const {
         return true;
     }
     // Cyrillic letters (basic range)
-    if ((c >= 0x0410 && c <= 0x042F) || (c >= 0x0430 && c <= 0x044F)) { // А-Я, а-я
+    if ((c >= 0x0410 && c <= 0x042F) ||
+        (c >= 0x0430 && c <= 0x044F)) {  // А-Я, а-я
         return true;
     }
     // Greek letters (basic range)
-    if ((c >= 0x0391 && c <= 0x03A9) || (c >= 0x03B1 && c <= 0x03C9)) { // Α-Ω, α-ω
+    if ((c >= 0x0391 && c <= 0x03A9) ||
+        (c >= 0x03B1 && c <= 0x03C9)) {  // Α-Ω, α-ω
         return true;
     }
     // Common accented Latin letters
-    if ((c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) || (c >= 0xF8 && c <= 0xFF)) {
+    if ((c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) ||
+        (c >= 0xF8 && c <= 0xFF)) {
         return true;
     }
     // Extended Latin letters
@@ -266,12 +289,14 @@ bool Lexer::is_unicode_digit(char32_t c) const {
 }
 
 Token Lexer::identifier_or_keyword() {
-    Position start = pos_;
+    std::uint32_t start_byte_index = byte_index_;
+
     while (is_unicode_alnum(peek()) || peek() == U'_') {
         next();
     }
-    std::string_view id = std::string_view(source_text_).substr(start.byte_index, pos_.byte_index - start.byte_index);
-    
+    std::string_view id =
+        source_text_.substr(start_byte_index, byte_index_ - start_byte_index);
+
     static const std::unordered_map<std::string_view, TokenType> keywords = {
         {"func", TokenType::Func},
         {"if", TokenType::If},
@@ -291,22 +316,26 @@ Token Lexer::identifier_or_keyword() {
         {"using", TokenType::Using},
         {"from", TokenType::From}
     };
-    
+
     auto it = keywords.find(id);
-    TokenType type = (it != keywords.end()) ? it->second : TokenType::Identifier;
-    return make_token(type, start, id);
+    TokenType type =
+        (it != keywords.end()) ? it->second : TokenType::Identifier;
+    return make_token(type, start_byte_index, {id});
 }
 
 Token Lexer::number() {
-    Position start = pos_;
+    std::uint32_t start_byte_index = byte_index_;
+
     std::string text;
     bool is_float = false;
-    
+
     while (is_unicode_digit(peek()) || peek() == U'.' || peek() == U'_') {
         if (peek() == U'.') {
             text += '.';
             if (is_float) {
-                throw std::runtime_error("Invalid number: multiple decimal points");
+                throw std::runtime_error(
+                    "Invalid number: multiple decimal points"
+                );
             }
             is_float = true;
         } else if (peek() != U'_') {
@@ -319,24 +348,25 @@ Token Lexer::number() {
             break;
         }
     }
-    
+
     if (is_float) {
-        return make_token(TokenType::Float, start, std::stod(text));
+        return make_token(TokenType::Float, start_byte_index, {std::stod(text)});
     } else {
-        return make_token(TokenType::Integer, start, std::stoll(text));
+        return make_token(
+            TokenType::Integer, start_byte_index, {std::stoll(text)}
+        );
     }
 }
 
 Token Lexer::hex_number() {
-    Position start = pos_;
+    std::uint32_t start_byte_index = byte_index_;
+
     std::string text;
-    next(); // consume '0'
-    next(); // consume 'x'
-    
-    while (is_unicode_digit(peek()) || 
-           (peek() >= U'a' && peek() <= U'f') || 
-           (peek() >= U'A' && peek() <= U'F') ||
-           peek() == U'_') {
+    next();  // consume '0'
+    next();  // consume 'x'
+
+    while (is_unicode_digit(peek()) || (peek() >= U'a' && peek() <= U'f') ||
+           (peek() >= U'A' && peek() <= U'F') || peek() == U'_') {
         if (peek() != U'_') {
             // Convert the Unicode character back to ASCII for numeric parsing
             char ascii_char = static_cast<char>(peek());
@@ -347,16 +377,19 @@ Token Lexer::hex_number() {
             break;
         }
     }
-    
-    return make_token(TokenType::Integer, start, std::stoll(text, nullptr, 16));
+
+    return make_token(
+        TokenType::Integer, start_byte_index, {std::stoll(text, nullptr, 16)}
+    );
 }
 
 Token Lexer::oct_number() {
-    Position start = pos_;
+    std::uint32_t start_byte_index = byte_index_;
+
     std::string text;
-    next(); // consume '0'
-    next(); // consume 'o'
-    
+    next();  // consume '0'
+    next();  // consume 'o'
+
     while ((peek() >= U'0' && peek() <= U'7') || peek() == U'_') {
         if (peek() != U'_') {
             // Convert the Unicode character back to ASCII for numeric parsing
@@ -368,16 +401,19 @@ Token Lexer::oct_number() {
             break;
         }
     }
-    
-    return make_token(TokenType::Integer, start, std::stoll(text, nullptr, 8));
+
+    return make_token(
+        TokenType::Integer, start_byte_index, {std::stoll(text, nullptr, 8)}
+    );
 }
 
 Token Lexer::bin_number() {
-    Position start = pos_;
+    std::uint32_t start_byte_index = byte_index_;
+
     std::string text;
-    next(); // consume '0'
-    next(); // consume 'b'
-    
+    next();  // consume '0'
+    next();  // consume 'b'
+
     while ((peek() == U'0' || peek() == U'1') || peek() == U'_') {
         if (peek() != U'_') {
             // Convert the Unicode character back to ASCII for numeric parsing
@@ -389,40 +425,53 @@ Token Lexer::bin_number() {
             break;
         }
     }
-    
-    return make_token(TokenType::Integer, start, std::stoll(text, nullptr, 2));
+
+    return make_token(
+        TokenType::Integer, start_byte_index, {std::stoll(text, nullptr, 2)}
+    );
 }
 
 Token Lexer::character() {
-    Position start = pos_;
-    next(); // consume opening '
-    
-    char32_t value;
-    if (match(U'\\')) {
-        char32_t escaped = next();
-        switch (escaped) {
-            case U'n': value = U'\n'; break;
-            case U't': value = U'\t'; break;
-            case U'0': value = U'\0'; break;
-            case U'\'': value = U'\''; break;
-            case U'\\': value = U'\\'; break;
-            default: throw std::runtime_error("Unknown escape sequence in character literal");
+    std::uint32_t start_byte_index = byte_index_;
+
+    next();  // consume opening '
+
+    char32_t value = [&] {
+        if (match(U'\\')) {
+            char32_t escaped = next();
+            switch (escaped) {
+                case U'n':
+                    return U'\n';
+                case U't':
+                    return U'\t';
+                case U'0':
+                    return U'\0';
+                case U'\'':
+                    return U'\'';
+                case U'\\':
+                    return U'\\';
+                default:
+                    throw std::runtime_error(
+                        "Unknown escape sequence in character literal"
+                    );
+            }
+        } else {
+            return next();
         }
-    } else {
-        value = next();
-    }
-    
+    }();
+
     if (!match(U'\'')) {
         throw std::runtime_error("Unterminated character literal");
     }
-    
-    return make_token(TokenType::Char, start, value);
+
+    return make_token(TokenType::Char, start_byte_index, {value});
 }
 
 Token Lexer::string() {
-    Position start = pos_;
+    std::uint32_t start_byte_index = byte_index_;
+
     std::string value;
-    
+
     while (peek() != U'"' && !at_end()) {
         char32_t c = next();
         if (c == U'\\') {
@@ -448,86 +497,75 @@ Token Lexer::string() {
                     value += '\\';
                     break;
                 }
-                default: throw std::runtime_error("Unknown escape sequence in string literal");
+                default:
+                    throw std::runtime_error(
+                        "Unknown escape sequence in string literal"
+                    );
             }
         } else {
             // Convert the Unicode character to UTF-8 bytes and append to value
-            char utf8_buffer[4];
+            std::array<char, 4> utf8_buffer {};
             size_t len = encode_utf8(c, utf8_buffer);
             for (size_t i = 0; i < len; ++i) {
-                value += utf8_buffer[i];
+                value += utf8_buffer.at(i);
             }
         }
     }
-    
+
     if (at_end()) {
         throw std::runtime_error("Unterminated string literal");
     }
-    
-    next(); // consume closing "
-    
-    return make_token(TokenType::String, start, std::string_view(value));
+
+    next();  // consume closing "
+
+    return make_token(
+        TokenType::String, start_byte_index, {std::string_view(value)}
+    );
 }
 
 Token Lexer::operator_() {
-    Position start = pos_;
-    
+    std::uint32_t start_byte_index = byte_index_;
+
     static const std::unordered_map<std::string_view, TokenType> operators = {
-        {"(", TokenType::LParen},
-        {")", TokenType::RParen},
-        {"[", TokenType::LBracket},
-        {"]", TokenType::RBracket},
-        {"{", TokenType::LBrace},
-        {"}", TokenType::RBrace},
-        {":", TokenType::Colon},
-        {";", TokenType::Semicolon},
-        {",", TokenType::Comma},
-        {".", TokenType::Dot},
-        {"~", TokenType::Tilde},
-        {"+", TokenType::Plus},
-        {"+=", TokenType::PlusEqual},
-        {"-", TokenType::Minus},
-        {"-=", TokenType::MinusEqual},
-        {"*", TokenType::Star},
-        {"*=", TokenType::StarEqual},
-        {"/", TokenType::Slash},
-        {"/=", TokenType::SlashEqual},
-        {"%", TokenType::Percent},
-        {"%=", TokenType::PercentEqual},
-        {"=", TokenType::Equal},
-        {"==", TokenType::EqualEqual},
-        {"!=", TokenType::NotEqual},
-        {"<", TokenType::Less},
-        {"<=", TokenType::LessEqual},
-        {">", TokenType::Greater},
-        {">=", TokenType::GreaterEqual},
-        {"|", TokenType::Pipe},
-        {"|=", TokenType::PipeEqual},
-        {"&", TokenType::Amp},
-        {"&=", TokenType::AmpEqual},
-        {"^", TokenType::Caret},
-        {"^=", TokenType::CaretEqual}
+        {"(", TokenType::LParen},        {")", TokenType::RParen},
+        {"[", TokenType::LBracket},      {"]", TokenType::RBracket},
+        {"{", TokenType::LBrace},        {"}", TokenType::RBrace},
+        {":", TokenType::Colon},         {";", TokenType::Semicolon},
+        {",", TokenType::Comma},         {".", TokenType::Dot},
+        {"~", TokenType::Tilde},         {"+", TokenType::Plus},
+        {"+=", TokenType::PlusEqual},    {"-", TokenType::Minus},
+        {"-=", TokenType::MinusEqual},   {"*", TokenType::Star},
+        {"*=", TokenType::StarEqual},    {"/", TokenType::Slash},
+        {"/=", TokenType::SlashEqual},   {"%", TokenType::Percent},
+        {"%=", TokenType::PercentEqual}, {"=", TokenType::Equal},
+        {"==", TokenType::EqualEqual},   {"!=", TokenType::NotEqual},
+        {"<", TokenType::Less},          {"<=", TokenType::LessEqual},
+        {">", TokenType::Greater},       {">=", TokenType::GreaterEqual},
+        {"|", TokenType::Pipe},          {"|=", TokenType::PipeEqual},
+        {"&", TokenType::Amp},           {"&=", TokenType::AmpEqual},
+        {"^", TokenType::Caret},         {"^=", TokenType::CaretEqual}
     };
-    
+
     // Look ahead to find the longest matching operator
-    std::string_view text_remaining = source_text_.substr(pos_.byte_index);
+    std::string_view text_remaining = source_text_.substr(byte_index_);
     std::string_view longest_match;
-    
+
     for (const auto& [op, type] : operators) {
-        if (text_remaining.substr(0, op.length()) == op && op.length() > longest_match.length()) {
+        if (text_remaining.starts_with(op) &&
+            op.length() > longest_match.length()) {
             longest_match = op;
         }
     }
-    
+
     if (!longest_match.empty()) {
         // Advance position by the length of the matched operator
         for (size_t i = 0; i < longest_match.length(); ++i) {
             next();
         }
         auto it = operators.find(longest_match);
-        return make_token(it->second, start);
+        return make_token(it->second, start_byte_index);
     }
-    
+
     throw std::runtime_error("Unknown operator");
 }
 
@@ -537,19 +575,21 @@ Token Lexer::next_token() {
             return token.value();
         }
     }
-    
+
     skip_whitespace();
-    
+
     if (at_end()) {
         return make_token(TokenType::EndOfFile);
     }
-    
+
     char32_t c = peek();
-    
+
     if (is_unicode_digit(c)) {
-        if (c == U'0' && !at_end_index(pos_.byte_index + 1)) {
-            // For checking the next character, we need to decode the next UTF-8 sequence
-            auto [next_ch, next_len] = decode_utf8(std::string(source_text_), pos_.byte_index + 1);
+        if (c == U'0' && !at_end_index(byte_index_ + 1)) {
+            // For checking the next character, we need to decode the next UTF-8
+            // sequence
+            auto [next_ch, next_len] =
+                decode_utf8(source_text_, byte_index_ + 1);
             if (next_ch == U'x' || next_ch == U'X') {
                 return hex_number();
             } else if (next_ch == U'o' || next_ch == U'O') {
@@ -560,28 +600,198 @@ Token Lexer::next_token() {
         }
         return number();
     }
-    
+
     if (is_unicode_alpha(c)) {
         return identifier_or_keyword();
     }
-    
+
     if (c == U'\'') {
         return character();
     }
-    
+
     if (c == U'"') {
         return string();
     }
-    
+
     if (c == U'\n') {
-        Position start = pos_;
+        std::uint32_t start_byte_index = byte_index_;
+
         begin_of_line_ = true;
-        Token token = make_token(TokenType::NewLine, start);
+        Token token = make_token(TokenType::NewLine, start_byte_index);
         next();
         return token;
     }
-    
+
     return operator_();
 }
 
-} // namespace acu::parser
+// Helper function to get token type name as string
+std::string token_type_to_string(TokenType type) {
+    switch (type) {
+        case TokenType::Func:
+            return "FUNC";
+        case TokenType::If:
+            return "IF";
+        case TokenType::Else:
+            return "ELSE";
+        case TokenType::While:
+            return "WHILE";
+        case TokenType::Var:
+            return "VAR";
+        case TokenType::Struct:
+            return "STRUCT";
+        case TokenType::And:
+            return "AND";
+        case TokenType::Or:
+            return "OR";
+        case TokenType::Not:
+            return "NOT";
+        case TokenType::Return:
+            return "RETURN";
+        case TokenType::Break:
+            return "BREAK";
+        case TokenType::Continue:
+            return "CONTINUE";
+        case TokenType::As:
+            return "AS";
+        case TokenType::True:
+            return "TRUE";
+        case TokenType::False:
+            return "FALSE";
+        case TokenType::Using:
+            return "USING";
+        case TokenType::From:
+            return "FROM";
+        case TokenType::Plus:
+            return "PLUS";
+        case TokenType::Minus:
+            return "MINUS";
+        case TokenType::Star:
+            return "STAR";
+        case TokenType::Slash:
+            return "SLASH";
+        case TokenType::Percent:
+            return "PERCENT";
+        case TokenType::Equal:
+            return "EQUAL";
+        case TokenType::PlusEqual:
+            return "PLUSEQUAL";
+        case TokenType::MinusEqual:
+            return "MINUSEQUAL";
+        case TokenType::StarEqual:
+            return "STAREQUAL";
+        case TokenType::SlashEqual:
+            return "SLASHEQUAL";
+        case TokenType::PercentEqual:
+            return "PERCENTEQUAL";
+        case TokenType::Less:
+            return "LESS";
+        case TokenType::LessEqual:
+            return "LESSEQUAL";
+        case TokenType::Greater:
+            return "GREATER";
+        case TokenType::GreaterEqual:
+            return "GREATEREQUAL";
+        case TokenType::NotEqual:
+            return "NOTEQUAL";
+        case TokenType::EqualEqual:
+            return "EQUALEQUAL";
+        case TokenType::Pipe:
+            return "PIPE";
+        case TokenType::Tilde:
+            return "TILDE";
+        case TokenType::Amp:
+            return "AMP";
+        case TokenType::Caret:
+            return "CARET";
+        case TokenType::LessLess:
+            return "LESSLESS";
+        case TokenType::GreaterGreater:
+            return "GREATERGREATER";
+        case TokenType::PipeEqual:
+            return "PIPEEQUAL";
+        case TokenType::TildeEqual:
+            return "TILDEEQUAL";
+        case TokenType::AmpEqual:
+            return "AMPEQUAL";
+        case TokenType::CaretEqual:
+            return "CARETEQUAL";
+        case TokenType::LessLessEqual:
+            return "LESSLESSEQUAL";
+        case TokenType::GreaterGreaterEqual:
+            return "GREATERGREATEREQUAL";
+        case TokenType::LParen:
+            return "LPAREN";
+        case TokenType::RParen:
+            return "RPAREN";
+        case TokenType::LBracket:
+            return "LBRACKET";
+        case TokenType::RBracket:
+            return "RBRACKET";
+        case TokenType::LBrace:
+            return "LBRACE";
+        case TokenType::RBrace:
+            return "RBRACE";
+        case TokenType::Colon:
+            return "COLON";
+        case TokenType::Semicolon:
+            return "SEMICOLON";
+        case TokenType::Comma:
+            return "COMMA";
+        case TokenType::Dot:
+            return "DOT";
+        case TokenType::Integer:
+            return "INTEGER";
+        case TokenType::Float:
+            return "FLOAT";
+        case TokenType::Char:
+            return "CHAR";
+        case TokenType::String:
+            return "STRING";
+        case TokenType::Identifier:
+            return "IDENTIFIER";
+        case TokenType::Indent:
+            return "INDENT";
+        case TokenType::Dedent:
+            return "DEDENT";
+        case TokenType::NewLine:
+            return "NEWLINE";
+        case TokenType::EndOfFile:
+            return "END_OF_FILE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+// Helper function to get token value as string
+std::string token_value_to_string(const Token& token) {
+    return token.value.visit(
+        [](bool val) -> std::string { return val ? "true" : "false"; },
+        [](std::int64_t val) { return std::to_string(val); },
+        [](double val) { return std::to_string(val); },
+        [](char32_t val) {  // Convert char32_t to UTF-8 string
+            if (val < 0x80) {
+                return std::string(1, static_cast<char>(val));
+            } else {
+                // For simplicity, return the codepoint as a string
+                return "U+" + std::to_string(static_cast<uint32_t>(val));
+            }
+        },
+        [](std::string_view val) { return std::string(val); }
+    );
+}
+
+// Helper function to get complete token representation as string
+std::string token_to_string(const Token& token) {
+    std::string result = token_type_to_string(token.type);
+    if (token.type == TokenType::Identifier ||
+        token.type == TokenType::Integer || token.type == TokenType::Float ||
+        token.type == TokenType::Char || token.type == TokenType::String) {
+        result += "(" + token_value_to_string(token) + ")";
+    }
+    result += " @ " + std::to_string(token.location.start) + "-" +
+              std::to_string(token.location.end);
+    return result;
+}
+
+}  // namespace acu::parser

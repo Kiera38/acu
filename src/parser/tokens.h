@@ -1,11 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
-#include "variant.h"
-#include "source.h"
 
-namespace acu {
+#include "source.h"
+#include "variant.h"
+
+namespace acu::parser {
 enum class TokenType : std::uint8_t {
     Func,
     If,
@@ -51,7 +53,6 @@ enum class TokenType : std::uint8_t {
     LessLess,
     GreaterGreater,
 
-
     PipeEqual,
     TildeEqual,
     AmpEqual,
@@ -86,16 +87,17 @@ enum class TokenType : std::uint8_t {
 struct Token {
     TokenType type = TokenType::EndOfFile;
     Location location;
-    utils::Variant<bool, std::int64_t, double, char32_t, std::string_view> value{false}; // Initialize with a default value
-    
-    // Default constructor
-    Token() : type(TokenType::EndOfFile), location(), value(false) {}
-    
-    // Constructor with type and location
-    Token(TokenType t, Location loc) : type(t), location(loc), value(false) {}
-    
-    // Constructor with type, location, and value
-    template<typename T>
-    Token(TokenType t, Location loc, T val) : type(t), location(loc), value(val) {}
+    using Value =
+        utils::Variant<bool, std::int64_t, double, char32_t, std::string_view>;
+    Value value {""};
 };
+
+// Helper function to get token type name as string
+std::string token_type_to_string(TokenType type);
+
+// Helper function to get token value as string
+std::string token_value_to_string(const Token& token);
+
+// Helper function to get complete token representation as string
+std::string token_to_string(const Token& token);
 }
