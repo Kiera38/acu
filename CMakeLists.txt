@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(acu
     src/main.cpp
     src/parser/lexer.cpp
+    src/parser/parser.cpp
+    src/parser/nodes_output.cpp
 )
 
 # Set include directories

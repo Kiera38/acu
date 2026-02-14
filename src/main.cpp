@@ -1,7 +1,7 @@
 #include <iostream>
 #include <string>
 
-#include "parser/lexer.h"
+#include "parser/parser.h"
 #include "source.h"
 
 int main() {
@@ -10,23 +10,35 @@ int main() {
         acu::Source source;
         source.module_name = "test";
         source.path = "test.acu";
-        source.content = "func main() { var x = 42 }";
+        source.content = R"(
+func main() Int:
+    var a = [10, 100, 30, 7]
+    bubble_sort(a as Ptr[Int], 4)
+    return 0
 
-        acu::parser::Lexer lexer(source);
 
-        std::cout << "Lexing the test program...\n";
-        acu::parser::Token token = lexer.next_token();
-        int count = 1;
-        while (token.type != acu::parser::TokenType::EndOfFile) {
-            std::cout << "Token " << count++ << ": "
-                      << acu::parser::token_to_string(token) << '\n';
+func bubble_sort(a: Ptr[Int], n: Int):
+    var swapped
+    var i = 0
+    while i < n -1:
+        swapped = 0
+        var j = 0
+        while j < n-i-1:
+            if a[j] > a[j+1]:
+                var t = a[j+1]
+                a[j+1] = a[j]
+                a[j] = t
+                swapped = 1
+            j+=1
+        if not swapped:
+            break
+        i+=1
+)";
 
-            // Limit to prevent infinite loop in case of error
-            if (count > 15) break;
-            token = lexer.next_token();
-        }
+        auto module = acu::parser::parse(source);
+        std::cout << acu::nodes::to_string(module) << '\n';
 
-        std::cout << "Lexer test completed successfully!\n";
+        std::cout << "Parser test completed successfully!\n";
     } catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << '\n';
         return 1;

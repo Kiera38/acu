@@ -11,7 +11,7 @@
 namespace acu::parser {
 class Lexer {
 public:
-    explicit Lexer(const Source& source);
+    explicit Lexer(Source& source);
 
     Token next_token();
 
@@ -32,15 +32,6 @@ private:
     void skip_comment();
     std::optional<Token> check_indent();
 
-    // Helper function to check if a Unicode character is alphabetic
-    [[nodiscard]] bool is_unicode_alpha(char32_t c) const;
-
-    // Helper function to check if a Unicode character is alphanumeric
-    [[nodiscard]] bool is_unicode_alnum(char32_t c) const;
-
-    // Helper function to check if a Unicode character is a digit
-    [[nodiscard]] bool is_unicode_digit(char32_t c) const;
-
     Token identifier_or_keyword();
     Token number();
     Token hex_number();
@@ -51,7 +42,7 @@ private:
     Token operator_();
 
     // Member variables
-    const Source* source_;
+    Source* source_;
     std::string_view source_text_;
     std::uint32_t byte_index_ = 0;  // Index in the original UTF-8 string
     bool begin_of_line_;

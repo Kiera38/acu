@@ -74,6 +74,57 @@ inline size_t encode_utf8(char32_t ch, std::span<char, 4> buffer) {
     }
     return 0;  // Invalid Unicode
 }
+
+// Helper function to check if a Unicode character is alphabetic
+bool is_unicode_alpha(char32_t c) {
+    // Basic Latin letters
+    if ((c >= U'a' && c <= U'z') || (c >= U'A' && c <= U'Z') || c == U'_') {
+        return true;
+    }
+    // Cyrillic letters (basic range)
+    if ((c >= 0x0410 && c <= 0x042F) ||
+        (c >= 0x0430 && c <= 0x044F)) {  // А-Я, а-я
+        return true;
+    }
+    // Greek letters (basic range)
+    if ((c >= 0x0391 && c <= 0x03A9) ||
+        (c >= 0x03B1 && c <= 0x03C9)) {  // Α-Ω, α-ω
+        return true;
+    }
+    // Common accented Latin letters
+    if ((c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) ||
+        (c >= 0xF8 && c <= 0xFF)) {
+        return true;
+    }
+    // Extended Latin letters
+    if ((c >= 0x100 && c <= 0x17F) || (c >= 0x180 && c <= 0x24F)) {
+        return true;
+    }
+    // CJK letters (simplified)
+    if ((c >= 0x4E00 && c <= 0x9FFF)) {
+        return true;
+    }
+    // Arabic letters
+    if ((c >= 0x0600 && c <= 0x06FF)) {
+        return true;
+    }
+    // Hebrew letters
+    if ((c >= 0x0590 && c <= 0x05FF)) {
+        return true;
+    }
+    return false;
+}
+
+// Helper function to check if a Unicode character is alphanumeric
+bool is_unicode_alnum(char32_t c) {
+    return is_unicode_alpha(c) || (c >= U'0' && c <= U'9');
+}
+
+// Helper function to check if a Unicode character is a digit
+bool is_unicode_digit(char32_t c) {
+    return c >= U'0' && c <= U'9';
+}
+
 }
 
 Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index) const {
@@ -100,7 +151,7 @@ Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index, Token::V
     return Token{.type=type, .location=loc, .value={value}};
 }
 
-Lexer::Lexer(const Source& source)
+Lexer::Lexer(Source& source)
     : source_(&source),
       source_text_(source.content),
       begin_of_line_(true),
@@ -236,56 +287,6 @@ std::optional<Token> Lexer::check_indent() {
     }
 
     return std::nullopt;
-}
-
-// Helper function to check if a Unicode character is alphabetic
-bool Lexer::is_unicode_alpha(char32_t c) const {
-    // Basic Latin letters
-    if ((c >= U'a' && c <= U'z') || (c >= U'A' && c <= U'Z') || c == U'_') {
-        return true;
-    }
-    // Cyrillic letters (basic range)
-    if ((c >= 0x0410 && c <= 0x042F) ||
-        (c >= 0x0430 && c <= 0x044F)) {  // А-Я, а-я
-        return true;
-    }
-    // Greek letters (basic range)
-    if ((c >= 0x0391 && c <= 0x03A9) ||
-        (c >= 0x03B1 && c <= 0x03C9)) {  // Α-Ω, α-ω
-        return true;
-    }
-    // Common accented Latin letters
-    if ((c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) ||
-        (c >= 0xF8 && c <= 0xFF)) {
-        return true;
-    }
-    // Extended Latin letters
-    if ((c >= 0x100 && c <= 0x17F) || (c >= 0x180 && c <= 0x24F)) {
-        return true;
-    }
-    // CJK letters (simplified)
-    if ((c >= 0x4E00 && c <= 0x9FFF)) {
-        return true;
-    }
-    // Arabic letters
-    if ((c >= 0x0600 && c <= 0x06FF)) {
-        return true;
-    }
-    // Hebrew letters
-    if ((c >= 0x0590 && c <= 0x05FF)) {
-        return true;
-    }
-    return false;
-}
-
-// Helper function to check if a Unicode character is alphanumeric
-bool Lexer::is_unicode_alnum(char32_t c) const {
-    return is_unicode_alpha(c) || (c >= U'0' && c <= U'9');
-}
-
-// Helper function to check if a Unicode character is a digit
-bool Lexer::is_unicode_digit(char32_t c) const {
-    return c >= U'0' && c <= U'9';
 }
 
 Token Lexer::identifier_or_keyword() {
@@ -519,7 +520,7 @@ Token Lexer::string() {
     next();  // consume closing "
 
     return make_token(
-        TokenType::String, start_byte_index, {std::string_view(value)}
+        TokenType::String, start_byte_index, {source_->strings.intern(value)}
     );
 }
 
