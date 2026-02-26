@@ -57,47 +57,87 @@ struct Variant {
     // Visit with a single function
     template <typename Func>
     auto visit(Func&& func) & {
-        return std::visit(std::forward<Func>(func), value);
+        using ResultType =
+            decltype(std::visit(std::forward<Func>(func), value));
+        if constexpr (std::is_void_v<ResultType>) {
+            std::visit(std::forward<Func>(func), value);
+        } else {
+            return std::visit(std::forward<Func>(func), value);
+        }
     }
 
     template <typename Func>
     auto visit(Func&& func) const& {
-        return std::visit(std::forward<Func>(func), value);
+        using ResultType =
+            decltype(std::visit(std::forward<Func>(func), value));
+        if constexpr (std::is_void_v<ResultType>) {
+            std::visit(std::forward<Func>(func), value);
+        } else {
+            return std::visit(std::forward<Func>(func), value);
+        }
     }
 
     template <typename Func>
     auto visit(Func&& func) && {
-        return std::visit(std::forward<Func>(func), std::move(value));
+        using ResultType =
+            decltype(std::visit(std::forward<Func>(func), std::move(value)));
+        if constexpr (std::is_void_v<ResultType>) {
+            std::visit(std::forward<Func>(func), std::move(value));
+        } else {
+            return std::visit(std::forward<Func>(func), std::move(value));
+        }
     }
 
     template <typename Func>
     auto visit(Func&& func) const&& {
-        return std::visit(std::forward<Func>(func), std::move(value));
+        using ResultType =
+            decltype(std::visit(std::forward<Func>(func), std::move(value)));
+        if constexpr (std::is_void_v<ResultType>) {
+            std::visit(std::forward<Func>(func), std::move(value));
+        } else {
+            return std::visit(std::forward<Func>(func), std::move(value));
+        }
     }
 
     // Visit with multiple functions (overloaded)
     template <typename... Func>
     auto visit(Func&&... funcs) & {
-        return std::visit(Overloaded {std::forward<Func>(funcs)...}, value);
+        auto visitor = Overloaded {std::forward<Func>(funcs)...};
+        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
+            std::visit(visitor, value);
+        } else {
+            return std::visit(visitor, value);
+        }
     }
 
     template <typename... Func>
     auto visit(Func&&... funcs) const& {
-        return std::visit(Overloaded {std::forward<Func>(funcs)...}, value);
+        auto visitor = Overloaded {std::forward<Func>(funcs)...};
+        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
+            std::visit(visitor, value);
+        } else {
+            return std::visit(visitor, value);
+        }
     }
 
     template <typename... Func>
     auto visit(Func&&... funcs) && {
-        return std::visit(
-            Overloaded {std::forward<Func>(funcs)...}, std::move(value)
-        );
+        auto visitor = Overloaded {std::forward<Func>(funcs)...};
+        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
+            std::visit(visitor, value);
+        } else {
+            return std::visit(visitor, value);
+        }
     }
 
     template <typename... Func>
     auto visit(Func&&... funcs) const&& {
-        return std::visit(
-            Overloaded {std::forward<Func>(funcs)...}, std::move(value)
-        );
+        auto visitor = Overloaded {std::forward<Func>(funcs)...};
+        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
+            std::visit(visitor, value);
+        } else {
+            return std::visit(visitor, value);
+        }
     }
 
     // Index of the currently held alternative

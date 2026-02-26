@@ -61,64 +61,43 @@ private:
     // statements
     nodes::Expr::BinaryOp get_binary_op(TokenType type) {
         switch (type) {
-            case TokenType::Plus:
-                return nodes::Expr::BinaryOp::Add;
-            case TokenType::Minus:
-                return nodes::Expr::BinaryOp::Sub;
-            case TokenType::Star:
-                return nodes::Expr::BinaryOp::Mul;
-            case TokenType::Slash:
-                return nodes::Expr::BinaryOp::Div;
-            case TokenType::Percent:
-                return nodes::Expr::BinaryOp::Mod;
-            case TokenType::LessLess:
-                return nodes::Expr::BinaryOp::LShift;
+            case TokenType::Plus: return nodes::Expr::BinaryOp::Add;
+            case TokenType::Minus: return nodes::Expr::BinaryOp::Sub;
+            case TokenType::Star: return nodes::Expr::BinaryOp::Mul;
+            case TokenType::Slash: return nodes::Expr::BinaryOp::Div;
+            case TokenType::Percent: return nodes::Expr::BinaryOp::Mod;
+            case TokenType::LessLess: return nodes::Expr::BinaryOp::LShift;
             case TokenType::GreaterGreater:
                 return nodes::Expr::BinaryOp::RShift;
-            case TokenType::Pipe:
-                return nodes::Expr::BinaryOp::BitOr;
-            case TokenType::Amp:
-                return nodes::Expr::BinaryOp::BitAnd;
-            case TokenType::Caret:
-                return nodes::Expr::BinaryOp::BitXor;
-            case TokenType::And:
-                return nodes::Expr::BinaryOp::LogicalAnd;
-            case TokenType::Or:
-                return nodes::Expr::BinaryOp::LogicalOr;
-            default:
-                throw std::runtime_error("Invalid binary operation token");
+            case TokenType::Pipe: return nodes::Expr::BinaryOp::BitOr;
+            case TokenType::Amp: return nodes::Expr::BinaryOp::BitAnd;
+            case TokenType::Caret: return nodes::Expr::BinaryOp::BitXor;
+            case TokenType::And: return nodes::Expr::BinaryOp::LogicalAnd;
+            case TokenType::Or: return nodes::Expr::BinaryOp::LogicalOr;
+            default: throw std::runtime_error("Invalid binary operation token");
         }
     }
 
     nodes::Expr::UnaryOp get_unary_op(TokenType type) {
         switch (type) {
-            case TokenType::Not:
-                return nodes::Expr::UnaryOp::Not;
-            case TokenType::Minus:
-                return nodes::Expr::UnaryOp::Neg;
-            case TokenType::Tilde:
-                return nodes::Expr::UnaryOp::BitNot;
-            case TokenType::Amp:
-                return nodes::Expr::UnaryOp::AddressOf;
-            case TokenType::Star:
-                return nodes::Expr::UnaryOp::Deref;
-            default:
-                throw std::runtime_error("Invalid unary operation token");
+            case TokenType::Not: return nodes::Expr::UnaryOp::Not;
+            case TokenType::Minus: return nodes::Expr::UnaryOp::Neg;
+            case TokenType::Tilde: return nodes::Expr::UnaryOp::BitNot;
+            case TokenType::Amp: return nodes::Expr::UnaryOp::AddressOf;
+            case TokenType::Star: return nodes::Expr::UnaryOp::Deref;
+            default: throw std::runtime_error("Invalid unary operation token");
         }
     }
 
     nodes::Expr::ComparisonOp get_comparison_op(TokenType type) {
         switch (type) {
-            case TokenType::Less:
-                return nodes::Expr::ComparisonOp::Less;
-            case TokenType::Greater:
-                return nodes::Expr::ComparisonOp::Greater;
+            case TokenType::Less: return nodes::Expr::ComparisonOp::Less;
+            case TokenType::Greater: return nodes::Expr::ComparisonOp::Greater;
             case TokenType::LessEqual:
                 return nodes::Expr::ComparisonOp::LessEqual;
             case TokenType::GreaterEqual:
                 return nodes::Expr::ComparisonOp::GreaterEqual;
-            case TokenType::EqualEqual:
-                return nodes::Expr::ComparisonOp::Equal;
+            case TokenType::EqualEqual: return nodes::Expr::ComparisonOp::Equal;
             case TokenType::NotEqual:
                 return nodes::Expr::ComparisonOp::NotEqual;
             default:
@@ -128,26 +107,17 @@ private:
 
     nodes::Stmt::AssignOp get_assign_op(TokenType type) {
         switch (type) {
-            case TokenType::PlusEqual:
-                return nodes::Stmt::AssignOp::Add;
-            case TokenType::MinusEqual:
-                return nodes::Stmt::AssignOp::Sub;
-            case TokenType::StarEqual:
-                return nodes::Stmt::AssignOp::Mul;
-            case TokenType::SlashEqual:
-                return nodes::Stmt::AssignOp::Div;
-            case TokenType::PercentEqual:
-                return nodes::Stmt::AssignOp::Mod;
-            case TokenType::LessLessEqual:
-                return nodes::Stmt::AssignOp::LShift;
+            case TokenType::PlusEqual: return nodes::Stmt::AssignOp::Add;
+            case TokenType::MinusEqual: return nodes::Stmt::AssignOp::Sub;
+            case TokenType::StarEqual: return nodes::Stmt::AssignOp::Mul;
+            case TokenType::SlashEqual: return nodes::Stmt::AssignOp::Div;
+            case TokenType::PercentEqual: return nodes::Stmt::AssignOp::Mod;
+            case TokenType::LessLessEqual: return nodes::Stmt::AssignOp::LShift;
             case TokenType::GreaterGreaterEqual:
                 return nodes::Stmt::AssignOp::RShift;
-            case TokenType::AmpEqual:
-                return nodes::Stmt::AssignOp::BitAnd;
-            case TokenType::PipeEqual:
-                return nodes::Stmt::AssignOp::BitOr;
-            case TokenType::CaretEqual:
-                return nodes::Stmt::AssignOp::BitXor;
+            case TokenType::AmpEqual: return nodes::Stmt::AssignOp::BitAnd;
+            case TokenType::PipeEqual: return nodes::Stmt::AssignOp::BitOr;
+            case TokenType::CaretEqual: return nodes::Stmt::AssignOp::BitXor;
             default:
                 throw std::runtime_error("Invalid assignment operation token");
         }

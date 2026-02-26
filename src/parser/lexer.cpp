@@ -121,9 +121,7 @@ bool is_unicode_alnum(char32_t c) {
 }
 
 // Helper function to check if a Unicode character is a digit
-bool is_unicode_digit(char32_t c) {
-    return c >= U'0' && c <= U'9';
-}
+bool is_unicode_digit(char32_t c) { return c >= U'0' && c <= U'9'; }
 
 }
 
@@ -139,7 +137,9 @@ Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index) const {
     return Token {.type = type, .location = loc, .value = {false}};
 }
 
-Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index, Token::Value value) const {
+Token Lexer::make_token(
+    TokenType type, std::uint32_t start_byte_index, Token::Value value
+) const {
     Location loc;
     if (start_byte_index != 0) {
         loc.start = start_byte_index;
@@ -148,7 +148,7 @@ Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index, Token::V
         loc.start = byte_index_ > 0 ? byte_index_ - 1 : byte_index_;
         loc.end = byte_index_;
     }
-    return Token{.type=type, .location=loc, .value={value}};
+    return Token {.type = type, .location = loc, .value = {value}};
 }
 
 Lexer::Lexer(Source& source)
@@ -351,7 +351,9 @@ Token Lexer::number() {
     }
 
     if (is_float) {
-        return make_token(TokenType::Float, start_byte_index, {std::stod(text)});
+        return make_token(
+            TokenType::Float, start_byte_index, {std::stod(text)}
+        );
     } else {
         return make_token(
             TokenType::Integer, start_byte_index, {std::stoll(text)}
@@ -441,16 +443,11 @@ Token Lexer::character() {
         if (match(U'\\')) {
             char32_t escaped = next();
             switch (escaped) {
-                case U'n':
-                    return U'\n';
-                case U't':
-                    return U'\t';
-                case U'0':
-                    return U'\0';
-                case U'\'':
-                    return U'\'';
-                case U'\\':
-                    return U'\\';
+                case U'n': return U'\n';
+                case U't': return U'\t';
+                case U'0': return U'\0';
+                case U'\'': return U'\'';
+                case U'\\': return U'\\';
                 default:
                     throw std::runtime_error(
                         "Unknown escape sequence in character literal"
@@ -629,138 +626,72 @@ Token Lexer::next_token() {
 // Helper function to get token type name as string
 std::string token_type_to_string(TokenType type) {
     switch (type) {
-        case TokenType::Func:
-            return "FUNC";
-        case TokenType::If:
-            return "IF";
-        case TokenType::Else:
-            return "ELSE";
-        case TokenType::While:
-            return "WHILE";
-        case TokenType::Var:
-            return "VAR";
-        case TokenType::Struct:
-            return "STRUCT";
-        case TokenType::And:
-            return "AND";
-        case TokenType::Or:
-            return "OR";
-        case TokenType::Not:
-            return "NOT";
-        case TokenType::Return:
-            return "RETURN";
-        case TokenType::Break:
-            return "BREAK";
-        case TokenType::Continue:
-            return "CONTINUE";
-        case TokenType::As:
-            return "AS";
-        case TokenType::True:
-            return "TRUE";
-        case TokenType::False:
-            return "FALSE";
-        case TokenType::Using:
-            return "USING";
-        case TokenType::From:
-            return "FROM";
-        case TokenType::Plus:
-            return "PLUS";
-        case TokenType::Minus:
-            return "MINUS";
-        case TokenType::Star:
-            return "STAR";
-        case TokenType::Slash:
-            return "SLASH";
-        case TokenType::Percent:
-            return "PERCENT";
-        case TokenType::Equal:
-            return "EQUAL";
-        case TokenType::PlusEqual:
-            return "PLUSEQUAL";
-        case TokenType::MinusEqual:
-            return "MINUSEQUAL";
-        case TokenType::StarEqual:
-            return "STAREQUAL";
-        case TokenType::SlashEqual:
-            return "SLASHEQUAL";
-        case TokenType::PercentEqual:
-            return "PERCENTEQUAL";
-        case TokenType::Less:
-            return "LESS";
-        case TokenType::LessEqual:
-            return "LESSEQUAL";
-        case TokenType::Greater:
-            return "GREATER";
-        case TokenType::GreaterEqual:
-            return "GREATEREQUAL";
-        case TokenType::NotEqual:
-            return "NOTEQUAL";
-        case TokenType::EqualEqual:
-            return "EQUALEQUAL";
-        case TokenType::Pipe:
-            return "PIPE";
-        case TokenType::Tilde:
-            return "TILDE";
-        case TokenType::Amp:
-            return "AMP";
-        case TokenType::Caret:
-            return "CARET";
-        case TokenType::LessLess:
-            return "LESSLESS";
-        case TokenType::GreaterGreater:
-            return "GREATERGREATER";
-        case TokenType::PipeEqual:
-            return "PIPEEQUAL";
-        case TokenType::TildeEqual:
-            return "TILDEEQUAL";
-        case TokenType::AmpEqual:
-            return "AMPEQUAL";
-        case TokenType::CaretEqual:
-            return "CARETEQUAL";
-        case TokenType::LessLessEqual:
-            return "LESSLESSEQUAL";
-        case TokenType::GreaterGreaterEqual:
-            return "GREATERGREATEREQUAL";
-        case TokenType::LParen:
-            return "LPAREN";
-        case TokenType::RParen:
-            return "RPAREN";
-        case TokenType::LBracket:
-            return "LBRACKET";
-        case TokenType::RBracket:
-            return "RBRACKET";
-        case TokenType::LBrace:
-            return "LBRACE";
-        case TokenType::RBrace:
-            return "RBRACE";
-        case TokenType::Colon:
-            return "COLON";
-        case TokenType::Semicolon:
-            return "SEMICOLON";
-        case TokenType::Comma:
-            return "COMMA";
-        case TokenType::Dot:
-            return "DOT";
-        case TokenType::Integer:
-            return "INTEGER";
-        case TokenType::Float:
-            return "FLOAT";
-        case TokenType::Char:
-            return "CHAR";
-        case TokenType::String:
-            return "STRING";
-        case TokenType::Identifier:
-            return "IDENTIFIER";
-        case TokenType::Indent:
-            return "INDENT";
-        case TokenType::Dedent:
-            return "DEDENT";
-        case TokenType::NewLine:
-            return "NEWLINE";
-        case TokenType::EndOfFile:
-            return "END_OF_FILE";
-        default:
-            return "UNKNOWN";
+        case TokenType::Func: return "FUNC";
+        case TokenType::If: return "IF";
+        case TokenType::Else: return "ELSE";
+        case TokenType::While: return "WHILE";
+        case TokenType::Var: return "VAR";
+        case TokenType::Struct: return "STRUCT";
+        case TokenType::And: return "AND";
+        case TokenType::Or: return "OR";
+        case TokenType::Not: return "NOT";
+        case TokenType::Return: return "RETURN";
+        case TokenType::Break: return "BREAK";
+        case TokenType::Continue: return "CONTINUE";
+        case TokenType::As: return "AS";
+        case TokenType::True: return "TRUE";
+        case TokenType::False: return "FALSE";
+        case TokenType::Using: return "USING";
+        case TokenType::From: return "FROM";
+        case TokenType::Plus: return "PLUS";
+        case TokenType::Minus: return "MINUS";
+        case TokenType::Star: return "STAR";
+        case TokenType::Slash: return "SLASH";
+        case TokenType::Percent: return "PERCENT";
+        case TokenType::Equal: return "EQUAL";
+        case TokenType::PlusEqual: return "PLUSEQUAL";
+        case TokenType::MinusEqual: return "MINUSEQUAL";
+        case TokenType::StarEqual: return "STAREQUAL";
+        case TokenType::SlashEqual: return "SLASHEQUAL";
+        case TokenType::PercentEqual: return "PERCENTEQUAL";
+        case TokenType::Less: return "LESS";
+        case TokenType::LessEqual: return "LESSEQUAL";
+        case TokenType::Greater: return "GREATER";
+        case TokenType::GreaterEqual: return "GREATEREQUAL";
+        case TokenType::NotEqual: return "NOTEQUAL";
+        case TokenType::EqualEqual: return "EQUALEQUAL";
+        case TokenType::Pipe: return "PIPE";
+        case TokenType::Tilde: return "TILDE";
+        case TokenType::Amp: return "AMP";
+        case TokenType::Caret: return "CARET";
+        case TokenType::LessLess: return "LESSLESS";
+        case TokenType::GreaterGreater: return "GREATERGREATER";
+        case TokenType::PipeEqual: return "PIPEEQUAL";
+        case TokenType::TildeEqual: return "TILDEEQUAL";
+        case TokenType::AmpEqual: return "AMPEQUAL";
+        case TokenType::CaretEqual: return "CARETEQUAL";
+        case TokenType::LessLessEqual: return "LESSLESSEQUAL";
+        case TokenType::GreaterGreaterEqual: return "GREATERGREATEREQUAL";
+        case TokenType::LParen: return "LPAREN";
+        case TokenType::RParen: return "RPAREN";
+        case TokenType::LBracket: return "LBRACKET";
+        case TokenType::RBracket: return "RBRACKET";
+        case TokenType::LBrace: return "LBRACE";
+        case TokenType::RBrace: return "RBRACE";
+        case TokenType::Colon: return "COLON";
+        case TokenType::Semicolon: return "SEMICOLON";
+        case TokenType::Comma: return "COMMA";
+        case TokenType::Dot: return "DOT";
+        case TokenType::Integer: return "INTEGER";
+        case TokenType::Float: return "FLOAT";
+        case TokenType::Char: return "CHAR";
+        case TokenType::String: return "STRING";
+        case TokenType::Identifier: return "IDENTIFIER";
+        case TokenType::Indent: return "INDENT";
+        case TokenType::Dedent: return "DEDENT";
+        case TokenType::NewLine: return "NEWLINE";
+        case TokenType::EndOfFile: return "END_OF_FILE";
+        default: return "UNKNOWN";
     }
 }
 

@@ -69,32 +69,19 @@ std::string to_string(const Expr::Name& name, acu::Location location = {}) {
 std::string binary_op_to_string(Expr::BinaryOp op) {
     switch (op) {
         using enum Expr::BinaryOp;
-        case Add:
-            return "+";
-        case Sub:
-            return "-";
-        case Mul:
-            return "*";
-        case Div:
-            return "/";
-        case Mod:
-            return "%";
-        case LShift:
-            return "<<";
-        case RShift:
-            return ">>";
-        case BitAnd:
-            return "&";
-        case BitOr:
-            return "|";
-        case BitXor:
-            return "^";
-        case LogicalOr:
-            return "or";
-        case LogicalAnd:
-            return "and";
-        default:
-            return "unknown_op";
+        case Add: return "+";
+        case Sub: return "-";
+        case Mul: return "*";
+        case Div: return "/";
+        case Mod: return "%";
+        case LShift: return "<<";
+        case RShift: return ">>";
+        case BitAnd: return "&";
+        case BitOr: return "|";
+        case BitXor: return "^";
+        case LogicalOr: return "or";
+        case LogicalAnd: return "and";
+        default: return "unknown_op";
     }
 }
 
@@ -113,20 +100,13 @@ std::string to_string(const Expr::Binary& binary, acu::Location location = {}) {
 std::string comparison_op_to_string(Expr::ComparisonOp op) {
     switch (op) {
         using enum Expr::ComparisonOp;
-        case Less:
-            return "<";
-        case Greater:
-            return ">";
-        case LessEqual:
-            return "<=";
-        case GreaterEqual:
-            return ">=";
-        case Equal:
-            return "==";
-        case NotEqual:
-            return "!=";
-        default:
-            return "unknown_comp_op";
+        case Less: return "<";
+        case Greater: return ">";
+        case LessEqual: return "<=";
+        case GreaterEqual: return ">=";
+        case Equal: return "==";
+        case NotEqual: return "!=";
+        default: return "unknown_comp_op";
     }
 }
 
@@ -161,18 +141,12 @@ std::string to_string(
 std::string unary_op_to_string(Expr::UnaryOp op) {
     switch (op) {
         using enum nodes::Expr::UnaryOp;
-        case Not:
-            return "!";
-        case Neg:
-            return "-";
-        case BitNot:
-            return "~";
-        case Deref:
-            return "*";
-        case AddressOf:
-            return "&";
-        default:
-            return "unknown_unary_op";
+        case Not: return "!";
+        case Neg: return "-";
+        case BitNot: return "~";
+        case Deref: return "*";
+        case AddressOf: return "&";
+        default: return "unknown_unary_op";
     }
 }
 
@@ -298,12 +272,10 @@ std::string to_string(const Stmt::Block& block, acu::Location location = {}) {
 
 std::string to_string(const Stmt::If& if_stmt, acu::Location location = {}) {
     std::string cond_str = indent_string(to_string(*if_stmt.cond), 2);
-    std::string then_str =
-        indent_string(to_string(*if_stmt.then_block), 2);
+    std::string then_str = indent_string(to_string(*if_stmt.then_block), 2);
     std::string else_str =
-        if_stmt.else_block
-            ? indent_string(to_string(*if_stmt.else_block), 2)
-            : "None";
+        if_stmt.else_block ? indent_string(to_string(*if_stmt.else_block), 2)
+                           : "None";
     return std::format(
         "If(\n  {},\n  {},\n  {}\n) @ {}",
         cond_str,
@@ -365,28 +337,16 @@ std::string to_string(const Stmt::Assign& assign, acu::Location location = {}) {
 std::string assign_op_to_string(Stmt::AssignOp op) {
     switch (op) {
         using enum Stmt::AssignOp;
-        case Add:
-            return "+=";
-        case Sub:
-            return "-=";
-        case Mul:
-            return "*=";
-        case Div:
-            return "/=";
-        case Mod:
-            return "%=";
-        case LShift:
-            return "<<=";
-        case RShift:
-            return ">>=";
-        case BitAnd:
-            return "&=";
-        case BitOr:
-            return "|=";
-        case BitXor:
-            return "^=";
-        default:
-            return "unknown_assign_op";
+        case Add: return "+=";
+        case Sub: return "-=";
+        case Mul: return "*=";
+        case Div: return "/=";
+        case Mod: return "%=";
+        case LShift: return "<<=";
+        case RShift: return ">>=";
+        case BitAnd: return "&=";
+        case BitOr: return "|=";
+        case BitXor: return "^=";
     }
 }
 

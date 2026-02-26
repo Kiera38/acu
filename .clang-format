@@ -6,6 +6,7 @@ IndentCaseLabels: true
 FixNamespaceComments: false
 SpaceBeforeCpp11BracedList: true
 AllowShortFunctionsOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
 IndentAccessModifiers: false
 AccessModifierOffset: -4
 EmptyLineBeforeAccessModifier: Always

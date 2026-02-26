@@ -10,6 +10,10 @@ add_executable(acu
     src/parser/lexer.cpp
     src/parser/parser.cpp
     src/parser/nodes_output.cpp
+
+    src/semanal/types.cpp
+    src/semanal/resolve.cpp
+    src/semanal/ir_str.cpp
 )
 
 # Set include directories
