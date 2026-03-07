@@ -38,5 +38,7 @@ struct Source {
 struct Location {
     std::uint32_t start = 0;
     std::uint32_t end = 0;
+
+    [[nodiscard]] std::string to_string(const Source& source) const;
 };
 }

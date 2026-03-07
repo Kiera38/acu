@@ -26,10 +26,6 @@ struct ParamRef {
     std::uint32_t index;
 };
 
-struct VarRef {
-    std::uint32_t index;
-};
-
 struct Comparators {
     std::uint32_t start;
     std::uint32_t count;
@@ -53,8 +49,13 @@ struct Inst {
         Value value;
     };
 
+    struct VarDecl {
+        std::string_view name;
+        std::optional<types::TypeId> type;
+    };
+
     struct LoadVar {
-        VarRef var;
+        InstRef var;
     };
 
     struct LoadParam {
@@ -62,7 +63,7 @@ struct Inst {
     };
 
     struct Store {
-        VarRef var;
+        InstRef var;
         InstRef value;
     };
 
@@ -176,6 +177,7 @@ struct Inst {
 
     using Value = utils::Variant<
         Const,
+        VarDecl,
         LoadVar,
         LoadParam,
         Store,
@@ -201,11 +203,6 @@ struct Inst {
     Location location;
 };
 
-struct Var {
-    std::string_view name;
-    std::optional<types::TypeId> type;
-};
-
 struct Param {
     std::string_view name;
     types::TypeId type;
@@ -223,6 +220,7 @@ enum class ComparisonOp : std::uint8_t {
 struct Comparator {
     Block value;
     ComparisonOp op;
+    types::TypeId type;
 };
 
 class Func {
@@ -237,16 +235,20 @@ public:
         params_.append_range(params);
         return_type_ = return_type;
     }
-
-    [[nodiscard]] Var var(VarRef ref) const { return vars_[ref.index]; }
-    [[nodiscard]] std::span<const Var> vars() const {return vars_;}
     [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref.index]; }
     [[nodiscard]] std::span<const Inst> insts() const { return insts_; }
     [[nodiscard]] std::span<const Inst> block(Block block) const {
+        if (block.end.index < block.start.index) {
+            return {};
+        }
         return std::span(insts_).subspan(
-            block.start.index, block.end.index - block.start.index
+            block.start.index, block.end.index - block.start.index + 1
         );
     }
+    [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
+        return std::span(inst_refs_).subspan(refs.start, refs.count);
+    }
+
     [[nodiscard]] std::span<const Comparator> comparators(
         Comparators comparators
     ) const {
@@ -254,14 +256,9 @@ public:
             .subspan(comparators.start, comparators.count);
     }
 
-    [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
-        return std::span(inst_refs_).subspan(refs.start, refs.count);
-    }
-
-    VarRef add(const Var& var) {
-        VarRef ref {static_cast<std::uint32_t>(vars_.size())};
-        vars_.push_back(var);
-        return ref;
+    [[nodiscard]] std::span<Comparator> comparators(Comparators comparators) {
+        return std::span(comparators_)
+            .subspan(comparators.start, comparators.count);
     }
 
     InstRef add(const Inst& inst) {
@@ -315,7 +312,6 @@ private:
     std::string_view name_;
     std::vector<Param> params_;
     types::TypeId return_type_;
-    std::vector<Var> vars_;
     std::vector<Inst> insts_;
     std::vector<InstRef> inst_refs_;
     std::vector<Comparator> comparators_;

@@ -191,7 +191,10 @@ bool Lexer::match(char32_t c) {
 }
 
 void Lexer::skip_whitespace() {
-    while (!at_end() && (peek() == U' ' || peek() == U'\t')) {
+    while (!at_end() &&
+           (peek() == U' ' || peek() == U'\t' || peek() == U'\r')) {
+        // treat carriage return as ordinary whitespace so it doesn't
+        // produce an unexpected token when reading Windows line endings
         next();
     }
 }
@@ -468,6 +471,9 @@ Token Lexer::character() {
 Token Lexer::string() {
     std::uint32_t start_byte_index = byte_index_;
 
+    // consume opening '"'
+    next();
+
     std::string value;
 
     while (peek() != U'"' && !at_end()) {
@@ -611,12 +617,15 @@ Token Lexer::next_token() {
         return string();
     }
 
-    if (c == U'\n') {
+    if (c == U'\n' || c == U'\r') {
+        // normalize CR and LF to a single newline token; if we see CRLF,
+        // consume both characters so we don't emit two tokens.
         std::uint32_t start_byte_index = byte_index_;
-
         begin_of_line_ = true;
+        if (c == U'\r' && peek() == U'\n') {
+            next(); // consume the LF after the CR
+        }
         Token token = make_token(TokenType::NewLine, start_byte_index);
-        next();
         return token;
     }
 

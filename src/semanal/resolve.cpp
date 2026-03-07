@@ -21,7 +21,7 @@ public:
     Context() { push(); }
 
     struct ScopeEntry {
-        utils::Variant<ir::VarRef, ir::ParamRef, ir::FuncRef, types::TypeId>
+        utils::Variant<ir::InstRef, ir::ParamRef, ir::FuncRef, types::TypeId>
             data;
     };
 
@@ -231,7 +231,7 @@ private:
                     type = resolve_type(*data.type);
                 }
                 auto var_ref =
-                    func.add(ir::Var {.name = data.name, .type = type});
+                    func.add({.data=ir::Inst::VarDecl {.name = data.name, .type = type}, .location = stmt.location});
 
                 context_.add(data.name, {var_ref});
                 if (data.init) {
@@ -326,8 +326,8 @@ private:
                         auto entry = context_.find(name_expr->name);
                         if (entry != nullptr) {
                             // Check if it's a variable using the variant
-                            if (entry->data.is<ir::VarRef>()) {
-                                auto var_ref = entry->data.get<ir::VarRef>();
+                            if (entry->data.is<ir::InstRef>()) {
+                                auto var_ref = entry->data.get<ir::InstRef>();
                                 // Generate store instruction
                                 ir::Inst store_inst;
                                 store_inst.data = ir::Inst::Store {
@@ -408,7 +408,7 @@ private:
         return expr.value.visit(
             [&](const nodes::Expr::Name& node) {
                 if (auto var = context_.find(node.name)) {
-                    auto ref = var->data.get<ir::VarRef>();
+                    auto ref = var->data.get<ir::InstRef>();
                     return func.add(
                         {.data = ir::Inst::Store {.var = ref, .value = value},
                          .location = expr.location}
@@ -465,7 +465,7 @@ private:
                 auto entry = context_.find(node.name);
                 if (entry != nullptr) {
                     return func.add(entry->data.visit(
-                        [&](ir::VarRef var_ref) -> ir::Inst {
+                        [&](ir::InstRef var_ref) -> ir::Inst {
                             return {
                                 .data = ir::Inst::LoadVar {.var = var_ref},
                                 .location = expr.location

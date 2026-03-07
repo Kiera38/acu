@@ -14,6 +14,8 @@ int main() {
         source.content = R"(
 func main() Int:
     var a = [10, 100, 30, 7]
+    var s = "hello"
+    var c = 'A'
     bubble_sort(a as Ptr[Int], 4)
     return 0
 
@@ -37,18 +39,18 @@ func bubble_sort(a: Ptr[Int], n: Int):
 
         auto module = acu::parser::parse(source);
         auto ir_module = acu::semanal::resolve(module);
-        // AST output suppressed to avoid huge logs
-        // std::cout << "AST:\n" << acu::nodes::to_string(module) << '\n';
-        std::cout << "IR (functions=" << ir_module.funcs().size() << "):\n";
-        try {
-            std::cout << acu::ir::to_string(ir_module) << '\n';
-        } catch (const std::exception& e) {
-            std::cout << "IR print threw: " << e.what() << '\n';
-        } catch(...) {
-            std::cout << "IR print threw unknown exception\n";
-        }
+        std::cout << "=== IR ===\n" << acu::ir::to_string(ir_module) << '\n';
 
-        std::cout << "Parser test completed successfully!\n";
+        auto analyzed = acu::semanal::type_analyze(ir_module, source);
+        std::cout << "=== type analysis ===\n";
+        for (const auto& func : analyzed.analyzed_funcs) {
+            std::cout << "Func: " << analyzed.ir_module.func(func.ref).name()
+                      << "\n";
+            for (size_t i = 0; i < func.inst_types.size(); ++i) {
+                std::cout << "  inst " << i << ": type "
+                          << func.inst_types[i].index << "\n";
+            }
+        }
     } catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << '\n';
         return 1;

@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #include "source.h"
 #include "variant.h"
+
 
 namespace acu::types {
 struct TypeId {
@@ -97,6 +99,11 @@ public:
     TypeId add_ptr(TypeId type);
     TypeId add_struct(const Type::Struct& struct_def);
     void set_struct_fields(TypeId type, std::vector<Type::StructField> fields);
+    [[nodiscard]] std::string to_string(TypeId id) const;
+
+    [[nodiscard]] bool is_int(TypeId type) const {
+        return types_[type.index].data.is<Type::Int>();
+    }
 
     [[nodiscard]] const Type& get(TypeId id) const { return types_[id.index]; }
 

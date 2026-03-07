@@ -11,13 +11,6 @@ std::string to_string(const Param& param) {
     return std::format("{}: {}", param.name, param.type.index);
 }
 
-std::string to_string(const Var& var) {
-    if (!var.type.has_value()) {
-        return std::string(var.name);
-    }
-    return std::format("{}: {}", var.name, var.type->index);
-}
-
 std::string to_string(const Inst::Const::Value& value) {
     return value.visit(
         [&](bool v) -> std::string { return v ? "true" : "false"; },
@@ -167,11 +160,12 @@ std::string to_string(
                 );
             },
             [&](const Inst::Comparison& inst) {
-                block_str += std::format("%{} = comparison %{}\n", idx, inst.left.index);
+                block_str +=
+                    std::format("%{} = comparison %{}\n", idx, inst.left.index);
                 auto comps = func.comparators(inst.comparators);
                 auto all = func.insts();
                 for (size_t k = 0; k < comps.size(); ++k) {
-                    auto &comp = comps[k];
+                    auto& comp = comps[k];
                     block_str += std::format(
                         "    {} block[{},{}]\n",
                         comparison_op_to_string(comp.op),
@@ -182,7 +176,8 @@ std::string to_string(
                         to_string(
                             all.subspan(
                                 comp.value.start.index,
-                                comp.value.end.index - comp.value.start.index + 1
+                                comp.value.end.index - comp.value.start.index +
+                                    1
                             ),
                             comp.value.start.index,
                             func
@@ -228,7 +223,7 @@ std::string to_string(
                         all.subspan(
                             inst.then_block.start.index,
                             inst.then_block.end.index -
-                                inst.then_block.start.index+1
+                                inst.then_block.start.index + 1
                         ),
                         inst.then_block.start.index,
                         func
@@ -243,7 +238,8 @@ std::string to_string(
                     block_str += indent_string(
                         to_string(
                             all.subspan(
-                                eb.start.index, eb.end.index - eb.start.index + 1
+                                eb.start.index,
+                                eb.end.index - eb.start.index + 1
                             ),
                             eb.start.index,
                             func
@@ -323,6 +319,9 @@ std::string to_string(
                     inst.value.index,
                     inst.type.index
                 );
+            },
+            [&](const auto&) {
+
             }
         );
     }
@@ -335,17 +334,9 @@ std::string to_string(const Func& func) {
     for (const auto& param : func.params()) {
         params_str += to_string(param) + '\n';
     }
-    std::string vars_str;
-    for (const auto& var : func.vars()) {
-        vars_str += to_string(var) + '\n';
-    }
     std::string code_str = to_string(func.insts(), 0, func);
     return std::format(
-        "Func {}\nparams:{}\nvars:{}\ncode:\n{}",
-        func.name(),
-        params_str,
-        vars_str,
-        code_str
+        "Func {}\nparams:{}\ncode:\n{}", func.name(), params_str, code_str
     );
 }
 

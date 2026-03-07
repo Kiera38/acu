@@ -7,12 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Define the executable
 add_executable(acu
     src/main.cpp
+    src/source.cpp
     src/parser/lexer.cpp
     src/parser/parser.cpp
     src/parser/nodes_output.cpp
 
     src/semanal/types.cpp
     src/semanal/resolve.cpp
+    src/semanal/type_analyze.cpp
     src/semanal/ir_str.cpp
 )
 

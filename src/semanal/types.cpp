@@ -1,6 +1,8 @@
 #include "types.h"
 
+#include <format>
 #include <ranges>
+#include <string>
 #include <vector>
 
 #include "ir.h"
@@ -32,7 +34,8 @@ TypeId TypePool::add_int(std::uint8_t bits, bool is_signed) {
     }
     TypeId id {static_cast<std::uint32_t>(types_.size())};
     types_.push_back({Type::Int {.bits = bits, .is_signed = is_signed}});
-    auto [it, inserted] = ints_.insert({{.bits=bits, .is_signed=is_signed}, id});
+    auto [it, inserted] =
+        ints_.insert({{.bits = bits, .is_signed = is_signed}, id});
     return it->second;
 }
 
@@ -77,8 +80,50 @@ TypeId TypePool::add_struct(const Type::Struct& struct_def) {
     return it->second;
 }
 
-void TypePool::set_struct_fields(TypeId type, std::vector<Type::StructField> fields) {
+void TypePool::set_struct_fields(
+    TypeId type, std::vector<Type::StructField> fields
+) {
     types_[type.index].data.get<Type::Struct>().fields = std::move(fields);
+}
+
+std::string TypePool::to_string(TypeId id) const {
+    const auto& type = get(id);
+    return type.data.visit(
+        [&](Type::None) -> std::string { return "None"; },
+        [&](Type::Nothing) -> std::string { return "Nothing"; },
+        [&](Type::Bool) -> std::string { return "Bool"; },
+        [&](Type::Int data) -> std::string {
+            return std::format(
+                "{}{}", data.is_signed ? "Int" : "UInt", data.bits
+            );
+        },
+        [&](Type::Float data) -> std::string {
+            return data == Type::Float::F32 ? "Float32" : "Float64";
+        },
+        [&](const Type::Func& data) -> std::string {
+            std::string result = "func(";
+            for (size_t i = 0; i < data.params.size(); ++i) {
+                result += to_string(data.params[i]);
+                if (i + 1 < data.params.size()) {
+                    result += ", ";
+                }
+            }
+            result += ") -> " + to_string(data.return_type);
+            return result;
+        },
+        [&](const Type::Array& data) -> std::string {
+            return std::format(
+                "Array[{}, {}]", to_string(data.item), data.length
+            );
+        },
+        [&](const Type::Ptr& data) -> std::string {
+            return std::format("Ptr[{}]", to_string(data.type));
+        },
+        [&](const Type::Struct& data) -> std::string {
+            return std::string(data.name);
+        },
+        [&](Type::Const) -> std::string { return "struct"; }
+    );
 }
 
 }
