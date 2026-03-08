@@ -17,6 +17,9 @@ add_executable(acu
     src/semanal/resolve.cpp
     src/semanal/type_analyze.cpp
     src/semanal/ir_str.cpp
+
+    src/refanal/generator.cpp
+    src/refanal/ir_str.cpp
 )
 
 # Set include directories

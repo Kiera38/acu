@@ -3,6 +3,8 @@
 
 #include "errors.h"
 #include "parser/parser.h"
+#include "refanal/generator.h"
+#include "refanal/ir_str.h"
 #include "semanal/semanal.h"
 #include "source.h"
 
@@ -60,6 +62,7 @@ func bubble_sort(a: Ptr[Int], n: Int):
             return 1;
         }
 
+        /*
         std::cout << "=== type analysis ===\n";
         for (const auto& func : analyzed.analyzed_funcs) {
             std::cout << "Func: " << analyzed.ir_module.func(func.ref).name()
@@ -72,6 +75,11 @@ func bubble_sort(a: Ptr[Int], n: Int):
                           << "\n";
             }
         }
+        */
+
+        auto refanal_module = acu::refanal::generate(analyzed);
+        std::cout << "\n=== REFANAL IR ===\n";
+        std::cout << acu::refanal::to_string(refanal_module, analyzed) << "\n";
 
     } catch (const std::exception& e) {
         if (err_handler.has_errors()) {

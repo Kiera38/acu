@@ -4,11 +4,12 @@
 #include <span>
 #include <vector>
 
+#include "semanal/types.h"
 #include "source.h"
-#include "types.h"
 #include "variant.h"
 
-namespace acu::ir {
+namespace acu::refanal::ir {
+
 struct FuncRef {
     std::uint32_t index;
 };
@@ -17,18 +18,12 @@ struct InstRef {
     std::uint32_t index;
 };
 
-struct Block {
-    InstRef start;
-    InstRef end;
+struct BlockRef {
+    std::uint32_t index;
 };
 
 struct ParamRef {
     std::uint32_t index;
-};
-
-struct Comparators {
-    std::uint32_t start;
-    std::uint32_t count;
 };
 
 struct InstRefs {
@@ -44,14 +39,12 @@ struct Inst {
             double,
             char32_t,
             std::string_view,
-            FuncRef,
-            types::TypeId>;
+            FuncRef>;
         Value value;
     };
 
     struct VarDecl {
         std::string_view name;
-        std::optional<types::SpecType> type;
     };
 
     struct LoadVar {
@@ -86,17 +79,6 @@ struct Inst {
         BinaryOp op;
     };
 
-    enum class LogicalOp : std::uint8_t {
-        And,
-        Or,
-    };
-
-    struct Logical {
-        InstRef left;
-        Block right;
-        LogicalOp op;
-    };
-
     enum class UnaryOp : std::uint8_t {
         Not,
         Neg,
@@ -108,9 +90,19 @@ struct Inst {
         UnaryOp op;
     };
 
+    enum class ComparisonOp : std::uint8_t {
+        Less,
+        Greater,
+        LessEqual,
+        GreaterEqual,
+        Equal,
+        NotEqual
+    };
+
     struct Comparison {
         InstRef left;
-        Comparators comparators;
+        InstRef right;
+        ComparisonOp op;
     };
 
     struct Call {
@@ -118,23 +110,26 @@ struct Inst {
         InstRefs args;
     };
 
-    struct Loop {
-        Block block;
+    struct Cast {
+        InstRef value;
+        types::SpecType target_type;
     };
 
-    struct If {
-        InstRef value {};
-        Block then_block {};
-        std::optional<Block> else_block;
+    struct CreateStruct {
+        types::TypeId struct_type;
+        InstRefs args;
     };
 
-    struct Return {
-        std::optional<InstRef> value;
+    struct GetField {
+        InstRef value;
+        std::uint32_t index;
     };
 
-    struct Break {};
-
-    struct Continue {};
+    struct SetField {
+        InstRef var;
+        std::uint32_t index;
+        InstRef value;
+    };
 
     struct AddressOf {
         InstRef value;
@@ -151,17 +146,6 @@ struct Inst {
         InstRef value;
     };
 
-    struct GetAttr {
-        InstRef value;
-        std::string_view name;
-    };
-
-    struct SetAttr {
-        InstRef var;
-        InstRef value;
-        std::string_view name;
-    };
-
     struct Deref {
         InstRef value;
     };
@@ -170,9 +154,18 @@ struct Inst {
         InstRefs items;
     };
 
-    struct As {
-        InstRef value {};
-        types::SpecType type;
+    struct Jump {
+        BlockRef target;
+    };
+
+    struct Branch {
+        InstRef condition;
+        BlockRef true_target;
+        BlockRef false_target;
+    };
+
+    struct Return {
+        std::optional<InstRef> value;
     };
 
     using Value = utils::Variant<
@@ -182,45 +175,34 @@ struct Inst {
         LoadParam,
         Store,
         Binary,
-        Logical,
         Unary,
         Comparison,
         Call,
-        Loop,
-        If,
-        Return,
-        Break,
-        Continue,
+        Cast,
+        CreateStruct,
+        GetField,
+        SetField,
         AddressOf,
-        Deref,
         GetItem,
         SetItem,
-        GetAttr,
-        SetAttr,
+        Deref,
         Array,
-        As>;
+        Jump,
+        Branch,
+        Return>;
+
     Value data;
+    types::SpecType type;
     Location location;
+};
+
+struct Block {
+    std::vector<InstRef> insts;
 };
 
 struct Param {
     std::string_view name;
     types::SpecType type;
-};
-
-enum class ComparisonOp : std::uint8_t {
-    Less,
-    Greater,
-    LessEqual,
-    GreaterEqual,
-    Equal,
-    NotEqual
-};
-
-struct Comparator {
-    Block value;
-    ComparisonOp op;
-    types::TypeId type;
 };
 
 class Func {
@@ -235,30 +217,18 @@ public:
         params_.append_range(params);
         return_type_ = return_type;
     }
+
     [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref.index]; }
     [[nodiscard]] std::span<const Inst> insts() const { return insts_; }
-    [[nodiscard]] std::span<const Inst> block(Block block) const {
-        if (block.end.index < block.start.index) {
-            return {};
-        }
-        return std::span(insts_).subspan(
-            block.start.index, block.end.index - block.start.index + 1
-        );
+
+    [[nodiscard]] const Block& block(BlockRef ref) const {
+        return blocks_[ref.index];
     }
+    [[nodiscard]] Block& block(BlockRef ref) { return blocks_[ref.index]; }
+    [[nodiscard]] std::span<const Block> blocks() const { return blocks_; }
+
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
         return std::span(inst_refs_).subspan(refs.start, refs.count);
-    }
-
-    [[nodiscard]] std::span<const Comparator> comparators(
-        Comparators comparators
-    ) const {
-        return std::span(comparators_)
-            .subspan(comparators.start, comparators.count);
-    }
-
-    [[nodiscard]] std::span<Comparator> comparators(Comparators comparators) {
-        return std::span(comparators_)
-            .subspan(comparators.start, comparators.count);
     }
 
     InstRef add(const Inst& inst) {
@@ -267,24 +237,14 @@ public:
         return ref;
     }
 
-    [[nodiscard]] InstRef last_inst() const {
-        return {static_cast<std::uint32_t>(insts_.size()) - 1};
+    BlockRef add_block(Block block) {
+        BlockRef ref {static_cast<std::uint32_t>(blocks_.size())};
+        blocks_.push_back(std::move(block));
+        return ref;
     }
 
-    void set_loop_block(InstRef loop, Block block) {
-        insts_[loop.index].data.get<Inst::Loop>().block = block;
-    }
-
-    void set_if_blocks(
-        InstRef if_, Block then_block, std::optional<Block> else_block
-    ) {
-        auto& if_inst = insts_[if_.index].data.get<Inst::If>();
-        if_inst.then_block = then_block;
-        if_inst.else_block = else_block;
-    }
-
-    void set_logical_block(InstRef logical, Block right) {
-        insts_[logical.index].data.get<Inst::Logical>().right = right;
+    void set_block(BlockRef ref, Block block) {
+        blocks_[ref.index] = std::move(block);
     }
 
     InstRefs add(std::span<const InstRef> refs) {
@@ -296,25 +256,13 @@ public:
         return inst_refs;
     }
 
-    void set_comparators(
-        InstRef comparison, std::span<const Comparator> comparators
-    ) {
-        Comparators comp {
-            .start = static_cast<std::uint32_t>(inst_refs_.size()),
-            .count = static_cast<std::uint32_t>(comparators.size())
-        };
-        comparators_.append_range(comparators);
-        insts_[comparison.index].data.get<Inst::Comparison>().comparators =
-            comp;
-    }
-
 private:
     std::string_view name_;
     std::vector<Param> params_;
     types::SpecType return_type_;
     std::vector<Inst> insts_;
+    std::vector<Block> blocks_;
     std::vector<InstRef> inst_refs_;
-    std::vector<Comparator> comparators_;
 };
 
 class Module {
@@ -332,16 +280,8 @@ public:
         return ref;
     }
 
-    types::TypePool& types() { return types_; }
-    [[nodiscard]] const types::TypePool& types() const { return types_; }
-
-    types::TypeId func_type(FuncRef ref);
-
 private:
     std::vector<Func> funcs_;
-    types::TypePool types_;
 };
 
-std::string to_string(const Func& func);
-std::string to_string(const Module& module);
 }
