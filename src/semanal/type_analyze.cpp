@@ -114,7 +114,7 @@ std::optional<types::TypeId> unify(types::TypeId type1, types::TypeId type2) {
 }
 
 struct TypeVar {
-    std::optional<types::TypeId> type;
+    std::optional<types::SpecType> type;
     std::optional<Location> define_loc;
     bool locked = false;
 
@@ -126,10 +126,10 @@ struct TypeVar {
         ErrorHandler& err_handler
     ) {
         if (locked) {
-            if (type.has_value() && *type != tp) {
-                if (!can_convert(tp, *type)) {
+            if (type.has_value() && type->type != tp) {
+                if (!can_convert(tp, type->type)) {
                     std::string hint = "";
-                    if (can_cast(tp, *type, pool)) {
+                    if (can_cast(tp, type->type, pool)) {
                         hint = std::format(
                             "use 'as {}' for explicit conversion",
                             pool.to_string(*type)
@@ -148,7 +148,7 @@ struct TypeVar {
             }
         } else {
             if (type.has_value()) {
-                auto unified = unify(*type, tp);
+                auto unified = unify(type->type, tp);
                 if (!unified.has_value()) {
                     err_handler.error(
                         loc,
@@ -159,17 +159,17 @@ struct TypeVar {
                         )
                     );
                 }
-                type = *unified;
+                type = {*unified, type->specifier};
             } else {
-                type = tp;
+                type = {tp, types::Specifier::None};
                 define_loc = loc;
             }
         }
-        return *type;
+        return type->type;
     }
 
     void lock(
-        types::TypeId tp,
+        types::SpecType tp,
         Location loc,
         const Source& source,
         const types::TypePool& pool,
@@ -181,9 +181,9 @@ struct TypeVar {
             );
             return;
         }
-        if (type.has_value() && !can_convert(*type, tp)) {
+        if (type.has_value() && !can_convert(type->type, tp.type)) {
             std::string hint = "";
-            if (can_cast(*type, tp, pool)) {
+            if (can_cast(type->type, tp.type, pool)) {
                 hint = std::format(
                     "use 'as {}' for explicit conversion", pool.to_string(tp)
                 );
@@ -205,6 +205,16 @@ struct TypeVar {
         }
     }
 
+    void lock(
+        types::TypeId tp,
+        Location loc,
+        const Source& source,
+        const types::TypePool& pool,
+        ErrorHandler& err_handler
+    ) {
+        lock({tp, types::Specifier::None}, loc, source, pool, err_handler);
+    }
+
     types::TypeId union_tp(
         const TypeVar& other,
         Location loc,
@@ -213,16 +223,16 @@ struct TypeVar {
         ErrorHandler& err_handler
     ) {
         if (other.type.has_value()) {
-            return add_type(*other.type, loc, source, pool, err_handler);
+            return add_type(other.type->type, loc, source, pool, err_handler);
         }
-        return *type;
+        return type->type;
     }
 
     [[nodiscard]] bool definded() const { return type.has_value(); }
 
-    [[nodiscard]] types::TypeId get() const {
+    [[nodiscard]] types::SpecType get() const {
         if (!type.has_value()) {
-            return types::None;
+            return {types::None, types::Specifier::None};
         }
         return *type;
     }
@@ -259,8 +269,8 @@ public:
 
     [[nodiscard]] ir::FuncRef func_ref() const { return func_ref_; }
 
-    [[nodiscard]] std::vector<types::TypeId> get_types() const {
-        std::vector<types::TypeId> result;
+    [[nodiscard]] std::vector<types::SpecType> get_types() const {
+        std::vector<types::SpecType> result;
         result.reserve(type_vars_.vars.size());
         for (const auto& [i, var] : type_vars_.vars | std::views::enumerate) {
             if (!var.definded()) {
@@ -269,7 +279,7 @@ public:
                         .location,
                     "Type variable not defined (inference failed)"
                 );
-                result.push_back(types::None);
+                result.push_back({types::None, types::Specifier::None});
             } else {
                 result.push_back(var.get());
             }
@@ -304,7 +314,9 @@ private:
                     [&](double) { return types::Float; },
                     [&](char32_t) { return types::UInt32; },
                     [&](std::string_view v) {
-                        return type_pool_->add_array(types::UInt8, v.size());
+                        return type_pool_->add_array(
+                            {types::UInt8, types::Specifier::Val}, v.size()
+                        );
                     },
                     [&](ir::FuncRef func_ref) {
                         return module_->func_type(func_ref);
@@ -335,7 +347,7 @@ private:
                 auto left = type_vars_[data.left].type;
                 auto right = type_vars_[data.right].type;
                 if (left && right) {
-                    auto unified = unify(*left, *right);
+                    auto unified = unify(left->type, right->type);
                     if (unified) {
                         bool ok = false;
                         if (data.op == ir::Inst::BinaryOp::Add ||
@@ -366,7 +378,7 @@ private:
                 propagate_range(data.right);
 
                 auto left_tp = type_vars_[data.left].type;
-                if (left_tp && !can_convert(*left_tp, types::Bool)) {
+                if (left_tp && !can_convert(left_tp->type, types::Bool)) {
                     err_handler_->error(
                         inst.location,
                         std::format(
@@ -377,7 +389,7 @@ private:
                 }
                 if (data.right.end.index >= data.right.start.index) {
                     auto right_tp = type_vars_[data.right.end].type;
-                    if (right_tp && !can_convert(*right_tp, types::Bool)) {
+                    if (right_tp && !can_convert(right_tp->type, types::Bool)) {
                         err_handler_->error(
                             inst.location,
                             std::format(
@@ -392,7 +404,7 @@ private:
             [&](const ir::Inst::Unary& data) {
                 if (data.op == ir::Inst::UnaryOp::Not) {
                     auto val_tp = type_vars_[data.value].type;
-                    if (val_tp && !can_convert(*val_tp, types::Bool)) {
+                    if (val_tp && !can_convert(val_tp->type, types::Bool)) {
                         err_handler_->error(
                             inst.location,
                             std::format(
@@ -420,7 +432,8 @@ private:
                         auto left_tv = type_vars_[current_left];
                         auto right_tv = type_vars_[operand_ref];
                         if (left_tv.definded() && right_tv.definded()) {
-                            auto unified = unify(left_tv.get(), right_tv.get());
+                            auto unified =
+                                unify(left_tv.get().type, right_tv.get().type);
                             if (unified) {
                                 comparator.type = *unified;
                             }
@@ -433,16 +446,17 @@ private:
             [&](const ir::Inst::Call& data) {
                 auto func_tp = type_vars_[data.value].type;
                 if (func_tp.has_value()) {
-                    const auto& type = type_pool_->get(*func_tp);
+                    const auto& type = type_pool_->get(func_tp->type);
                     if (auto ft = type.data.get_if<types::Type::Func>()) {
-                        add_type(ref, ft->return_type, inst.location);
+                        add_type(ref, ft->return_type.type, inst.location);
                         auto args = func_->inst_refs(data.args);
                         for (size_t i = 0;
                              i < args.size() && i < ft->params.size();
                              ++i) {
                             auto arg_tp = type_vars_[args[i]].type;
-                            if (arg_tp &&
-                                !can_convert(*arg_tp, ft->params[i])) {
+                            if (arg_tp && !can_convert(
+                                              arg_tp->type, ft->params[i].type
+                                          )) {
                                 err_handler_->error(
                                     inst.location,
                                     std::format(
@@ -469,7 +483,7 @@ private:
                 }
 
                 auto cond_tp = type_vars_[data.value].type;
-                if (cond_tp && !can_convert(*cond_tp, types::Bool)) {
+                if (cond_tp && !can_convert(cond_tp->type, types::Bool)) {
                     err_handler_->error(
                         inst.location,
                         std::format(
@@ -489,7 +503,7 @@ private:
             [&](const ir::Inst::Return& data) {
                 if (data.value.has_value()) {
                     add_type(
-                        *data.value, func_type_->return_type, inst.location
+                        *data.value, func_type_->return_type.type, inst.location
                     );
                 }
                 lock_type(ref, types::Nothing, inst.location);
@@ -503,31 +517,31 @@ private:
             [&](const ir::Inst::Deref& data) {
                 auto tp = type_vars_[data.value].type;
                 if (tp.has_value()) {
-                    const auto& type = type_pool_->get(*tp);
+                    const auto& type = type_pool_->get(tp->type);
                     if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(ref, pt->type, inst.location);
+                        add_type(ref, pt->type.type, inst.location);
                     }
                 }
             },
             [&](const ir::Inst::GetItem& data) {
                 auto tp = type_vars_[data.value].type;
                 if (tp.has_value()) {
-                    const auto& type = type_pool_->get(*tp);
+                    const auto& type = type_pool_->get(tp->type);
                     if (auto at = type.data.get_if<types::Type::Array>()) {
-                        add_type(ref, at->item, inst.location);
+                        add_type(ref, at->item.type, inst.location);
                     } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(ref, pt->type, inst.location);
+                        add_type(ref, pt->type.type, inst.location);
                     }
                 }
             },
             [&](const ir::Inst::SetItem& data) {
                 auto var_tp = type_vars_[data.var].type;
                 if (var_tp.has_value()) {
-                    const auto& type = type_pool_->get(*var_tp);
+                    const auto& type = type_pool_->get(var_tp->type);
                     if (auto at = type.data.get_if<types::Type::Array>()) {
-                        add_type(data.value, at->item, inst.location);
+                        add_type(data.value, at->item.type, inst.location);
                     } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(data.value, pt->type, inst.location);
+                        add_type(data.value, pt->type.type, inst.location);
                     }
                 }
                 lock_type(ref, types::None, inst.location);
@@ -535,7 +549,7 @@ private:
             [&](const ir::Inst::GetAttr& data) {
                 auto tp = type_vars_[data.value].type;
                 if (tp.has_value()) {
-                    const auto& type = type_pool_->get(*tp);
+                    const auto& type = type_pool_->get(tp->type);
                     if (auto st = type.data.get_if<types::Type::Struct>()) {
                         for (const auto& field : st->fields) {
                             if (field.name == data.name) {
@@ -549,11 +563,13 @@ private:
             [&](const ir::Inst::SetAttr& data) {
                 auto var_tp = type_vars_[data.var].type;
                 if (var_tp.has_value()) {
-                    const auto& type = type_pool_->get(*var_tp);
+                    const auto& type = type_pool_->get(var_tp->type);
                     if (auto st = type.data.get_if<types::Type::Struct>()) {
                         for (const auto& field : st->fields) {
                             if (field.name == data.name) {
-                                add_type(data.value, field.type, inst.location);
+                                add_type(
+                                    data.value, field.type.type, inst.location
+                                );
                                 break;
                             }
                         }
@@ -575,9 +591,9 @@ private:
                         break;
                     }
                     if (!common_tp) {
-                        common_tp = item_tp;
+                        common_tp = item_tp->type;
                     } else {
-                        common_tp = unify(*common_tp, *item_tp);
+                        common_tp = unify(*common_tp, item_tp->type);
                         if (!common_tp) {
                             break;
                         }
@@ -587,7 +603,9 @@ private:
                 if (common_tp.has_value() && !type_vars_[ref].locked) {
                     lock_type(
                         ref,
-                        type_pool_->add_array(*common_tp, items.size()),
+                        type_pool_->add_array(
+                            {.type = *common_tp}, items.size()
+                        ),
                         inst.location
                     );
                 }
@@ -596,7 +614,7 @@ private:
                 lock_type(ref, data.type, inst.location);
                 auto from_tp = type_vars_[data.value].type;
                 if (from_tp.has_value() &&
-                    !can_cast(*from_tp, data.type, *type_pool_)) {
+                    !can_cast(from_tp->type, data.type.type, *type_pool_)) {
                     err_handler_->error(
                         inst.location,
                         std::format(
@@ -618,7 +636,7 @@ private:
     void add_type(ir::InstRef inst, types::TypeId type, Location loc) {
         auto& tv = type_vars_[inst];
         auto tp = tv.add_type(type, loc, *source_, *type_pool_, *err_handler_);
-        if (!tv.definded() || tp != tv.get()) {
+        if (!tv.definded() || tp != tv.get().type) {
             changed_ = true;
         }
     }
@@ -628,12 +646,19 @@ private:
         auto tp = tv.union_tp(
             type_vars_[src], loc, *source_, *type_pool_, *err_handler_
         );
-        if (!tv.definded() || tp != tv.get()) {
+        if (!tv.definded() || tp != tv.get().type) {
             changed_ = true;
         }
     }
 
     void lock_type(ir::InstRef inst, types::TypeId type, Location loc) {
+        auto& tv = type_vars_[inst];
+        if (tv.locked) return;
+        tv.lock(type, loc, *source_, *type_pool_, *err_handler_);
+        changed_ = true;
+    }
+
+    void lock_type(ir::InstRef inst, types::SpecType type, Location loc) {
         auto& tv = type_vars_[inst];
         if (tv.locked) return;
         tv.lock(type, loc, *source_, *type_pool_, *err_handler_);

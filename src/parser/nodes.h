@@ -93,6 +93,13 @@ struct Expr {
         std::unique_ptr<Expr> type;
     };
 
+    enum class Specifier : std::uint8_t { Let, Var, Val };
+
+    struct Spec {
+        std::unique_ptr<Expr> type;
+        Specifier specifier;
+    };
+
     Location location;
     utils::Variant<
         Literal,
@@ -104,7 +111,8 @@ struct Expr {
         GetItem,
         GetAttr,
         Array,
-        As>
+        As,
+        Spec>
         value;
 };
 

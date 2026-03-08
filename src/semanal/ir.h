@@ -51,7 +51,7 @@ struct Inst {
 
     struct VarDecl {
         std::string_view name;
-        std::optional<types::TypeId> type;
+        std::optional<types::SpecType> type;
     };
 
     struct LoadVar {
@@ -172,7 +172,7 @@ struct Inst {
 
     struct As {
         InstRef value {};
-        types::TypeId type;
+        types::SpecType type;
     };
 
     using Value = utils::Variant<
@@ -205,7 +205,7 @@ struct Inst {
 
 struct Param {
     std::string_view name;
-    types::TypeId type;
+    types::SpecType type;
 };
 
 enum class ComparisonOp : std::uint8_t {
@@ -230,8 +230,8 @@ public:
     [[nodiscard]] std::string_view name() const { return name_; }
     [[nodiscard]] Param param(ParamRef ref) const { return params_[ref.index]; }
     [[nodiscard]] std::span<const Param> params() const { return params_; }
-    [[nodiscard]] types::TypeId return_type() const { return return_type_; }
-    void set_type(std::span<const Param> params, types::TypeId return_type) {
+    [[nodiscard]] types::SpecType return_type() const { return return_type_; }
+    void set_type(std::span<const Param> params, types::SpecType return_type) {
         params_.append_range(params);
         return_type_ = return_type;
     }
@@ -311,7 +311,7 @@ public:
 private:
     std::string_view name_;
     std::vector<Param> params_;
-    types::TypeId return_type_;
+    types::SpecType return_type_;
     std::vector<Inst> insts_;
     std::vector<InstRef> inst_refs_;
     std::vector<Comparator> comparators_;

@@ -10,7 +10,7 @@ ir::Module resolve(const nodes::Module& module, ErrorHandler& err_handler);
 
 struct AnalyzedFunc {
     ir::FuncRef ref;
-    std::vector<types::TypeId> inst_types;
+    std::vector<types::SpecType> inst_types;
 };
 
 struct AnalyzedModule {

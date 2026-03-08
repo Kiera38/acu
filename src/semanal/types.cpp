@@ -49,7 +49,7 @@ TypeId TypePool::add_func(const Type::Func& func) {
     return it->second;
 }
 
-TypeId TypePool::add_array(TypeId item, std::uint64_t length) {
+TypeId TypePool::add_array(SpecType item, std::uint64_t length) {
     Type::Array array {.item = item, .length = length};
     if (auto it = arrays_.find(array); it != arrays_.end()) {
         return it->second;
@@ -60,7 +60,7 @@ TypeId TypePool::add_array(TypeId item, std::uint64_t length) {
     return it->second;
 }
 
-TypeId TypePool::add_ptr(TypeId type) {
+TypeId TypePool::add_ptr(SpecType type) {
     if (auto it = ptrs_.find(type); it != ptrs_.end()) {
         return it->second;
     }
@@ -126,6 +126,25 @@ std::string TypePool::to_string(TypeId id) const {
     );
 }
 
+std::string specifier_to_string(Specifier specifier) {
+    switch (specifier) {
+        case Specifier::None: return "";
+        case Specifier::Let: return "let";
+        case Specifier::Var: return "var";
+        case Specifier::Val: return "val";
+    }
+    return "";
+}
+
+std::string TypePool::to_string(SpecType type) const {
+    if (type.specifier == Specifier::None) {
+        return to_string(type.type);
+    }
+    return std::format(
+        "{} {}", specifier_to_string(type.specifier), to_string(type.type)
+    );
+}
+
 }
 
 namespace acu::ir {
@@ -134,7 +153,7 @@ types::TypeId Module::func_type(FuncRef ref) {
     auto params =
         func.params() |
         std::views::transform([](const Param& param) { return param.type; }) |
-        std::ranges::to<std::vector<types::TypeId>>();
+        std::ranges::to<std::vector<types::SpecType>>();
     types::Type::Func type {
         .params = std::move(params), .return_type = func.return_type()
     };

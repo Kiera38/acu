@@ -323,7 +323,9 @@ Token Lexer::identifier_or_keyword() {
         {"if", TokenType::If},
         {"else", TokenType::Else},
         {"while", TokenType::While},
+        {"let", TokenType::Let},
         {"var", TokenType::Var},
+        {"val", TokenType::Val},
         {"struct", TokenType::Struct},
         {"or", TokenType::Or},
         {"and", TokenType::And},
@@ -680,7 +682,9 @@ std::string token_type_to_string(TokenType type) {
         case TokenType::If: return "IF";
         case TokenType::Else: return "ELSE";
         case TokenType::While: return "WHILE";
+        case TokenType::Let: return "LET";
         case TokenType::Var: return "VAR";
+        case TokenType::Val: return "VAL";
         case TokenType::Struct: return "STRUCT";
         case TokenType::And: return "AND";
         case TokenType::Or: return "OR";

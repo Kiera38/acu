@@ -177,7 +177,9 @@ private:
             std::vector<types::Type::StructField> fields;
             fields.reserve(struct_node.fields.size());
             for (const auto& field : struct_node.fields) {
-                fields.push_back({.name = field.name, .type = types::None});
+                fields.push_back(
+                    {.name = field.name, .type = resolve_type(*field.type)}
+                );
             }
             ir_module_.types().set_struct_fields(type_id, std::move(fields));
         }
@@ -200,7 +202,7 @@ private:
                     {.name = arg.name, .type = resolve_type(*arg.type)}
                 );
             }
-            auto return_type = types::None;
+            types::SpecType return_type = {.type = types::None};
             if (func_node.return_type) {
                 return_type = resolve_type(*func_node.return_type);
             }
@@ -218,103 +220,119 @@ private:
         }
     }
 
-    types::TypeId resolve_type(const nodes::Expr& expr) {
+    types::SpecType resolve_type(const nodes::Expr& expr) {
         return expr.value.visit(
-            [&](const nodes::Expr::Name& name) {
+            [&](const nodes::Expr::Name& name) -> types::SpecType {
                 if (auto type = context_.find(name.name)) {
-                    return type->data.get<types::TypeId>();
+                    return {.type = type->data.get<types::TypeId>()};
                 } else {
                     if (name.name.starts_with("Int")) {
-                        if (name.name == "Int") return types::Int;
+                        if (name.name == "Int") return {.type = types::Int};
                         auto bits = as_uint8(
                             name.name.substr(3), expr.location, *err_handler_
                         );
                         switch (bits) {
-                            case 8: return types::Int8;
-                            case 16: return types::Int16;
-                            case 32: return types::Int32;
-                            case 64: return types::Int64;
+                            case 8: return {.type = types::Int8};
+                            case 16: return {.type = types::Int16};
+                            case 32: return {.type = types::Int32};
+                            case 64: return {.type = types::Int64};
                             default:
                                 err_handler_->error(
                                     expr.location, "unsupported integer size"
                                 );
-                                return types::None;
+                                return {.type = types::None};
                         }
                     } else if (name.name.starts_with("UInt")) {
-                        if (name.name == "UInt") return types::UInt;
+                        if (name.name == "UInt") return {.type = types::UInt};
                         auto bits = as_uint8(
                             name.name.substr(4), expr.location, *err_handler_
                         );
                         switch (bits) {
-                            case 8: return types::UInt8;
-                            case 16: return types::UInt16;
-                            case 32: return types::UInt32;
-                            case 64: return types::UInt64;
+                            case 8: return {.type = types::UInt8};
+                            case 16: return {.type = types::UInt16};
+                            case 32: return {.type = types::UInt32};
+                            case 64: return {.type = types::UInt64};
                             default:
                                 err_handler_->error(
                                     expr.location, "unsupported integer size"
                                 );
-                                return types::None;
+                                return {.type = types::None};
                         }
                     } else if (name.name.starts_with("Float")) {
-                        if (name.name == "Float") return types::Float;
+                        if (name.name == "Float") return {.type = types::Float};
                         auto bits = as_uint8(
                             name.name.substr(5), expr.location, *err_handler_
                         );
                         switch (bits) {
-                            case 32: return types::Float32;
-                            case 64: return types::Float64;
+                            case 32: return {.type = types::Float32};
+                            case 64: return {.type = types::Float64};
                             default:
                                 err_handler_->error(
                                     expr.location, "unsupported float size"
                                 );
-                                return types::None;
+                                return {.type = types::None};
                         }
                     } else if (name.name == "Bool") {
-                        return types::Bool;
+                        return {.type = types::Bool};
                     } else if (name.name == "None") {
-                        return types::None;
+                        return {.type = types::None};
                     } else if (name.name == "Nothing") {
-                        return types::Nothing;
+                        return {.type = types::Nothing};
                     }
                     err_handler_->error(
                         expr.location,
                         std::format("name '{}' not found", name.name),
                         suggest_similar_name(name.name)
                     );
-                    return types::None;
+                    return {.type = types::None};
                 }
             },
-            [&](const nodes::Expr::GetItem& node) {
+            [&](const nodes::Expr::GetItem& node) -> types::SpecType {
                 const auto& name = node.value->value.get<nodes::Expr::Name>();
                 if (name.name == "Array") {
                     if (node.args.size() != 2) {
                         err_handler_->error(
                             expr.location, "Array type has 2 parameters"
                         );
-                        return types::None;
+                        return {.type = types::None};
                     }
                     auto type = resolve_type(*node.args[0]);
                     auto length = get_int_const(*node.args[1]);
-                    return ir_module_.types().add_array(type, length);
+                    return {.type = ir_module_.types().add_array(type, length)};
                 } else if (name.name == "Ptr") {
                     if (node.args.size() != 1) {
                         err_handler_->error(
                             expr.location, "Ptr type has 1 parameter"
                         );
-                        return types::None;
+                        return {.type = types::None};
                     }
-                    return ir_module_.types().add_ptr(
-                        resolve_type(*node.args[0])
-                    );
+                    return {
+                        .type = ir_module_.types().add_ptr(
+                            resolve_type(*node.args[0])
+                        )
+                    };
                 } else {
                     err_handler_->error(expr.location, "unknown type");
-                    return types::None;
+                    return {.type = types::None};
                 }
             },
-            [&](const auto&) -> types::TypeId {
+            [&](const nodes::Expr::Spec& spec) -> types::SpecType {
+                auto specifier = [&] {
+                    switch (spec.specifier) {
+                        using enum nodes::Expr::Specifier;
+                        case Let: return types::Specifier::Let;
+                        case Var: return types::Specifier::Var;
+                        case Val: return types::Specifier::Val;
+                    }
+                }();
+                return {
+                    .type = resolve_type(*spec.type).type,
+                    .specifier = specifier
+                };
+            },
+            [&](const auto&) -> types::SpecType {
                 err_handler_->error(expr.location, "expr is not a type");
-                return types::None;
+                return {.type = types::None};
             }
         );
     }
@@ -335,7 +353,7 @@ private:
                 resolve_expr(*data.expr, func);
             },
             [&](const nodes::Stmt::Var& data) {
-                std::optional<types::TypeId> type;
+                std::optional<types::SpecType> type;
                 if (data.type) {
                     type = resolve_type(*data.type);
                 }
@@ -428,28 +446,9 @@ private:
             },
             [&](const nodes::Stmt::Assign& data) {
                 if (!data.targets.empty()) {
-                    // For simplicity, handle only single assignment for now
                     auto value_ref = resolve_expr(*data.value, func);
-
-                    // Handle the first target
-                    if (auto* name_expr =
-                            data.targets[0]
-                                ->value.get_if<nodes::Expr::Name>()) {
-                        auto entry = context_.find(name_expr->name);
-                        if (entry != nullptr) {
-                            // Check if it's a variable using the variant
-                            if (entry->data.is<ir::InstRef>()) {
-                                auto var_ref = entry->data.get<ir::InstRef>();
-                                // Generate store instruction
-                                ir::Inst store_inst;
-                                store_inst.data = ir::Inst::Store {
-                                    .var = var_ref, .value = value_ref
-                                };
-                                store_inst.location = stmt.location;
-
-                                func.add(store_inst);
-                            }
-                        }
+                    for (const auto& target : data.targets) {
+                        convert_store(value_ref, func, *target);
                     }
                 }
             },
@@ -521,17 +520,21 @@ private:
             [&](const nodes::Expr::Name& node) {
                 if (auto var = context_.find(node.name)) {
                     auto ref = var->data.get<ir::InstRef>();
-                    return func.add(
-                        {.data = ir::Inst::Store {.var = ref, .value = value},
-                         .location = expr.location}
-                    );
+                    return func.add({
+                        .data = ir::Inst::Store {.var = ref, .value = value},
+                        .location = expr.location,
+                    });
                 } else {
-                    err_handler_->error(
-                        expr.location,
-                        std::format("cannot store to '{}'", node.name),
-                        suggest_similar_name(node.name)
-                    );
-                    return value;
+                    auto var_ref = func.add({
+                        .data = ir::Inst::VarDecl {.name = node.name},
+                        .location = expr.location,
+                    });
+                    context_.add(node.name, {var_ref});
+                    return func.add({
+                        .data =
+                            ir::Inst::Store {.var = var_ref, .value = value},
+                        .location = expr.location,
+                    });
                 }
             },
             [&](const nodes::Expr::GetItem& node) {

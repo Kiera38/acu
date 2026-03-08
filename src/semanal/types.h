@@ -9,7 +9,6 @@
 #include "source.h"
 #include "variant.h"
 
-
 namespace acu::types {
 struct TypeId {
     std::uint32_t index {0};
@@ -39,6 +38,17 @@ constexpr TypeId Float {12};
 
 constexpr TypeId Const {13};
 
+enum class Specifier : std::uint8_t { None, Let, Var, Val };
+
+struct SpecType {
+    TypeId type;
+    Specifier specifier = Specifier::None;
+
+    bool operator==(const SpecType& other) const {
+        return type == other.type && specifier == other.specifier;
+    }
+};
+
 struct Type {
     struct None {};
     struct Nothing {};
@@ -50,22 +60,22 @@ struct Type {
     enum class Float : std::uint8_t { F32 = 32, F64 = 64 };
 
     struct Func {
-        std::vector<TypeId> params;
-        TypeId return_type;
+        std::vector<SpecType> params;
+        SpecType return_type;
     };
 
     struct Array {
-        TypeId item;
+        SpecType item;
         std::uint64_t length;
     };
 
     struct Ptr {
-        TypeId type;
+        SpecType type;
     };
 
     struct StructField {
         std::string_view name;
-        TypeId type;
+        SpecType type;
     };
 
     struct Struct {
@@ -95,11 +105,12 @@ public:
     TypePool();
     TypeId add_int(std::uint8_t bits, bool is_signed = true);
     TypeId add_func(const Type::Func& func);
-    TypeId add_array(TypeId item, std::uint64_t length);
-    TypeId add_ptr(TypeId type);
+    TypeId add_array(SpecType item, std::uint64_t length);
+    TypeId add_ptr(SpecType type);
     TypeId add_struct(const Type::Struct& struct_def);
     void set_struct_fields(TypeId type, std::vector<Type::StructField> fields);
     [[nodiscard]] std::string to_string(TypeId id) const;
+    [[nodiscard]] std::string to_string(SpecType type) const;
 
     [[nodiscard]] bool is_int(TypeId type) const {
         return types_[type.index].data.is<Type::Int>();
@@ -117,6 +128,22 @@ private:
     struct TypeIdHash {
         std::size_t operator()(TypeId id) const {
             return std::hash<std::uint32_t> {}(id.index);
+        }
+    };
+
+    struct SpecTypeHash {
+        std::size_t operator()(const SpecType& type) const {
+            std::size_t result = 0;
+            hash_combine(result, type.type.index);
+            hash_combine(result, type.specifier);
+            return result;
+        }
+    };
+
+    struct SpecTypeEqual {
+        bool operator()(const SpecType& type1, const SpecType& type2) const {
+            return type1.type == type2.type &&
+                   type1.specifier == type2.specifier;
         }
     };
 
@@ -140,9 +167,9 @@ private:
         std::size_t operator()(const Type::Func& func) const {
             std::size_t result = 0;
             for (const auto& param : func.params) {
-                hash_combine(result, param.index);
+                hash_combine(result, SpecTypeHash {}(param));
             }
-            hash_combine(result, func.return_type.index);
+            hash_combine(result, SpecTypeHash {}(func.return_type));
             return result;
         }
     };
@@ -159,7 +186,7 @@ private:
     struct ArrayHash {
         std::size_t operator()(const Type::Array& type) const {
             std::size_t result = 0;
-            hash_combine(result, TypeIdHash {}(type.item));
+            hash_combine(result, SpecTypeHash {}(type.item));
             hash_combine(result, type.length);
             return result;
         }
@@ -177,7 +204,7 @@ private:
     std::unordered_map<Type::Int, TypeId, IntHash, IntEqual> ints_;
     std::unordered_map<Type::Func, TypeId, FuncHash, FuncEqual> funcs_;
     std::unordered_map<Type::Array, TypeId, ArrayHash, ArrayEqual> arrays_;
-    std::unordered_map<TypeId, TypeId, TypeIdHash> ptrs_;
+    std::unordered_map<SpecType, TypeId, SpecTypeHash, SpecTypeEqual> ptrs_;
     std::unordered_map<std::string_view, TypeId> structs_;
 };
 

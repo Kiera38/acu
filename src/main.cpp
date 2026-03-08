@@ -12,23 +12,23 @@ int main() {
     source.path = "test.acu";
     source.content = R"(
 func main() Int:
-    var a = [10, 100, 30, 7]
-    var s = "hello"
-    var c = 'A'
+    a = [10, 100, 30, 7]
+    s = "hello"
+    c = 'A'
     bubble_sort(a as Ptr[Int], 4)
     return 0
 
 
 func bubble_sort(a: Ptr[Int], n: Int):
-    var i = 0
+    let i = 0
     while i < n -1:
-        var swapped = false
-        var j = 0
+        swapped = false
+        j = 0
         while j < n-i-1:
             if a[j] > a[j+1]:
-                var t = a[j+1]
+                t = a[j+1]
                 a[j+1] = a[j]
-                a[jj] = t
+                a[j] = t
                 swapped = true
             j+=1
         if not swapped:
@@ -66,7 +66,10 @@ func bubble_sort(a: Ptr[Int], n: Int):
                       << "\n";
             for (size_t i = 0; i < func.inst_types.size(); ++i) {
                 std::cout << "  inst " << i << ": type "
-                          << func.inst_types[i].index << "\n";
+                          << analyzed.ir_module.types().to_string(
+                                 func.inst_types[i]
+                             )
+                          << "\n";
             }
         }
 

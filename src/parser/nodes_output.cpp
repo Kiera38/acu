@@ -1,4 +1,5 @@
 #include "nodes.h"
+#include "source.h"
 
 namespace acu::nodes {
 namespace {
@@ -227,6 +228,26 @@ std::string to_string(const Expr::As& as, acu::Location location = {}) {
     std::string type_str = indent_string(to_string(*as.type), 2);
     return std::format(
         "As(\n  {},\n  {}\n) @ {}",
+        value_str,
+        type_str,
+        location_to_string(location)
+    );
+}
+
+std::string to_string(Expr::Specifier spec) {
+    switch (spec) {
+        using enum Expr::Specifier;
+        case Let: return "let";
+        case Var: return "var";
+        case Val: return "val";
+    }
+}
+
+std::string to_string(const Expr::Spec& spec, acu::Location location = {}) {
+    std::string value_str = indent_string(to_string(spec.specifier), 2);
+    std::string type_str = indent_string(to_string(*spec.type), 2);
+    return std::format(
+        "Spec(\n  {},\n  {}\n) @ {}",
         value_str,
         type_str,
         location_to_string(location)

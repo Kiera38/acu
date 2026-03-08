@@ -2,6 +2,7 @@
 
 #include "lexer.h"
 #include "nodes.h"
+#include "tokens.h"
 
 namespace acu::parser {
 namespace {
@@ -156,7 +157,7 @@ private:
         throw std::runtime_error(message);
     }
 
-    std::unique_ptr<nodes::Expr> parse_type() { return parse_expr(); }
+    std::unique_ptr<nodes::Expr> parse_type() { return parse_spec(); }
 
     std::unique_ptr<nodes::Stmt> parse_use_stmt() {
         Location location = peek(-1).location;  // 'using' token location
@@ -268,31 +269,29 @@ private:
 
     nodes::Struct parse_struct() {
         Token name = expect(TokenType::Identifier, "expected struct name");
-        expect(TokenType::Colon, "Expected ':' before struct body");
         std::vector<nodes::StructField> fields;
-        if (match(TokenType::NewLine)) {
-            expect(TokenType::Indent, "Expected indented block after new line");
-            while (!match(TokenType::Dedent)) {
-                fields.push_back(parse_struct_field());
-            }
-        } else {
+        expect(TokenType::LParen, "Expected '(' after struct name");
+        while (!match(TokenType::RParen)) {
             fields.push_back(parse_struct_field());
+            if (!match(TokenType::Comma)) {
+                expect(TokenType::RParen, "Expected ')' after fields");
+                break;
+            }
         }
+        expect(TokenType::NewLine, "Expected new line after struct");
         return nodes::Struct {
-            .name = std::get<std::string_view>(name.value.value),
+            .name = name.value.get<std::string_view>(),
             .fields = std::move(fields)
         };
     }
 
     nodes::StructField parse_struct_field() {
-        expect(TokenType::Var, "Field must starts with 'var'");
         Token name = expect(TokenType::Identifier, "expected field name");
         expect(TokenType::Colon, "Expected ':' after field name");
         std::unique_ptr<nodes::Expr> type = parse_type();
-        expect(TokenType::NewLine, "Expected new line after field");
         return nodes::StructField {
             .location = name.location,
-            .name = std::get<std::string_view>(name.value.value),
+            .name = name.value.get<std::string_view>(),
             .type = std::move(type)
         };
     }
@@ -319,8 +318,8 @@ private:
     }
 
     std::unique_ptr<nodes::Stmt> parse_stmt() {
-        if (match(TokenType::Var)) {
-            return parse_var_decl();
+        if (match(TokenType::Let)) {
+            return parse_let_stmt();
         }
         if (match(TokenType::If)) {
             return parse_if_stmt();
@@ -343,10 +342,16 @@ private:
                 peek(-2).location, nodes::Stmt::Continue {}
             );
         }
+        if (match(TokenType::Using)) {
+            return parse_use_stmt();
+        }
+        if (match(TokenType::From)) {
+            return parse_from_use_stmt();
+        }
         return parse_assign();
     }
 
-    std::unique_ptr<nodes::Stmt> parse_var_decl() {
+    std::unique_ptr<nodes::Stmt> parse_let_stmt() {
         Token name = expect(TokenType::Identifier, "expected variable name");
         std::unique_ptr<nodes::Expr> type = nullptr;
         if (match(TokenType::Colon)) {
@@ -419,6 +424,25 @@ private:
     }
 
     std::unique_ptr<nodes::Stmt> parse_assign() {
+        if (peek().type == TokenType::Identifier &&
+            peek(1).type == TokenType::Colon) {
+            auto name = next();
+            expect(TokenType::Colon, "");
+            auto type = parse_type();
+            std::unique_ptr<nodes::Expr> init = nullptr;
+            if (match(TokenType::Equal)) {
+                init = parse_expr();
+            }
+            expect(TokenType::NewLine, "");
+            return std::make_unique<nodes::Stmt>(
+                name.location,
+                nodes::Stmt::Var {
+                    .name = name.value.get<std::string_view>(),
+                    .type = std::move(type),
+                    .init = std::move(init)
+                }
+            );
+        }
         std::unique_ptr<nodes::Expr> expr = parse_expr();
         if (peek().type == TokenType::PlusEqual ||
             peek().type == TokenType::MinusEqual ||
@@ -466,6 +490,44 @@ private:
                 .targets = std::move(targets), .value = std::move(expr_val)
             }
         );
+    }
+
+    std::unique_ptr<nodes::Expr> parse_spec() {
+        switch (peek().type) {
+            case TokenType::Let: {
+                auto token = next();
+                return std::make_unique<nodes::Expr>(
+                    token.location,
+                    nodes::Expr::Spec {
+                        .type = parse_expr(),
+                        .specifier = nodes::Expr::Specifier::Let
+                    }
+                );
+            }
+            case TokenType::Var: {
+                auto token = next();
+                return std::make_unique<nodes::Expr>(
+                    token.location,
+                    nodes::Expr::Spec {
+                        .type = parse_expr(),
+                        .specifier = nodes::Expr::Specifier::Var
+                    }
+                );
+            }
+            case TokenType::Val: {
+                auto token = next();
+                return std::make_unique<nodes::Expr>(
+                    token.location,
+                    nodes::Expr::Spec {
+                        .type = parse_expr(),
+                        .specifier = nodes::Expr::Specifier::Val
+                    }
+                );
+            }
+            default: {
+                return parse_expr();
+            }
+        }
     }
 
     std::unique_ptr<nodes::Expr> parse_expr() { return parse_logical_or(); }
