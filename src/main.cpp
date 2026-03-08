@@ -5,6 +5,7 @@
 #include "parser/parser.h"
 #include "refanal/generator.h"
 #include "refanal/ir_str.h"
+#include "refanal/optimizer.h"
 #include "semanal/semanal.h"
 #include "source.h"
 
@@ -53,7 +54,9 @@ func bubble_sort(a: Ptr[Int], n: Int):
             return 1;
         }
 
+        /*
         std::cout << "=== IR ===\n" << acu::ir::to_string(ir_module) << '\n';
+        */
 
         auto analyzed =
             acu::semanal::type_analyze(ir_module, source, err_handler);
@@ -78,6 +81,7 @@ func bubble_sort(a: Ptr[Int], n: Int):
         */
 
         auto refanal_module = acu::refanal::generate(analyzed);
+        acu::refanal::optimize(refanal_module);
         std::cout << "\n=== REFANAL IR ===\n";
         std::cout << acu::refanal::to_string(refanal_module, analyzed) << "\n";
 

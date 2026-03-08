@@ -20,6 +20,7 @@ add_executable(acu
 
     src/refanal/generator.cpp
     src/refanal/ir_str.cpp
+    src/refanal/optimizer.cpp
 )
 
 # Set include directories

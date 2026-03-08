@@ -218,8 +218,12 @@ public:
         return_type_ = return_type;
     }
 
-    [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref.index]; }
+    [[nodiscard]] const Inst& inst(InstRef ref) const {
+        return insts_[ref.index];
+    }
+    [[nodiscard]] Inst& inst(InstRef ref) { return insts_[ref.index]; }
     [[nodiscard]] std::span<const Inst> insts() const { return insts_; }
+    [[nodiscard]] std::span<Inst> insts() { return insts_; }
 
     [[nodiscard]] const Block& block(BlockRef ref) const {
         return blocks_[ref.index];
@@ -228,6 +232,9 @@ public:
     [[nodiscard]] std::span<const Block> blocks() const { return blocks_; }
 
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
+        return std::span(inst_refs_).subspan(refs.start, refs.count);
+    }
+    [[nodiscard]] std::span<InstRef> inst_refs(InstRefs refs) {
         return std::span(inst_refs_).subspan(refs.start, refs.count);
     }
 
@@ -245,6 +252,10 @@ public:
 
     void set_block(BlockRef ref, Block block) {
         blocks_[ref.index] = std::move(block);
+    }
+
+    void replace_blocks(std::vector<Block> blocks) {
+        blocks_ = std::move(blocks);
     }
 
     InstRefs add(std::span<const InstRef> refs) {
@@ -270,6 +281,7 @@ public:
     Module() = default;
     Func& func(FuncRef ref) { return funcs_[ref.index]; }
     [[nodiscard]] std::span<const Func> funcs() const { return funcs_; }
+    [[nodiscard]] std::span<Func> funcs() { return funcs_; }
     [[nodiscard]] const Func& func(FuncRef ref) const {
         return funcs_[ref.index];
     }
