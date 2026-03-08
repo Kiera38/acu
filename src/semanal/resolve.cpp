@@ -1,20 +1,43 @@
+#include <algorithm>
+#include <array>
 #include <charconv>
 #include <concepts>
 #include <format>
 #include <functional>
 #include <optional>
 #include <ranges>
-#include <stdexcept>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "parser/nodes.h"
 #include "semanal/ir.h"
+#include "semanal/semanal.h"
 #include "semanal/types.h"
 
 namespace acu::semanal {
 namespace {
+
+std::size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
+    if (s1.empty()) return s2.size();
+    if (s2.empty()) return s1.size();
+
+    std::vector<std::uint32_t> v0(s2.size() + 1);
+    std::vector<std::uint32_t> v1(s2.size() + 1);
+
+    for (std::uint32_t i = 0; i <= s2.size(); i++) v0[i] = i;
+
+    for (std::uint32_t i = 0; i < s1.size(); i++) {
+        v1[0] = i + 1;
+        for (std::uint32_t j = 0; j < s2.size(); j++) {
+            std::uint32_t cost = (s1[i] == s2[j]) ? 0 : 1;
+            v1[j + 1] = std::min({v1[j] + 1, v0[j + 1] + 1, v0[j] + cost});
+        }
+        std::swap(v0, v1);
+    }
+    return v0[s2.size()];
+}
 
 class Context {
 public:
@@ -43,23 +66,36 @@ public:
         scopes_stack_.back()[name] = entry;
     }
 
+    [[nodiscard]] std::vector<std::string_view> get_all_names() const {
+        std::vector<std::string_view> names;
+        for (const auto& scope : scopes_stack_) {
+            for (const auto& [name, _] : scope) {
+                names.push_back(name);
+            }
+        }
+        return names;
+    }
+
 private:
     std::vector<std::unordered_map<std::string_view, ScopeEntry>> scopes_stack_;
 };
 
-std::uint8_t as_uint8(std::string_view str) {
+std::uint8_t as_uint8(
+    std::string_view str, Location loc, ErrorHandler& err_handler
+) {
     std::uint8_t result = 0;
     auto [ptr, err] =
         std::from_chars(str.data(), str.data() + str.length(), result);
     if (err != std::errc {}) {
-        throw std::runtime_error("error in number");
+        err_handler.error(loc, "error in number");
     }
     return result;
 }
 
 class Resolver {
 public:
-    explicit Resolver(const nodes::Module& module) : module_(&module) {}
+    explicit Resolver(const nodes::Module& module, ErrorHandler& err_handler)
+        : module_(&module), err_handler_(&err_handler) {}
 
     ir::Module resolve() {
         for (const auto& struct_def : module_->structs) {
@@ -79,6 +115,51 @@ public:
     }
 
 private:
+    std::string suggest_similar_name(std::string_view name) {
+        auto names = context_.get_all_names();
+        // Add built-in types to suggestions
+        static constexpr std::array<std::string_view, 18> builtins = {
+            "Int",
+            "Int8",
+            "Int16",
+            "Int32",
+            "Int64",
+            "UInt",
+            "UInt8",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "Float",
+            "Float32",
+            "Float64",
+            "Bool",
+            "None",
+            "Nothing",
+            "Array",
+            "Ptr"
+        };
+        for (auto b : builtins) {
+            names.push_back(b);
+        }
+
+        std::string_view best_match;
+        std::size_t min_distance = (name.length() < 3) ? 1 : 3;
+
+        for (auto n : names) {
+            if (n == name) continue;
+            auto dist = levenshtein_distance(name, n);
+            if (dist < min_distance) {
+                min_distance = dist;
+                best_match = n;
+            }
+        }
+
+        if (!best_match.empty()) {
+            return std::format("did you mean '{}'?", best_match);
+        }
+        return "";
+    }
+
     void create_struct_def(const nodes::Struct& struct_node) {
         auto type_id = ir_module_.types().add_struct({
             .name = struct_node.name,
@@ -145,40 +226,49 @@ private:
                 } else {
                     if (name.name.starts_with("Int")) {
                         if (name.name == "Int") return types::Int;
-                        auto bits = as_uint8(name.name.substr(3));
+                        auto bits = as_uint8(
+                            name.name.substr(3), expr.location, *err_handler_
+                        );
                         switch (bits) {
                             case 8: return types::Int8;
                             case 16: return types::Int16;
                             case 32: return types::Int32;
                             case 64: return types::Int64;
                             default:
-                                throw std::runtime_error(
-                                    "unsupported integer size"
+                                err_handler_->error(
+                                    expr.location, "unsupported integer size"
                                 );
+                                return types::None;
                         }
                     } else if (name.name.starts_with("UInt")) {
                         if (name.name == "UInt") return types::UInt;
-                        auto bits = as_uint8(name.name.substr(4));
+                        auto bits = as_uint8(
+                            name.name.substr(4), expr.location, *err_handler_
+                        );
                         switch (bits) {
                             case 8: return types::UInt8;
                             case 16: return types::UInt16;
                             case 32: return types::UInt32;
                             case 64: return types::UInt64;
                             default:
-                                throw std::runtime_error(
-                                    "unsupported integer size"
+                                err_handler_->error(
+                                    expr.location, "unsupported integer size"
                                 );
+                                return types::None;
                         }
                     } else if (name.name.starts_with("Float")) {
                         if (name.name == "Float") return types::Float;
-                        auto bits = as_uint8(name.name.substr(5));
+                        auto bits = as_uint8(
+                            name.name.substr(5), expr.location, *err_handler_
+                        );
                         switch (bits) {
                             case 32: return types::Float32;
                             case 64: return types::Float64;
                             default:
-                                throw std::runtime_error(
-                                    "unsupported float size"
+                                err_handler_->error(
+                                    expr.location, "unsupported float size"
                                 );
+                                return types::None;
                         }
                     } else if (name.name == "Bool") {
                         return types::Bool;
@@ -187,37 +277,56 @@ private:
                     } else if (name.name == "Nothing") {
                         return types::Nothing;
                     }
-                    throw std::runtime_error(
-                        std::format("name '{}' not found", name.name)
+                    err_handler_->error(
+                        expr.location,
+                        std::format("name '{}' not found", name.name),
+                        suggest_similar_name(name.name)
                     );
+                    return types::None;
                 }
             },
             [&](const nodes::Expr::GetItem& node) {
                 const auto& name = node.value->value.get<nodes::Expr::Name>();
-                if(name.name == "Array") {
-                    if(node.args.size() != 2) {
-                        throw std::runtime_error("Array type has 2 parameters");
+                if (name.name == "Array") {
+                    if (node.args.size() != 2) {
+                        err_handler_->error(
+                            expr.location, "Array type has 2 parameters"
+                        );
+                        return types::None;
                     }
                     auto type = resolve_type(*node.args[0]);
                     auto length = get_int_const(*node.args[1]);
                     return ir_module_.types().add_array(type, length);
-                } else if(name.name == "Ptr") {
-                    if(node.args.size() != 1) {
-                        throw std::runtime_error("Ptr type has 1 parameter");
+                } else if (name.name == "Ptr") {
+                    if (node.args.size() != 1) {
+                        err_handler_->error(
+                            expr.location, "Ptr type has 1 parameter"
+                        );
+                        return types::None;
                     }
-                    return ir_module_.types().add_ptr(resolve_type(*node.args[0]));
+                    return ir_module_.types().add_ptr(
+                        resolve_type(*node.args[0])
+                    );
                 } else {
-                    throw std::runtime_error("unknown type");
+                    err_handler_->error(expr.location, "unknown type");
+                    return types::None;
                 }
             },
             [&](const auto&) -> types::TypeId {
-                throw std::runtime_error("expr is not a type");
+                err_handler_->error(expr.location, "expr is not a type");
+                return types::None;
             }
         );
     }
 
     std::int64_t get_int_const(const nodes::Expr& expr) {
-        return expr.value.get<nodes::Expr::Literal>().value.get<std::int64_t>();
+        if (auto* lit = expr.value.get_if<nodes::Expr::Literal>()) {
+            if (auto* val = lit->value.get_if<std::int64_t>()) {
+                return *val;
+            }
+        }
+        err_handler_->error(expr.location, "Expected integer constant");
+        return 0;
     }
 
     void resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
@@ -230,8 +339,11 @@ private:
                 if (data.type) {
                     type = resolve_type(*data.type);
                 }
-                auto var_ref =
-                    func.add({.data=ir::Inst::VarDecl {.name = data.name, .type = type}, .location = stmt.location});
+                auto var_ref = func.add(
+                    {.data =
+                         ir::Inst::VarDecl {.name = data.name, .type = type},
+                     .location = stmt.location}
+                );
 
                 context_.add(data.name, {var_ref});
                 if (data.init) {
@@ -414,9 +526,12 @@ private:
                          .location = expr.location}
                     );
                 } else {
-                    throw std::runtime_error(
-                        std::format("cannot store to {}", node.name)
+                    err_handler_->error(
+                        expr.location,
+                        std::format("cannot store to '{}'", node.name),
+                        suggest_similar_name(node.name)
                     );
+                    return value;
                 }
             },
             [&](const nodes::Expr::GetItem& node) {
@@ -442,9 +557,11 @@ private:
                 );
             },
             [&](const auto&) -> ir::InstRef {
-                throw std::runtime_error(
+                err_handler_->error(
+                    expr.location,
                     "cannot use this expression on the left side of assignment"
                 );
+                return value;
             }
         );
     }
@@ -489,12 +606,24 @@ private:
                                 .data = ir::Inst::Const {.value = struct_ref},
                                 .location = expr.location
                             };
+                        },
+                        [&](const auto&) -> ir::Inst {
+                            return {
+                                .data = ir::Inst::Const {false},
+                                .location = expr.location
+                            };
                         }
                     ));
                 } else {
-                    throw std::runtime_error(
-                        std::format("name '{}' not found", node.name)
+                    err_handler_->error(
+                        expr.location,
+                        std::format("name '{}' not found", node.name),
+                        suggest_similar_name(node.name)
                     );
+                    return func.add({
+                        .data = ir::Inst::Const {false},
+                        .location = expr.location,
+                    });
                 }
             },
             [&](const nodes::Expr::Binary& node) {
@@ -637,7 +766,10 @@ private:
             [&](const nodes::Expr::Comparison& node) {
                 if (node.operands.size() < 2 || node.operators.size() < 1 ||
                     node.operands.size() != node.operators.size() + 1) {
-                    throw std::runtime_error("Invalid comparison expression");
+                    err_handler_->error(
+                        expr.location, "Invalid comparison expression"
+                    );
+                    return func.add(ir::Inst {});
                 }
 
                 auto left_ref = resolve_expr(*node.operands[0], func);
@@ -676,13 +808,14 @@ private:
     }
 
     const nodes::Module* module_;
+    ErrorHandler* err_handler_;
     ir::Module ir_module_;
     Context context_;
 };
 }
 
-ir::Module resolve(const nodes::Module& module) {
-    Resolver resolver(module);
+ir::Module resolve(const nodes::Module& module, ErrorHandler& err_handler) {
+    Resolver resolver(module, err_handler);
     return resolver.resolve();
 }
 }

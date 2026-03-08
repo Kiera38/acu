@@ -12,6 +12,7 @@ add_executable(acu
     src/parser/parser.cpp
     src/parser/nodes_output.cpp
 
+    src/errors.cpp
     src/semanal/types.cpp
     src/semanal/resolve.cpp
     src/semanal/type_analyze.cpp

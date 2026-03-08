@@ -7,7 +7,8 @@ namespace acu::parser {
 namespace {
 class Parser {
 public:
-    Parser(Lexer& lexer) : lexer_(&lexer) {}
+    Parser(Lexer& lexer, ErrorHandler& err_handler)
+        : lexer_(&lexer), err_handler_(&err_handler) {}
 
     nodes::Module parse() {
         std::vector<std::unique_ptr<nodes::Stmt>> imports;
@@ -31,6 +32,9 @@ public:
                 structs.push_back(parse_struct());
             } else {
                 Token token = peek();
+                err_handler_->error(
+                    token.location, "Expected function or struct"
+                );
                 throw std::runtime_error("Expected function or struct");
             }
         }
@@ -43,6 +47,7 @@ public:
 
 private:
     Lexer* lexer_;
+    ErrorHandler* err_handler_;
     std::vector<Token> tokens_;
     std::size_t current_ = 0;
 
@@ -147,6 +152,7 @@ private:
             return next();
         }
         Token token = peek();
+        err_handler_->error(token.location, message);
         throw std::runtime_error(message);
     }
 
@@ -842,14 +848,16 @@ private:
             );
         }
 
+        Token token = peek();
+        err_handler_->error(token.location, "expected expression");
         throw std::runtime_error("expected expression");
     }
 };
 }
 
-nodes::Module parse(Source& source) {
-    Lexer lexer(source);
-    Parser parser(lexer);
+nodes::Module parse(Source& source, ErrorHandler& err_handler) {
+    Lexer lexer(source, err_handler);
+    Parser parser(lexer, err_handler);
     return parser.parse();
 }
 

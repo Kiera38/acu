@@ -5,13 +5,14 @@
 #include <string_view>
 #include <vector>
 
+#include "errors.h"
 #include "source.h"
 #include "tokens.h"
 
 namespace acu::parser {
 class Lexer {
 public:
-    explicit Lexer(Source& source);
+    explicit Lexer(Source& source, ErrorHandler& err_handler);
 
     Token next_token();
 
@@ -48,5 +49,6 @@ private:
     bool begin_of_line_;
     std::uint32_t dedents_;
     std::vector<std::string_view> indent_stack_;
+    ErrorHandler* err_handler_;
 };
 }

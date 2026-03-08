@@ -82,6 +82,7 @@ enum class TokenType : std::uint8_t {
     Dedent,
     NewLine,
     EndOfFile,
+    Error,
 };
 
 struct Token {

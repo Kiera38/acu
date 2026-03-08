@@ -1,17 +1,16 @@
 #include <iostream>
 #include <string>
 
+#include "errors.h"
 #include "parser/parser.h"
 #include "semanal/semanal.h"
 #include "source.h"
 
 int main() {
-    try {
-        // Test the lexer with a simple program
-        acu::Source source;
-        source.module_name = "test";
-        source.path = "test.acu";
-        source.content = R"(
+    acu::Source source;
+    source.module_name = "test";
+    source.path = "test.acu";
+    source.content = R"(
 func main() Int:
     var a = [10, 100, 30, 7]
     var s = "hello"
@@ -29,7 +28,7 @@ func bubble_sort(a: Ptr[Int], n: Int):
             if a[j] > a[j+1]:
                 var t = a[j+1]
                 a[j+1] = a[j]
-                a[j] = t
+                a[jj] = t
                 swapped = true
             j+=1
         if not swapped:
@@ -37,11 +36,30 @@ func bubble_sort(a: Ptr[Int], n: Int):
         i+=1
 )";
 
-        auto module = acu::parser::parse(source);
-        auto ir_module = acu::semanal::resolve(module);
+    acu::ErrorHandler err_handler;
+
+    try {
+        auto module = acu::parser::parse(source, err_handler);
+        if (err_handler.has_errors()) {
+            err_handler.emit_all(source);
+            return 1;
+        }
+
+        auto ir_module = acu::semanal::resolve(module, err_handler);
+        if (err_handler.has_errors()) {
+            err_handler.emit_all(source);
+            return 1;
+        }
+
         std::cout << "=== IR ===\n" << acu::ir::to_string(ir_module) << '\n';
 
-        auto analyzed = acu::semanal::type_analyze(ir_module, source);
+        auto analyzed =
+            acu::semanal::type_analyze(ir_module, source, err_handler);
+        if (err_handler.has_errors()) {
+            err_handler.emit_all(source);
+            return 1;
+        }
+
         std::cout << "=== type analysis ===\n";
         for (const auto& func : analyzed.analyzed_funcs) {
             std::cout << "Func: " << analyzed.ir_module.func(func.ref).name()
@@ -51,8 +69,13 @@ func bubble_sort(a: Ptr[Int], n: Int):
                           << func.inst_types[i].index << "\n";
             }
         }
+
     } catch (const std::exception& e) {
-        std::cerr << "Exception caught: " << e.what() << '\n';
+        if (err_handler.has_errors()) {
+            err_handler.emit_all(source);
+        } else {
+            std::cerr << "Exception caught: " << e.what() << '\n';
+        }
         return 1;
     } catch (...) {
         std::cerr << "Unknown exception caught!" << '\n';

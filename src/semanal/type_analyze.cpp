@@ -4,10 +4,11 @@
 #include <ranges>
 #include <vector>
 
-#include "../source.h"
-#include "ir.h"
-#include "semanal.h"
+#include "errors.h"
+#include "semanal/ir.h"
+#include "semanal/semanal.h"
 #include "semanal/types.h"
+#include "source.h"
 
 namespace acu::semanal {
 namespace {
@@ -121,18 +122,27 @@ struct TypeVar {
         types::TypeId tp,
         Location loc,
         const Source& source,
-        const types::TypePool& pool
+        const types::TypePool& pool,
+        ErrorHandler& err_handler
     ) {
         if (locked) {
             if (type.has_value() && *type != tp) {
                 if (!can_convert(tp, *type)) {
-                    throw std::runtime_error(
+                    std::string hint = "";
+                    if (can_cast(tp, *type, pool)) {
+                        hint = std::format(
+                            "use 'as {}' for explicit conversion",
+                            pool.to_string(*type)
+                        );
+                    }
+                    err_handler.error(
+                        loc,
                         std::format(
-                            "Type mismatch at {}: cannot convert {} to {}",
-                            loc.to_string(source),
+                            "Type mismatch: cannot convert {} to {}",
                             pool.to_string(tp),
                             pool.to_string(*type)
-                        )
+                        ),
+                        hint
                     );
                 }
             }
@@ -140,10 +150,10 @@ struct TypeVar {
             if (type.has_value()) {
                 auto unified = unify(*type, tp);
                 if (!unified.has_value()) {
-                    throw std::runtime_error(
+                    err_handler.error(
+                        loc,
                         std::format(
-                            "Type mismatch at {}: cannot unify {} and {}",
-                            loc.to_string(source),
+                            "Type mismatch: cannot unify {} and {}",
                             pool.to_string(tp),
                             pool.to_string(*type)
                         )
@@ -162,23 +172,30 @@ struct TypeVar {
         types::TypeId tp,
         Location loc,
         const Source& source,
-        const types::TypePool& pool
+        const types::TypePool& pool,
+        ErrorHandler& err_handler
     ) {
         if (locked) {
-            throw std::runtime_error(
-                std::format(
-                    "Type variable already locked at {}", loc.to_string(source)
-                )
+            err_handler.error(
+                loc, std::format("Internal error: Type variable already locked")
             );
+            return;
         }
         if (type.has_value() && !can_convert(*type, tp)) {
-            throw std::runtime_error(
+            std::string hint = "";
+            if (can_cast(*type, tp, pool)) {
+                hint = std::format(
+                    "use 'as {}' for explicit conversion", pool.to_string(tp)
+                );
+            }
+            err_handler.error(
+                loc,
                 std::format(
-                    "Type mismatch at {}: cannot convert {} to {}",
-                    loc.to_string(source),
+                    "Type mismatch: cannot convert {} to {}",
                     pool.to_string(tp),
                     pool.to_string(*type)
-                )
+                ),
+                hint
             );
         }
         type = tp;
@@ -192,10 +209,11 @@ struct TypeVar {
         const TypeVar& other,
         Location loc,
         const Source& source,
-        const types::TypePool& pool
+        const types::TypePool& pool,
+        ErrorHandler& err_handler
     ) {
         if (other.type.has_value()) {
-            return add_type(*other.type, loc, source, pool);
+            return add_type(*other.type, loc, source, pool, err_handler);
         }
         return *type;
     }
@@ -204,7 +222,7 @@ struct TypeVar {
 
     [[nodiscard]] types::TypeId get() const {
         if (!type.has_value()) {
-            throw std::runtime_error("Type variable not defined");
+            return types::None;
         }
         return *type;
     }
@@ -223,7 +241,12 @@ struct TypeVarMap {
 
 class TypeAnalyzer {
 public:
-    TypeAnalyzer(ir::Module& module, const Source& source, ir::FuncRef func_ref)
+    TypeAnalyzer(
+        ir::Module& module,
+        const Source& source,
+        ir::FuncRef func_ref,
+        ErrorHandler& err_handler
+    )
         : module_(&module),
           source_(&source),
           type_pool_(&module.types()),
@@ -231,7 +254,8 @@ public:
           func_(&module.func(func_ref)),
           func_type_(&module.types()
                           .get(module.func_type(func_ref))
-                          .data.get<types::Type::Func>()) {}
+                          .data.get<types::Type::Func>()),
+          err_handler_(&err_handler) {}
 
     [[nodiscard]] ir::FuncRef func_ref() const { return func_ref_; }
 
@@ -240,15 +264,15 @@ public:
         result.reserve(type_vars_.vars.size());
         for (const auto& [i, var] : type_vars_.vars | std::views::enumerate) {
             if (!var.definded()) {
-                throw std::runtime_error(
-                    std::format(
-                        "Type variable not defined at {}",
-                        func_->inst(ir::InstRef {static_cast<std::uint32_t>(i)})
-                            .location.to_string(*source_)
-                    )
+                err_handler_->error(
+                    func_->inst(ir::InstRef {static_cast<std::uint32_t>(i)})
+                        .location,
+                    "Type variable not defined (inference failed)"
                 );
+                result.push_back(types::None);
+            } else {
+                result.push_back(var.get());
             }
-            result.push_back(var.get());
         }
         return result;
     }
@@ -325,11 +349,11 @@ private:
                         }
 
                         if (!ok) {
-                            throw std::runtime_error(
+                            err_handler_->error(
+                                inst.location,
                                 std::format(
-                                    "Type mismatch at {}: binary operation "
-                                    "not supported for type {}",
-                                    inst.location.to_string(*source_),
+                                    "Type mismatch: binary operation "
+                                    "not supported for type '{}'",
                                     type_pool_->to_string(*unified)
                                 )
                             );
@@ -343,10 +367,10 @@ private:
 
                 auto left_tp = type_vars_[data.left].type;
                 if (left_tp && !can_convert(*left_tp, types::Bool)) {
-                    throw std::runtime_error(
+                    err_handler_->error(
+                        inst.location,
                         std::format(
-                            "Type mismatch at {}: cannot convert {} to Bool",
-                            inst.location.to_string(*source_),
+                            "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*left_tp)
                         )
                     );
@@ -354,11 +378,10 @@ private:
                 if (data.right.end.index >= data.right.start.index) {
                     auto right_tp = type_vars_[data.right.end].type;
                     if (right_tp && !can_convert(*right_tp, types::Bool)) {
-                        throw std::runtime_error(
+                        err_handler_->error(
+                            inst.location,
                             std::format(
-                                "Type mismatch at {}: cannot convert {} to "
-                                "Bool",
-                                inst.location.to_string(*source_),
+                                "Type mismatch: cannot convert '{}' to Bool",
                                 type_pool_->to_string(*right_tp)
                             )
                         );
@@ -370,11 +393,10 @@ private:
                 if (data.op == ir::Inst::UnaryOp::Not) {
                     auto val_tp = type_vars_[data.value].type;
                     if (val_tp && !can_convert(*val_tp, types::Bool)) {
-                        throw std::runtime_error(
+                        err_handler_->error(
+                            inst.location,
                             std::format(
-                                "Type mismatch at {}: cannot convert {} to "
-                                "Bool",
-                                inst.location.to_string(*source_),
+                                "Type mismatch: cannot convert '{}' to Bool",
                                 type_pool_->to_string(*val_tp)
                             )
                         );
@@ -421,11 +443,11 @@ private:
                             auto arg_tp = type_vars_[args[i]].type;
                             if (arg_tp &&
                                 !can_convert(*arg_tp, ft->params[i])) {
-                                throw std::runtime_error(
+                                err_handler_->error(
+                                    inst.location,
                                     std::format(
-                                        "Type mismatch at {}: cannot convert "
+                                        "Type mismatch: cannot convert "
                                         "argument {} from {} to {}",
-                                        inst.location.to_string(*source_),
                                         i,
                                         type_pool_->to_string(*arg_tp),
                                         type_pool_->to_string(ft->params[i])
@@ -448,10 +470,10 @@ private:
 
                 auto cond_tp = type_vars_[data.value].type;
                 if (cond_tp && !can_convert(*cond_tp, types::Bool)) {
-                    throw std::runtime_error(
+                    err_handler_->error(
+                        inst.location,
                         std::format(
-                            "Type mismatch at {}: cannot convert {} to Bool",
-                            inst.location.to_string(*source_),
+                            "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*cond_tp)
                         )
                     );
@@ -575,11 +597,10 @@ private:
                 auto from_tp = type_vars_[data.value].type;
                 if (from_tp.has_value() &&
                     !can_cast(*from_tp, data.type, *type_pool_)) {
-                    throw std::runtime_error(
+                    err_handler_->error(
+                        inst.location,
                         std::format(
-                            "Type mismatch at {}: cannot explicitly cast {} to "
-                            "{}",
-                            inst.location.to_string(*source_),
+                            "Type mismatch: cannot explicitly cast {} to {}",
                             type_pool_->to_string(*from_tp),
                             type_pool_->to_string(data.type)
                         )
@@ -587,11 +608,8 @@ private:
                 }
             },
             [&](const auto& i) {
-                throw std::runtime_error(
-                    std::format(
-                        "Unknown instruction at {}",
-                        inst.location.to_string(*source_)
-                    )
+                err_handler_->error(
+                    inst.location, "Internal error: Unknown instruction"
                 );
             }
         );
@@ -599,7 +617,7 @@ private:
 
     void add_type(ir::InstRef inst, types::TypeId type, Location loc) {
         auto& tv = type_vars_[inst];
-        auto tp = tv.add_type(type, loc, *source_, *type_pool_);
+        auto tp = tv.add_type(type, loc, *source_, *type_pool_, *err_handler_);
         if (!tv.definded() || tp != tv.get()) {
             changed_ = true;
         }
@@ -607,7 +625,9 @@ private:
 
     void copy_type(ir::InstRef src, ir::InstRef dest, Location loc) {
         auto& tv = type_vars_[dest];
-        auto tp = tv.union_tp(type_vars_[src], loc, *source_, *type_pool_);
+        auto tp = tv.union_tp(
+            type_vars_[src], loc, *source_, *type_pool_, *err_handler_
+        );
         if (!tv.definded() || tp != tv.get()) {
             changed_ = true;
         }
@@ -616,7 +636,7 @@ private:
     void lock_type(ir::InstRef inst, types::TypeId type, Location loc) {
         auto& tv = type_vars_[inst];
         if (tv.locked) return;
-        tv.lock(type, loc, *source_, *type_pool_);
+        tv.lock(type, loc, *source_, *type_pool_, *err_handler_);
         changed_ = true;
     }
 
@@ -627,17 +647,20 @@ private:
     ir::FuncRef func_ref_;
     ir::Func* func_;
     TypeVarMap type_vars_;
+    ErrorHandler* err_handler_;
     bool changed_ = false;
     std::uint32_t current_inst_ = 0;
 };
 }
 
-AnalyzedModule type_analyze(ir::Module module, const Source& source) {
+AnalyzedModule type_analyze(
+    ir::Module module, const Source& source, ErrorHandler& err_handler
+) {
     AnalyzedModule result;
     std::deque<TypeAnalyzer> analyzers;
     for (std::uint32_t i = 0; i < module.funcs().size(); ++i) {
         ir::FuncRef ref {i};
-        analyzers.emplace_back(module, source, ref);
+        analyzers.emplace_back(module, source, ref, err_handler);
     }
     while (!analyzers.empty()) {
         auto analyzer = std::move(analyzers.front());

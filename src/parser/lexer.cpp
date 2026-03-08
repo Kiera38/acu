@@ -151,11 +151,12 @@ Token Lexer::make_token(
     return Token {.type = type, .location = loc, .value = {value}};
 }
 
-Lexer::Lexer(Source& source)
+Lexer::Lexer(Source& source, ErrorHandler& err_handler)
     : source_(&source),
       source_text_(source.content),
       begin_of_line_(true),
-      dedents_(0) {
+      dedents_(0),
+      err_handler_(&err_handler) {
     indent_stack_.emplace_back("");
 }
 
@@ -252,6 +253,10 @@ std::optional<Token> Lexer::check_indent() {
 
         if (indent.length() > prev_indent.length()) {
             if (indent.substr(0, prev_indent.length()) != prev_indent) {
+                err_handler_->error(
+                    make_token(TokenType::Error, start_byte_index).location,
+                    "Incorrect indentation: inconsistent tabs and spaces"
+                );
                 throw std::runtime_error(
                     "Incorrect indentation: inconsistent tabs and spaces"
                 );
@@ -263,6 +268,10 @@ std::optional<Token> Lexer::check_indent() {
 
         while (indent.length() < prev_indent.length()) {
             if (!prev_indent.starts_with(indent)) {
+                err_handler_->error(
+                    make_token(TokenType::Error, start_byte_index).location,
+                    "Incorrect indentation: inconsistent tabs and spaces"
+                );
                 throw std::runtime_error(
                     "Incorrect indentation: inconsistent tabs and spaces"
                 );
@@ -273,10 +282,18 @@ std::optional<Token> Lexer::check_indent() {
         }
 
         if (indent.length() != prev_indent.length()) {
+            err_handler_->error(
+                make_token(TokenType::Error, start_byte_index).location,
+                "Incorrect indentation size"
+            );
             throw std::runtime_error("Incorrect indentation size");
         }
 
         if (prev_indent != indent) {
+            err_handler_->error(
+                make_token(TokenType::Error, start_byte_index).location,
+                "Incorrect indentation: inconsistent tabs and spaces"
+            );
             throw std::runtime_error(
                 "Incorrect indentation: inconsistent tabs and spaces"
             );
@@ -337,6 +354,10 @@ Token Lexer::number() {
         if (peek() == U'.') {
             text += '.';
             if (is_float) {
+                err_handler_->error(
+                    make_token(TokenType::Error, start_byte_index).location,
+                    "Invalid number: multiple decimal points"
+                );
                 throw std::runtime_error(
                     "Invalid number: multiple decimal points"
                 );
@@ -452,6 +473,10 @@ Token Lexer::character() {
                 case U'\'': return U'\'';
                 case U'\\': return U'\\';
                 default:
+                    err_handler_->error(
+                        make_token(TokenType::Error, start_byte_index).location,
+                        "Unknown escape sequence in character literal"
+                    );
                     throw std::runtime_error(
                         "Unknown escape sequence in character literal"
                     );
@@ -462,6 +487,10 @@ Token Lexer::character() {
     }();
 
     if (!match(U'\'')) {
+        err_handler_->error(
+            make_token(TokenType::Error, start_byte_index).location,
+            "Unterminated character literal"
+        );
         throw std::runtime_error("Unterminated character literal");
     }
 
@@ -502,6 +531,10 @@ Token Lexer::string() {
                     break;
                 }
                 default:
+                    err_handler_->error(
+                        make_token(TokenType::Error, start_byte_index).location,
+                        "Unknown escape sequence in string literal"
+                    );
                     throw std::runtime_error(
                         "Unknown escape sequence in string literal"
                     );
@@ -517,6 +550,10 @@ Token Lexer::string() {
     }
 
     if (at_end()) {
+        err_handler_->error(
+            make_token(TokenType::Error, start_byte_index).location,
+            "Unterminated string literal"
+        );
         throw std::runtime_error("Unterminated string literal");
     }
 
@@ -570,6 +607,10 @@ Token Lexer::operator_() {
         return make_token(it->second, start_byte_index);
     }
 
+    err_handler_->error(
+        make_token(TokenType::Error, start_byte_index).location,
+        "Unknown operator"
+    );
     throw std::runtime_error("Unknown operator");
 }
 
@@ -623,7 +664,7 @@ Token Lexer::next_token() {
         std::uint32_t start_byte_index = byte_index_;
         begin_of_line_ = true;
         if (c == U'\r' && peek() == U'\n') {
-            next(); // consume the LF after the CR
+            next();  // consume the LF after the CR
         }
         Token token = make_token(TokenType::NewLine, start_byte_index);
         return token;
