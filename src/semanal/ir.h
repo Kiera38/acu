@@ -4,6 +4,7 @@
 #include <span>
 #include <vector>
 
+#include "../index.h"
 #include "source.h"
 #include "types.h"
 #include "variant.h"
@@ -17,13 +18,13 @@ struct InstRef {
     std::uint32_t index;
 };
 
+struct ParamRef {
+    std::uint32_t index;
+};
+
 struct Block {
     InstRef start;
     InstRef end;
-};
-
-struct ParamRef {
-    std::uint32_t index;
 };
 
 struct Comparators {
@@ -228,21 +229,19 @@ public:
     Func(std::string_view name) : name_(name) {}
 
     [[nodiscard]] std::string_view name() const { return name_; }
-    [[nodiscard]] Param param(ParamRef ref) const { return params_[ref.index]; }
-    [[nodiscard]] std::span<const Param> params() const { return params_; }
+    [[nodiscard]] Param param(ParamRef ref) const { return params_[ref]; }
+    [[nodiscard]] IndexSpan<const Param, ParamRef> params() const { return params_.data(); }
     [[nodiscard]] types::SpecType return_type() const { return return_type_; }
     void set_type(std::span<const Param> params, types::SpecType return_type) {
+        params_.clear();
         params_.append_range(params);
         return_type_ = return_type;
     }
-    [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref.index]; }
-    [[nodiscard]] std::span<const Inst> insts() const { return insts_; }
-    [[nodiscard]] std::span<const Inst> block(Block block) const {
-        if (block.end.index < block.start.index) {
-            return {};
-        }
-        return std::span(insts_).subspan(
-            block.start.index, block.end.index - block.start.index + 1
+    [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref]; }
+    [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const { return insts_.data(); }
+    [[nodiscard]] IndexSpan<const Inst, InstRef> block(Block block) const {
+        return insts_.data().subspan(
+            block.start, block.end.index - block.start.index + 1
         );
     }
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
@@ -252,39 +251,35 @@ public:
     [[nodiscard]] std::span<const Comparator> comparators(
         Comparators comparators
     ) const {
-        return std::span(comparators_)
-            .subspan(comparators.start, comparators.count);
+        return std::span(comparators_).subspan(comparators.start, comparators.count);
     }
 
     [[nodiscard]] std::span<Comparator> comparators(Comparators comparators) {
-        return std::span(comparators_)
-            .subspan(comparators.start, comparators.count);
+        return std::span(comparators_).subspan(comparators.start, comparators.count);
     }
 
     InstRef add(const Inst& inst) {
-        InstRef ref {static_cast<std::uint32_t>(insts_.size())};
-        insts_.push_back(inst);
-        return ref;
+        return insts_.push_back(inst);
     }
 
     [[nodiscard]] InstRef last_inst() const {
-        return {static_cast<std::uint32_t>(insts_.size()) - 1};
+        return insts_.last_index();
     }
 
     void set_loop_block(InstRef loop, Block block) {
-        insts_[loop.index].data.get<Inst::Loop>().block = block;
+        insts_[loop].data.get<Inst::Loop>().block = block;
     }
 
     void set_if_blocks(
         InstRef if_, Block then_block, std::optional<Block> else_block
     ) {
-        auto& if_inst = insts_[if_.index].data.get<Inst::If>();
+        auto& if_inst = insts_[if_].data.get<Inst::If>();
         if_inst.then_block = then_block;
         if_inst.else_block = else_block;
     }
 
     void set_logical_block(InstRef logical, Block right) {
-        insts_[logical.index].data.get<Inst::Logical>().right = right;
+        insts_[logical].data.get<Inst::Logical>().right = right;
     }
 
     InstRefs add(std::span<const InstRef> refs) {
@@ -300,19 +295,18 @@ public:
         InstRef comparison, std::span<const Comparator> comparators
     ) {
         Comparators comp {
-            .start = static_cast<std::uint32_t>(inst_refs_.size()),
+            .start = static_cast<std::uint32_t>(comparators_.size()),
             .count = static_cast<std::uint32_t>(comparators.size())
         };
         comparators_.append_range(comparators);
-        insts_[comparison.index].data.get<Inst::Comparison>().comparators =
-            comp;
+        insts_[comparison].data.get<Inst::Comparison>().comparators = comp;
     }
 
 private:
     std::string_view name_;
-    std::vector<Param> params_;
+    IndexVector<Param, ParamRef> params_;
     types::SpecType return_type_;
-    std::vector<Inst> insts_;
+    IndexVector<Inst, InstRef> insts_;
     std::vector<InstRef> inst_refs_;
     std::vector<Comparator> comparators_;
 };
@@ -320,16 +314,14 @@ private:
 class Module {
 public:
     Module() = default;
-    Func& func(FuncRef ref) { return funcs_[ref.index]; }
-    [[nodiscard]] std::span<const Func> funcs() const { return funcs_; }
+    Func& func(FuncRef ref) { return funcs_[ref]; }
+    [[nodiscard]] std::span<const Func> funcs() const { return funcs_.data(); }
     [[nodiscard]] const Func& func(FuncRef ref) const {
-        return funcs_[ref.index];
+        return funcs_[ref];
     }
 
     FuncRef add(Func&& func) {
-        FuncRef ref {static_cast<std::uint32_t>(funcs_.size())};
-        funcs_.push_back(std::move(func));
-        return ref;
+        return funcs_.push_back(std::move(func));
     }
 
     types::TypePool& types() { return types_; }
@@ -338,7 +330,7 @@ public:
     types::TypeId func_type(FuncRef ref);
 
 private:
-    std::vector<Func> funcs_;
+    IndexVector<Func, FuncRef> funcs_;
     types::TypePool types_;
 };
 

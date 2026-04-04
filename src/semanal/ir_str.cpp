@@ -139,7 +139,7 @@ std::string to_string(
                 block_str += indent_string(
                     to_string(
                         all.subspan(
-                            inst.right.start.index,
+                            InstRef{inst.right.start.index},
                             inst.right.end.index - inst.right.start.index + 1
                         ),
                         inst.right.start.index,
@@ -175,7 +175,7 @@ std::string to_string(
                     block_str += indent_string(
                         to_string(
                             all.subspan(
-                                comp.value.start.index,
+                                InstRef{comp.value.start.index},
                                 comp.value.end.index - comp.value.start.index +
                                     1
                             ),
@@ -202,7 +202,7 @@ std::string to_string(
                 block_str += indent_string(
                     to_string(
                         all.subspan(
-                            inst.block.start.index,
+                            InstRef{inst.block.start.index},
                             inst.block.end.index - inst.block.start.index + 1
                         ),
                         inst.block.start.index,
@@ -221,7 +221,7 @@ std::string to_string(
                 block_str += indent_string(
                     to_string(
                         all.subspan(
-                            inst.then_block.start.index,
+                            InstRef{inst.then_block.start.index},
                             inst.then_block.end.index -
                                 inst.then_block.start.index + 1
                         ),
@@ -238,7 +238,7 @@ std::string to_string(
                     block_str += indent_string(
                         to_string(
                             all.subspan(
-                                eb.start.index,
+                                InstRef{eb.start.index},
                                 eb.end.index - eb.start.index + 1
                             ),
                             eb.start.index,

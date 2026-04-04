@@ -3,35 +3,33 @@
 #include <map>
 #include <vector>
 
-
 namespace acu::refanal {
-
 namespace {
 
 struct Optimizer {
     ir::Func* func;
-    std::vector<ir::InstRef> replacements;
+    IndexVector<ir::InstRef, ir::InstRef> replacements;
 
     Optimizer(ir::Func& f) : func(&f) {
         replacements.resize(func->insts().size());
-        for (uint32_t i = 0; i < replacements.size(); ++i) {
-            replacements[i] = {i};
+        for (auto i : func->insts().indices()) {
+            replacements[i] = i;
         }
     }
 
     ir::InstRef get_rep(ir::InstRef ref) {
         if (ref.index == ~0u) return ref;
-        uint32_t curr = ref.index;
-        while (replacements[curr].index != curr) {
-            curr = replacements[curr].index;
+        auto curr = ref;
+        while (replacements[curr] != curr) {
+            curr = replacements[curr];
         }
         return {curr};
     }
 
     void copy_prop() {
-        for (uint32_t b_idx = 0; b_idx < func->blocks().size(); ++b_idx) {
-            auto& block = func->block(ir::BlockRef {b_idx});
-            std::map<uint32_t, ir::InstRef> var_values;
+        for (auto b_idx : func->blocks().indices()) {
+            auto& block = func->block(b_idx);
+            std::map<ir::InstRef, ir::InstRef> var_values;
 
             for (auto inst_ref : block.insts) {
                 auto& inst = func->inst(inst_ref);
@@ -39,15 +37,15 @@ struct Optimizer {
                 inst.data.visit(
                     [&](ir::Inst::LoadVar& i) {
                         i.var = get_rep(i.var);
-                        auto it = var_values.find(i.var.index);
+                        auto it = var_values.find(i.var);
                         if (it != var_values.end()) {
-                            replacements[inst_ref.index] = it->second;
+                            replacements[inst_ref] = it->second;
                         }
                     },
                     [&](ir::Inst::Store& i) {
                         i.var = get_rep(i.var);
                         i.value = get_rep(i.value);
-                        var_values[i.var.index] = i.value;
+                        var_values[i.var] = i.value;
                     },
                     [&](ir::Inst::Binary& i) {
                         i.left = get_rep(i.left);
@@ -66,7 +64,7 @@ struct Optimizer {
                     [&](ir::Inst::Cast& i) {
                         i.value = get_rep(i.value);
                         if (func->inst(i.value).type == inst.type) {
-                            replacements[inst_ref.index] = i.value;
+                            replacements[inst_ref] = i.value;
                         }
                     },
                     [&](ir::Inst::CreateStruct& i) {
@@ -77,7 +75,7 @@ struct Optimizer {
                     [&](ir::Inst::SetField& i) {
                         i.var = get_rep(i.var);
                         i.value = get_rep(i.value);
-                        var_values.erase(i.var.index);
+                        var_values.erase(i.var);
                     },
                     [&](ir::Inst::AddressOf& i) { i.value = get_rep(i.value); },
                     [&](ir::Inst::GetItem& i) {
@@ -88,7 +86,7 @@ struct Optimizer {
                         i.var = get_rep(i.var);
                         i.index = get_rep(i.index);
                         i.value = get_rep(i.value);
-                        var_values.erase(i.var.index);
+                        var_values.erase(i.var);
                     },
                     [&](ir::Inst::Deref& i) { i.value = get_rep(i.value); },
                     [&](ir::Inst::Array& i) {
@@ -106,12 +104,12 @@ struct Optimizer {
             }
         }
 
-        // Remove redundant instructions (only local)
-        for (uint32_t b_idx = 0; b_idx < func->blocks().size(); ++b_idx) {
-            auto& block = func->block(ir::BlockRef {b_idx});
+        // Remove redundant instructions
+        for (auto b_idx : func->blocks().indices()) {
+            auto& block = func->block(b_idx);
             std::vector<ir::InstRef> new_insts;
             for (auto inst_ref : block.insts) {
-                if (replacements[inst_ref.index].index != inst_ref.index) {
+                if (replacements[inst_ref] != inst_ref) {
                     auto& inst = func->inst(inst_ref);
                     if (inst.data.is<ir::Inst::LoadVar>() ||
                         inst.data.is<ir::Inst::Cast>()) {
@@ -128,32 +126,16 @@ struct Optimizer {
         bool changed = true;
         while (changed) {
             changed = false;
-            std::vector<uint32_t> preds(func->blocks().size(), 0);
-            if (!func->blocks().empty()) preds[0] = 1;
+            func->rebuild_cfg();
 
-            for (uint32_t i = 0; i < func->blocks().size(); ++i) {
-                const auto& block = func->block(ir::BlockRef {i});
-                if (block.insts.empty()) continue;
-                const auto& last = func->inst(block.insts.back());
-                last.data.visit(
-                    [&](const ir::Inst::Jump& j) { preds[j.target.index]++; },
-                    [&](const ir::Inst::Branch& b) {
-                        preds[b.true_target.index]++;
-                        preds[b.false_target.index]++;
-                    },
-                    [&](auto&) {}
-                );
-            }
-
-            for (uint32_t i = 0; i < func->blocks().size(); ++i) {
-                auto& block = func->block(ir::BlockRef {i});
+            for (auto i : func->blocks().indices()) {
+                auto& block = func->block(i);
                 if (block.insts.empty()) continue;
                 auto& last = func->inst(block.insts.back());
                 if (auto* j = last.data.get_if<ir::Inst::Jump>()) {
-                    uint32_t target_idx = j->target.index;
-                    if (target_idx != i && preds[target_idx] == 1) {
+                    if (j->target != i && func->block(j->target).preds.size() == 1) {
                         auto& target_block = func->block(j->target);
-                        block.insts.pop_back();  // remove Jump
+                        block.insts.pop_back();
                         block.insts.insert(
                             block.insts.end(),
                             target_block.insts.begin(),
@@ -220,7 +202,7 @@ struct Optimizer {
             }
             new_blocks.push_back(std::move(block));
         }
-        func->replace_blocks(std::move(new_blocks));
+        func->replace_blocks(new_blocks);
     }
 
     void process() {
@@ -232,9 +214,13 @@ struct Optimizer {
 
 }  // namespace
 
-void optimize(ir::Module& module) {
-    for (auto& func : module.funcs()) {
-        Optimizer opt(func);
+void optimize(
+    ir::Module& module,
+    semanal::AnalyzedModule& analyzed,
+    ErrorHandler& err_handler
+) {
+    for (auto i : module.funcs().indices()) {
+        Optimizer opt(module.funcs()[i]);
         opt.process();
     }
 }

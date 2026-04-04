@@ -1,7 +1,6 @@
 #include <deque>
 #include <format>
 #include <optional>
-#include <ranges>
 #include <vector>
 
 #include "errors.h"
@@ -158,8 +157,9 @@ struct TypeVar {
                             pool.to_string(*type)
                         )
                     );
+                } else{
+                    type = {*unified, type->specifier};
                 }
-                type = {*unified, type->specifier};
             } else {
                 type = {tp, types::Specifier::None};
                 define_loc = loc;
@@ -212,7 +212,7 @@ struct TypeVar {
         const types::TypePool& pool,
         ErrorHandler& err_handler
     ) {
-        lock({tp, types::Specifier::None}, loc, source, pool, err_handler);
+        lock({.type=tp, .specifier=types::Specifier::None}, loc, source, pool, err_handler);
     }
 
     types::TypeId union_tp(
@@ -228,24 +228,24 @@ struct TypeVar {
         return type->type;
     }
 
-    [[nodiscard]] bool definded() const { return type.has_value(); }
+    [[nodiscard]] bool defined() const { return type.has_value(); }
 
     [[nodiscard]] types::SpecType get() const {
         if (!type.has_value()) {
-            return {types::None, types::Specifier::None};
+            return {.type=types::None, .specifier=types::Specifier::None};
         }
         return *type;
     }
 };
 
 struct TypeVarMap {
-    std::vector<TypeVar> vars;
+    IndexVector<TypeVar, ir::InstRef> vars;
 
     TypeVar& operator[](ir::InstRef inst) {
         if (inst.index >= vars.size()) {
             vars.resize(inst.index + 1);
         }
-        return vars[inst.index];
+        return vars[inst];
     }
 };
 
@@ -262,24 +262,27 @@ public:
           type_pool_(&module.types()),
           func_ref_(func_ref),
           func_(&module.func(func_ref)),
-          func_type_(&module.types()
-                          .get(module.func_type(func_ref))
-                          .data.get<types::Type::Func>()),
-          err_handler_(&err_handler) {}
+          err_handler_(&err_handler) {
+        func_type_id_ = module.func_type(func_ref);
+        const auto& type = module.types().get(func_type_id_);
+        if (!type.data.is<types::Type::Func>()) {
+            throw std::runtime_error("Internal error: Function type is not a Func type");
+        }
+    }
 
     [[nodiscard]] ir::FuncRef func_ref() const { return func_ref_; }
 
-    [[nodiscard]] std::vector<types::SpecType> get_types() const {
-        std::vector<types::SpecType> result;
-        result.reserve(type_vars_.vars.size());
-        for (const auto& [i, var] : type_vars_.vars | std::views::enumerate) {
-            if (!var.definded()) {
+    [[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types() const {
+        IndexVector<types::SpecType, ir::InstRef> result;
+        for (auto i : type_vars_.vars.indices()) {
+            const auto& var = type_vars_.vars[i];
+            if (!var.defined()) {
                 err_handler_->error(
-                    func_->inst(ir::InstRef {static_cast<std::uint32_t>(i)})
+                    func_->inst(ir::InstRef {static_cast<std::uint32_t>(i.index)})
                         .location,
                     "Type variable not defined (inference failed)"
                 );
-                result.push_back({types::None, types::Specifier::None});
+                result.push_back({.type=types::None, .specifier=types::Specifier::None});
             } else {
                 result.push_back(var.get());
             }
@@ -290,11 +293,15 @@ public:
     bool propagate() {
         changed_ = false;
         current_inst_ = 0;
-        propagate_range({.start = {0}, .end = func_->last_inst()});
+        propagate_range(ir::Block{.start=ir::InstRef{0}, .end=func_->last_inst()});
         return changed_;
     }
 
 private:
+    [[nodiscard]] const types::Type::Func& get_func_type() const {
+        return type_pool_->get(func_type_id_).data.get<types::Type::Func>();
+    }
+
     void propagate_range(ir::Block range) {
         if (range.end.index < range.start.index) {
             return;
@@ -315,7 +322,7 @@ private:
                     [&](char32_t) { return types::UInt32; },
                     [&](std::string_view v) {
                         return type_pool_->add_array(
-                            {types::UInt8, types::Specifier::Val}, v.size()
+                            {.type=types::UInt8, .specifier=types::Specifier::Val}, v.size()
                         );
                     },
                     [&](ir::FuncRef func_ref) {
@@ -331,12 +338,12 @@ private:
                 }
             },
             [&](const ir::Inst::LoadVar& data) {
-                if (type_vars_[data.var].definded()) {
+                if (type_vars_[data.var].defined()) {
                     copy_type(data.var, ref, inst.location);
                 }
             },
             [&](const ir::Inst::LoadParam& data) {
-                auto param_type = func_type_->params[data.param.index];
+                auto param_type = get_func_type().params[data.param.index];
                 lock_type(ref, param_type, inst.location);
             },
             [&](const ir::Inst::Store& data) {
@@ -431,7 +438,7 @@ private:
                         ir::InstRef operand_ref = comparator.value.end;
                         auto left_tv = type_vars_[current_left];
                         auto right_tv = type_vars_[operand_ref];
-                        if (left_tv.definded() && right_tv.definded()) {
+                        if (left_tv.defined() && right_tv.defined()) {
                             auto unified =
                                 unify(left_tv.get().type, right_tv.get().type);
                             if (unified) {
@@ -503,7 +510,7 @@ private:
             [&](const ir::Inst::Return& data) {
                 if (data.value.has_value()) {
                     add_type(
-                        *data.value, func_type_->return_type.type, inst.location
+                        *data.value, get_func_type().return_type.type, inst.location
                     );
                 }
                 lock_type(ref, types::Nothing, inst.location);
@@ -636,7 +643,7 @@ private:
     void add_type(ir::InstRef inst, types::TypeId type, Location loc) {
         auto& tv = type_vars_[inst];
         auto tp = tv.add_type(type, loc, *source_, *type_pool_, *err_handler_);
-        if (!tv.definded() || tp != tv.get().type) {
+        if (!tv.defined() || tp != tv.get().type) {
             changed_ = true;
         }
     }
@@ -646,7 +653,7 @@ private:
         auto tp = tv.union_tp(
             type_vars_[src], loc, *source_, *type_pool_, *err_handler_
         );
-        if (!tv.definded() || tp != tv.get().type) {
+        if (!tv.defined() || tp != tv.get().type) {
             changed_ = true;
         }
     }
@@ -668,7 +675,7 @@ private:
     ir::Module* module_;
     const Source* source_;
     types::TypePool* type_pool_;
-    const types::Type::Func* func_type_;
+    types::TypeId func_type_id_;
     ir::FuncRef func_ref_;
     ir::Func* func_;
     TypeVarMap type_vars_;

@@ -54,34 +54,20 @@ func bubble_sort(a: Ptr[Int], n: Int):
             return 1;
         }
 
-        /*
-        std::cout << "=== IR ===\n" << acu::ir::to_string(ir_module) << '\n';
-        */
-
         auto analyzed =
             acu::semanal::type_analyze(ir_module, source, err_handler);
         if (err_handler.has_errors()) {
             err_handler.emit_all(source);
             return 1;
         }
-
-        /*
-        std::cout << "=== type analysis ===\n";
-        for (const auto& func : analyzed.analyzed_funcs) {
-            std::cout << "Func: " << analyzed.ir_module.func(func.ref).name()
-                      << "\n";
-            for (size_t i = 0; i < func.inst_types.size(); ++i) {
-                std::cout << "  inst " << i << ": type "
-                          << analyzed.ir_module.types().to_string(
-                                 func.inst_types[i]
-                             )
-                          << "\n";
-            }
-        }
-        */
-
         auto refanal_module = acu::refanal::generate(analyzed);
-        acu::refanal::optimize(refanal_module);
+        acu::refanal::optimize(refanal_module, analyzed, err_handler);
+
+        if (err_handler.has_errors()) {
+            err_handler.emit_all(source);
+            // return 1; // Don't return, let's see the IR if possible
+        }
+
         std::cout << "\n=== REFANAL IR ===\n";
         std::cout << acu::refanal::to_string(refanal_module, analyzed) << "\n";
 

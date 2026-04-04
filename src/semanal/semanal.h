@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../index.h"
 #include "errors.h"
 #include "parser/nodes.h"
 #include "semanal/ir.h"
@@ -9,8 +10,8 @@ namespace acu::semanal {
 ir::Module resolve(const nodes::Module& module, ErrorHandler& err_handler);
 
 struct AnalyzedFunc {
-    ir::FuncRef ref;
-    std::vector<types::SpecType> inst_types;
+    ir::FuncRef ref{};
+    IndexVector<types::SpecType, ir::InstRef> inst_types;
 };
 
 struct AnalyzedModule {

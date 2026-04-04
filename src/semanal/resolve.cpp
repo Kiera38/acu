@@ -177,9 +177,11 @@ private:
             std::vector<types::Type::StructField> fields;
             fields.reserve(struct_node.fields.size());
             for (const auto& field : struct_node.fields) {
-                fields.push_back(
-                    {.name = field.name, .type = resolve_type(*field.type)}
-                );
+                auto field_type = resolve_type(*field.type);
+                if (field_type.specifier == types::Specifier::None) {
+                    field_type.specifier = types::Specifier::Val;
+                }
+                fields.push_back({.name = field.name, .type = field_type});
             }
             ir_module_.types().set_struct_fields(type_id, std::move(fields));
         }
@@ -198,9 +200,11 @@ private:
             std::vector<ir::Param> ir_params;
             ir_params.reserve(func_node.args.size());
             for (const auto& arg : func_node.args) {
-                ir_params.push_back(
-                    {.name = arg.name, .type = resolve_type(*arg.type)}
-                );
+                auto param_type = resolve_type(*arg.type);
+                if (param_type.specifier == types::Specifier::None) {
+                    param_type.specifier = types::Specifier::Let;
+                }
+                ir_params.push_back({.name = arg.name, .type = param_type});
             }
             types::SpecType return_type = {.type = types::None};
             if (func_node.return_type) {
@@ -538,15 +542,15 @@ private:
                 }
             },
             [&](const nodes::Expr::GetItem& node) {
-                return func.add(
-                    {.data =
-                         ir::Inst::SetItem {
-                             .var = resolve_expr(*node.value, func),
-                             .index = resolve_expr(*node.args[0], func),
-                             .value = value
-                         },
-                     .location = expr.location}
-                );
+                return func.add({
+                    .data =
+                        ir::Inst::SetItem {
+                            .var = resolve_expr(*node.value, func),
+                            .index = resolve_expr(*node.args[0], func),
+                            .value = value
+                        },
+                    .location = expr.location,
+                });
             },
             [&](const nodes::Expr::GetAttr& node) {
                 return func.add(

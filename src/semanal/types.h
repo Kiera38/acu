@@ -117,6 +117,7 @@ public:
     }
 
     [[nodiscard]] const Type& get(TypeId id) const { return types_[id.index]; }
+    [[nodiscard]] size_t type_count() const { return types_.size(); }
 
 private:
     template <class T>

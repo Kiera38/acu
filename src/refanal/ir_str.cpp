@@ -7,8 +7,8 @@ namespace acu::refanal {
 
 namespace {
 
-std::string to_string(const ir::Param& param) {
-    return std::format("{}: {}", param.name, param.type.type.index);
+std::string to_string(const ir::Param& param, const types::TypePool& types) {
+    return std::format("{}: {}", param.name, types.to_string(param.type));
 }
 
 std::string to_string(const ir::Inst::Const::Value& value) {
@@ -70,9 +70,12 @@ std::string to_string(
     std::string str;
     str += std::format("Func {}\n", func.name());
     str += "params:\n";
-    for (size_t i = 0; i < func.params().size(); ++i) {
-        str +=
-            std::format("  %{} = param {}\n", i, to_string(func.params()[i]));
+    for (auto i : func.params().indices()) {
+        str += std::format(
+            "  %{} = param {}\n",
+            i.index,
+            to_string(func.params()[i], analyzed.ir_module.types())
+        );
     }
 
     str += "blocks:\n";
@@ -82,7 +85,9 @@ std::string to_string(
         for (auto ref : block.insts) {
             const auto& inst = func.inst(ref);
             std::string ir_str = std::format(
-                "    %{} : type {} = ", ref.index, inst.type.type.index
+                "    %{} : {} = ",
+                ref.index,
+                analyzed.ir_module.types().to_string(inst.type)
             );
 
             inst.data.visit(

@@ -4,6 +4,7 @@
 #include <span>
 #include <vector>
 
+#include "../index.h"
 #include "semanal/types.h"
 #include "source.h"
 #include "variant.h"
@@ -16,10 +17,13 @@ struct FuncRef {
 
 struct InstRef {
     std::uint32_t index;
+    auto operator<=>(const InstRef& other) const = default;
 };
 
 struct BlockRef {
     std::uint32_t index;
+
+    auto operator<=>(const BlockRef& other) const = default;
 };
 
 struct ParamRef {
@@ -194,10 +198,23 @@ struct Inst {
     Value data;
     types::SpecType type;
     Location location;
+
+    [[nodiscard]] bool has_value() const {
+        return !data.is<Store>() && !data.is<SetField>() &&
+               !data.is<SetItem>() && !data.is<Jump>() &&
+               !data.is<Branch>() && !data.is<Return>() &&
+               !data.is<VarDecl>();
+    }
+
+    [[nodiscard]] bool is_terminator() const {
+        return data.is<Jump>() || data.is<Branch>() || data.is<Return>();
+    }
 };
 
 struct Block {
     std::vector<InstRef> insts;
+    std::vector<BlockRef> preds;
+    std::vector<BlockRef> succs;
 };
 
 struct Param {
@@ -210,26 +227,32 @@ public:
     Func(std::string_view name) : name_(name) {}
 
     [[nodiscard]] std::string_view name() const { return name_; }
-    [[nodiscard]] Param param(ParamRef ref) const { return params_[ref.index]; }
-    [[nodiscard]] std::span<const Param> params() const { return params_; }
+    [[nodiscard]] Param param(ParamRef ref) const { return params_[ref]; }
+    [[nodiscard]] IndexSpan<const Param, ParamRef> params() const { return params_.data(); }
+    [[nodiscard]] IndexSpan<Param, ParamRef> params() { return params_.data(); }
     [[nodiscard]] types::SpecType return_type() const { return return_type_; }
     void set_type(std::span<const Param> params, types::SpecType return_type) {
+        params_.clear();
         params_.append_range(params);
+        return_type_ = return_type;
+    }
+    void set_return_type(types::SpecType return_type) {
         return_type_ = return_type;
     }
 
     [[nodiscard]] const Inst& inst(InstRef ref) const {
-        return insts_[ref.index];
+        return insts_[ref];
     }
-    [[nodiscard]] Inst& inst(InstRef ref) { return insts_[ref.index]; }
-    [[nodiscard]] std::span<const Inst> insts() const { return insts_; }
-    [[nodiscard]] std::span<Inst> insts() { return insts_; }
+    [[nodiscard]] Inst& inst(InstRef ref) { return insts_[ref]; }
+    [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const { return insts_.data(); }
+    [[nodiscard]] IndexSpan<Inst, InstRef> insts() { return insts_.data(); }
 
     [[nodiscard]] const Block& block(BlockRef ref) const {
-        return blocks_[ref.index];
+        return blocks_[ref];
     }
-    [[nodiscard]] Block& block(BlockRef ref) { return blocks_[ref.index]; }
-    [[nodiscard]] std::span<const Block> blocks() const { return blocks_; }
+    [[nodiscard]] Block& block(BlockRef ref) { return blocks_[ref]; }
+    [[nodiscard]] IndexSpan<const Block, BlockRef> blocks() const { return blocks_.data(); }
+    [[nodiscard]] IndexSpan<Block, BlockRef> blocks() { return blocks_.data(); }
 
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
         return std::span(inst_refs_).subspan(refs.start, refs.count);
@@ -239,23 +262,22 @@ public:
     }
 
     InstRef add(const Inst& inst) {
-        InstRef ref {static_cast<std::uint32_t>(insts_.size())};
-        insts_.push_back(inst);
-        return ref;
+        return insts_.push_back(inst);
     }
 
     BlockRef add_block(Block block) {
-        BlockRef ref {static_cast<std::uint32_t>(blocks_.size())};
-        blocks_.push_back(std::move(block));
-        return ref;
+        return blocks_.push_back(std::move(block));
     }
 
     void set_block(BlockRef ref, Block block) {
-        blocks_[ref.index] = std::move(block);
+        blocks_[ref] = std::move(block);
     }
 
-    void replace_blocks(std::vector<Block> blocks) {
-        blocks_ = std::move(blocks);
+    void replace_blocks(std::span<const Block> blocks) {
+        blocks_.clear();
+        for (const auto& b : blocks) {
+            blocks_.push_back(b);
+        }
     }
 
     InstRefs add(std::span<const InstRef> refs) {
@@ -267,33 +289,60 @@ public:
         return inst_refs;
     }
 
+    void rebuild_cfg() {
+        for (auto i : blocks_.indices()) {
+            auto& block = blocks_[i];
+            block.preds.clear();
+            block.succs.clear();
+        }
+
+        for (auto i : blocks_.indices()) {
+            auto& block = blocks_[i];
+            if (block.insts.empty()) continue;
+
+            const auto& last = insts_[block.insts.back()];
+            last.data.visit(
+                [&](const Inst::Jump& j) {
+                    block.succs.push_back(j.target);
+                    blocks_[j.target].preds.push_back(i);
+                },
+                [&](const Inst::Branch& b) {
+                    block.succs.push_back(b.true_target);
+                    blocks_[b.true_target].preds.push_back(i);
+                    block.succs.push_back(b.false_target);
+                    blocks_[b.false_target].preds.push_back(i);
+                },
+                [&](const Inst::Return&) {},
+                [&](auto&) {}
+            );
+        }
+    }
+
 private:
     std::string_view name_;
-    std::vector<Param> params_;
+    IndexVector<Param, ParamRef> params_;
     types::SpecType return_type_;
-    std::vector<Inst> insts_;
-    std::vector<Block> blocks_;
+    IndexVector<Inst, InstRef> insts_;
+    IndexVector<Block, BlockRef> blocks_;
     std::vector<InstRef> inst_refs_;
 };
 
 class Module {
 public:
     Module() = default;
-    Func& func(FuncRef ref) { return funcs_[ref.index]; }
-    [[nodiscard]] std::span<const Func> funcs() const { return funcs_; }
-    [[nodiscard]] std::span<Func> funcs() { return funcs_; }
+    Func& func(FuncRef ref) { return funcs_[ref]; }
+    [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const { return funcs_.data(); }
+    [[nodiscard]] IndexSpan<Func, FuncRef> funcs() { return funcs_.data(); }
     [[nodiscard]] const Func& func(FuncRef ref) const {
-        return funcs_[ref.index];
+        return funcs_[ref];
     }
 
     FuncRef add(Func&& func) {
-        FuncRef ref {static_cast<std::uint32_t>(funcs_.size())};
-        funcs_.push_back(std::move(func));
-        return ref;
+        return funcs_.push_back(std::move(func));
     }
 
 private:
-    std::vector<Func> funcs_;
+    IndexVector<Func, FuncRef> funcs_;
 };
 
 }

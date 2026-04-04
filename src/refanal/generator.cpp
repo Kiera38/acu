@@ -5,6 +5,9 @@
 
 namespace acu::refanal {
 
+using SemInstRef = acu::ir::InstRef;
+using SemInst = acu::ir::Inst;
+
 class FuncGenerator {
     const semanal::AnalyzedModule* amod_;
     const semanal::AnalyzedFunc* afunc_;
@@ -18,7 +21,7 @@ class FuncGenerator {
         ir::BlockRef break_target;
     };
     std::vector<LoopTargets> loops_;
-    std::vector<ir::InstRef> inst_map_;
+    IndexVector<ir::InstRef, SemInstRef> inst_map_;
 
 public:
     FuncGenerator(
@@ -31,18 +34,22 @@ public:
     ir::Func generate() {
         const auto& sparams = sfunc_->params();
         std::vector<ir::Param> rparams;
-        for (const auto& sp : sparams) {
-            rparams.push_back(ir::Param {sp.name, sp.type});
+        rparams.reserve(sparams.size());
+        for (auto i : sparams.indices()) {
+            rparams.push_back(ir::Param {.name=sparams[i].name, .type=sparams[i].type});
         }
         rfunc_.set_type(rparams, sfunc_->return_type());
 
-        inst_map_.assign(sfunc_->insts().size(), ir::InstRef {~0u});
+        inst_map_.resize(sfunc_->insts().size());
+        for (auto& ref : inst_map_.data()) {
+            ref = ir::InstRef {~0u};
+        }
 
         current_block_ = rfunc_.add_block(ir::Block {});
 
         if (!sfunc_->insts().empty()) {
             ::acu::ir::Block main_block {
-                .start = ::acu::ir::InstRef {0}, .end = sfunc_->last_inst()
+                .start = SemInstRef {0}, .end = sfunc_->last_inst()
             };
             visit_block(main_block);
         }
@@ -56,15 +63,17 @@ public:
             rfunc_.block(current_block_).insts.push_back(ret_ref);
         }
 
+        rfunc_.rebuild_cfg();
         return std::move(rfunc_);
     }
 
-    void visit_block(::acu::ir::Block sblock) {
+    void visit_block(acu::ir::Block sblock) {
         if (sblock.end.index < sblock.start.index) return;
 
-        for (uint32_t i = sblock.start.index; i <= sblock.end.index; ++i) {
-            uint32_t jump_idx = visit_inst(::acu::ir::InstRef {i});
-            i = jump_idx;
+        auto current = sblock.start;
+        while (current.index <= sblock.end.index) {
+            current = visit_inst(current);
+            current = SemInstRef{current.index + 1};
         }
     }
 
@@ -94,12 +103,12 @@ public:
     }
 
     ir::InstRef get_mapped(::acu::ir::InstRef sref) {
-        return inst_map_[sref.index];
+        return inst_map_[sref];
     }
 
     ir::InstRef get_mapped(std::optional<::acu::ir::InstRef> sref) {
         if (!sref) return ir::InstRef {~0u};
-        return inst_map_[sref->index];
+        return inst_map_[*sref];
     }
 
     ir::InstRef get_cast(
@@ -107,7 +116,7 @@ public:
     ) {
         auto rref = get_mapped(sref);
         if (sref.index >= afunc_->inst_types.size()) return rref;
-        auto actual_type = afunc_->inst_types[sref.index];
+        auto actual_type = afunc_->inst_types[sref];
         if (actual_type.type != expected_type.type) {
             ir::Inst cast_inst {
                 .data =
@@ -123,7 +132,7 @@ public:
     }
 
     ir::InstRef get_cast(
-        ::acu::ir::InstRef sref, types::TypeId expected_type, Location loc
+        SemInstRef sref, types::TypeId expected_type, Location loc
     ) {
         return get_cast(
             sref,
@@ -142,9 +151,9 @@ public:
         return rref;
     }
 
-    uint32_t visit_inst(::acu::ir::InstRef sref) {
+    SemInstRef visit_inst(SemInstRef sref) {
         const auto& sinst = sfunc_->inst(sref);
-        const auto& type = afunc_->inst_types[sref.index];
+        const auto& type = afunc_->inst_types[sref];
 
         auto emit = [&](auto data) -> ir::InstRef {
             ir::Inst rinst = {
@@ -153,13 +162,13 @@ public:
                 .location = sinst.location,
             };
             ir::InstRef ref = emit_inst(rinst);
-            inst_map_[sref.index] = ref;
+            inst_map_[sref] = ref;
             return ref;
         };
 
         return sinst.data.visit(
-            [&](const ::acu::ir::Inst::Const& inst) -> uint32_t {
-                ir::Inst::Const::Value v = inst.value.visit(
+            [&](const SemInst::Const& inst) -> SemInstRef {
+                auto v = inst.value.visit(
                     [&](bool v) -> ir::Inst::Const::Value { return v; },
                     [&](std::int64_t v) -> ir::Inst::Const::Value { return v; },
                     [&](double v) -> ir::Inst::Const::Value { return v; },
@@ -176,31 +185,31 @@ public:
                     }
                 );
                 emit(ir::Inst::Const {v});
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::VarDecl& inst) -> uint32_t {
+            [&](const SemInst::VarDecl& inst) -> SemInstRef {
                 emit(ir::Inst::VarDecl {inst.name});
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::LoadVar& inst) -> uint32_t {
+            [&](const SemInst::LoadVar& inst) -> SemInstRef {
                 emit(ir::Inst::LoadVar {get_mapped(inst.var)});
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::LoadParam& inst) -> uint32_t {
+            [&](const SemInst::LoadParam& inst) -> SemInstRef {
                 emit(ir::Inst::LoadParam {ir::ParamRef {inst.param.index}});
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Store& inst) -> uint32_t {
-                auto var_type = afunc_->inst_types[inst.var.index];
+            [&](const SemInst::Store& inst) -> SemInstRef {
+                auto var_type = afunc_->inst_types[inst.var];
                 emit(
                     ir::Inst::Store {
                         .var = get_mapped(inst.var),
                         .value = get_cast(inst.value, var_type, sinst.location)
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Binary& inst) -> uint32_t {
+            [&](const SemInst::Binary& inst) -> SemInstRef {
                 emit(
                     ir::Inst::Binary {
                         .left = get_cast(inst.left, type, sinst.location),
@@ -208,11 +217,11 @@ public:
                         .op = static_cast<ir::Inst::BinaryOp>(inst.op)
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Unary& inst) -> uint32_t {
+            [&](const SemInst::Unary& inst) -> SemInstRef {
                 ir::InstRef val = get_mapped(inst.value);
-                if (inst.op == ::acu::ir::Inst::UnaryOp::Not) {
+                if (inst.op == SemInst::UnaryOp::Not) {
                     val = get_cast(inst.value, types::Bool, sinst.location);
                 }
                 emit(
@@ -221,14 +230,14 @@ public:
                         .op = static_cast<ir::Inst::UnaryOp>(inst.op)
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Comparison& inst) -> uint32_t {
+            [&](const SemInst::Comparison& inst) -> SemInstRef {
                 auto comparators = sfunc_->comparators(inst.comparators);
-                if (comparators.empty()) return sref.index;
+                if (comparators.empty()) return sref;
 
-                ::acu::ir::InstRef current_left_sref = inst.left;
-                uint32_t skip_idx = sref.index;
+                auto current_left_sref = inst.left;
+                auto skip_idx = sref;
 
                 ir::BlockRef merge_block {~0u};
                 if (comparators.size() > 1) {
@@ -239,7 +248,7 @@ public:
                     auto& comp = comparators[i];
 
                     visit_block(comp.value);
-                    ::acu::ir::InstRef right_sref = {comp.value.end.index};
+                    auto right_sref = comp.value.end;
 
                     ir::Inst comp_inst {
                         .data =
@@ -253,7 +262,7 @@ public:
                                 .op =
                                     static_cast<ir::Inst::ComparisonOp>(comp.op)
                             },
-                        .type = afunc_->inst_types[sref.index],
+                        .type = afunc_->inst_types[sref],
                         .location = sinst.location
                     };
 
@@ -263,11 +272,13 @@ public:
                     }
 
                     if (i == 0) {
-                        inst_map_[sref.index] = comp_ref;
+                        inst_map_[sref] = comp_ref;
                     }
 
-                    if (comp.value.start.index == skip_idx + 1) {
-                        skip_idx = std::max(skip_idx, comp.value.end.index);
+                    if (comp.value.start.index == skip_idx.index + 1) {
+                        skip_idx = comp.value.end.index > skip_idx.index
+                                       ? comp.value.end
+                                       : skip_idx;
                     }
 
                     if (i < comparators.size() - 1) {
@@ -280,7 +291,7 @@ public:
                                     .true_target = right_block,
                                     .false_target = merge_block
                                 },
-                            .type = afunc_->inst_types[sref.index],
+                            .type = afunc_->inst_types[sref],
                             .location = sinst.location
                         };
                         ir::InstRef branch_ref = rfunc_.add(branch);
@@ -289,7 +300,7 @@ public:
                                 .insts.push_back(branch_ref);
                         }
                         if (i == 0) {
-                            inst_map_[sref.index] = branch_ref;
+                            inst_map_[sref] = branch_ref;
                         }
 
                         current_block_ = right_block;
@@ -304,8 +315,8 @@ public:
 
                 return skip_idx;
             },
-            [&](const ::acu::ir::Inst::Call& inst) -> uint32_t {
-                auto func_s_type = afunc_->inst_types[inst.value.index].type;
+            [&](const SemInst::Call& inst) -> SemInstRef {
+                auto func_s_type = afunc_->inst_types[inst.value].type;
                 const types::Type::Func* defined_func = nullptr;
                 if (func_s_type != types::None) {
                     const auto& f_type =
@@ -344,7 +355,7 @@ public:
                                 .struct_type = struct_type, .args = refs
                             }
                         );
-                        return sref.index;
+                        return sref;
                     }
                 }
 
@@ -368,9 +379,9 @@ public:
                         .value = get_mapped(inst.value), .args = refs
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::If& inst) -> uint32_t {
+            [&](const SemInst::If& inst) -> SemInstRef {
                 auto true_block = rfunc_.add_block(ir::Block {});
                 ir::BlockRef false_block {~0u};
                 if (inst.else_block) {
@@ -388,37 +399,41 @@ public:
                             .false_target =
                                 inst.else_block ? false_block : merge_block
                         },
-                    .type = afunc_->inst_types[sref.index],
+                    .type = afunc_->inst_types[sref],
                     .location = sinst.location,
                 };
                 ir::InstRef branch_ref = rfunc_.add(branch);
                 if (!is_terminated())
                     rfunc_.block(current_block_).insts.push_back(branch_ref);
-                inst_map_[sref.index] = branch_ref;
+                inst_map_[sref] = branch_ref;
 
                 current_block_ = true_block;
                 visit_block(inst.then_block);
                 jump_to(merge_block, sinst.location);
 
-                uint32_t skip_idx = sref.index;
+                SemInstRef skip_idx = sref;
                 if (inst.then_block.start.index == sref.index + 1) {
-                    skip_idx = std::max(skip_idx, inst.then_block.end.index);
+                    skip_idx = inst.then_block.end.index > skip_idx.index
+                                   ? inst.then_block.end
+                                   : skip_idx;
                 }
 
                 if (inst.else_block) {
                     current_block_ = false_block;
                     visit_block(*inst.else_block);
                     jump_to(merge_block, sinst.location);
-                    if (inst.else_block->start.index == skip_idx + 1) {
+                    if (inst.else_block->start.index == skip_idx.index + 1) {
                         skip_idx =
-                            std::max(skip_idx, inst.else_block->end.index);
+                            inst.else_block->end.index > skip_idx.index
+                                ? inst.else_block->end
+                                : skip_idx;
                     }
                 }
 
                 current_block_ = merge_block;
                 return skip_idx;
             },
-            [&](const ::acu::ir::Inst::Loop& inst) -> uint32_t {
+            [&](const SemInst::Loop& inst) -> SemInstRef {
                 auto loop_body = rfunc_.add_block(ir::Block {});
                 auto loop_merge = rfunc_.add_block(ir::Block {});
 
@@ -435,13 +450,15 @@ public:
                 loops_.pop_back();
 
                 current_block_ = loop_merge;
-                uint32_t skip_idx = sref.index;
+                auto skip_idx = sref;
                 if (inst.block.start.index == sref.index + 1) {
-                    skip_idx = std::max(skip_idx, inst.block.end.index);
+                    skip_idx = inst.block.end.index > skip_idx.index
+                                   ? inst.block.end
+                                   : skip_idx;
                 }
                 return skip_idx;
             },
-            [&](const ::acu::ir::Inst::Return& inst) -> uint32_t {
+            [&](const SemInst::Return& inst) -> SemInstRef {
                 std::optional<ir::InstRef> val;
                 if (inst.value) {
                     val = get_cast(
@@ -449,23 +466,23 @@ public:
                     );
                 }
                 emit(ir::Inst::Return {val});
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Break& inst) -> uint32_t {
+            [&](const SemInst::Break& inst) -> SemInstRef {
                 if (!loops_.empty()) {
                     jump_to(loops_.back().break_target, sinst.location);
                 }
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Continue& inst) -> uint32_t {
+            [&](const SemInst::Continue& inst) -> SemInstRef {
                 if (!loops_.empty()) {
                     jump_to(loops_.back().continue_target, sinst.location);
                 }
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::GetAttr& inst) -> uint32_t {
+            [&](const SemInst::GetAttr& inst) -> SemInstRef {
                 auto base_ref = get_mapped(inst.value);
-                auto base_type = afunc_->inst_types[inst.value.index].type;
+                auto base_type = afunc_->inst_types[inst.value].type;
 
                 const auto& defined_struct =
                     amod_->ir_module.types()
@@ -482,11 +499,11 @@ public:
                 emit(
                     ir::Inst::GetField {.value = base_ref, .index = field_idx}
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::SetAttr& inst) -> uint32_t {
+            [&](const SemInst::SetAttr& inst) -> SemInstRef {
                 auto base_ref = get_mapped(inst.var);
-                auto base_type = afunc_->inst_types[inst.var.index].type;
+                auto base_type = afunc_->inst_types[inst.var].type;
 
                 const auto& defined_struct =
                     amod_->ir_module.types()
@@ -513,19 +530,19 @@ public:
                         .value = value_mapped
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::GetItem& inst) -> uint32_t {
+            [&](const SemInst::GetItem& inst) -> SemInstRef {
                 emit(
                     ir::Inst::GetItem {
                         .value = get_mapped(inst.value),
                         .index = get_mapped(inst.index)
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::SetItem& inst) -> uint32_t {
-                auto base_type = afunc_->inst_types[inst.var.index].type;
+            [&](const SemInst::SetItem& inst) -> SemInstRef {
+                auto base_type = afunc_->inst_types[inst.var].type;
                 types::TypeId item_type = types::None;
                 if (base_type != types::None) {
                     const auto& defined_type =
@@ -551,24 +568,23 @@ public:
                         .value = value_mapped
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::As& inst) -> uint32_t {
+            [&](const SemInst::As& inst) -> SemInstRef {
                 emit(
                     ir::Inst::Cast {
                         .value = get_mapped(inst.value),
                         .target_type = inst.type
                     }
                 );
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Logical& inst) -> uint32_t {
-                // Short-circuit logical operation like `If`
+            [&](const SemInst::Logical& inst) -> SemInstRef {
                 auto right_block = rfunc_.add_block(ir::Block {});
                 auto merge_block = rfunc_.add_block(ir::Block {});
 
                 ir::Inst branch;
-                branch.type = afunc_->inst_types[sref.index];
+                branch.type = afunc_->inst_types[sref];
                 branch.location = sinst.location;
                 if (inst.op == ::acu::ir::Inst::LogicalOp::And) {
                     branch.data = ir::Inst::Branch {
@@ -586,21 +602,23 @@ public:
                     };
                 }
                 ir::InstRef branch_ref = emit_inst(branch);
-                inst_map_[sref.index] = branch_ref;
+                inst_map_[sref] = branch_ref;
                 current_block_ = right_block;
                 visit_block(inst.right);
                 jump_to(merge_block, sinst.location);
 
                 current_block_ = merge_block;
-                uint32_t skip_idx = sref.index;
+                ::acu::ir::InstRef skip_idx = sref;
                 if (inst.right.start.index == sref.index + 1) {
-                    skip_idx = std::max(skip_idx, inst.right.end.index);
+                    skip_idx = inst.right.end.index > skip_idx.index
+                                   ? inst.right.end
+                                   : skip_idx;
                 }
                 return skip_idx;
             },
-            [&](const ::acu::ir::Inst::Array& inst) -> uint32_t {
+            [&](const SemInst::Array& inst) -> SemInstRef {
                 auto s_args = sfunc_->inst_refs(inst.items);
-                auto array_type = afunc_->inst_types[sref.index].type;
+                auto array_type = afunc_->inst_types[sref].type;
                 types::TypeId item_type = types::None;
                 if (array_type != types::None) {
                     const auto& defined_type =
@@ -617,15 +635,15 @@ public:
                 }
                 ir::InstRefs refs = rfunc_.add(r_args);
                 emit(ir::Inst::Array {refs});
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::AddressOf& inst) -> uint32_t {
+            [&](const SemInst::AddressOf& inst) -> SemInstRef {
                 emit(ir::Inst::AddressOf {get_mapped(inst.value)});
-                return sref.index;
+                return sref;
             },
-            [&](const ::acu::ir::Inst::Deref& inst) -> uint32_t {
+            [&](const SemInst::Deref& inst) -> SemInstRef {
                 emit(ir::Inst::Deref {get_mapped(inst.value)});
-                return sref.index;
+                return sref;
             }
         );
     }
