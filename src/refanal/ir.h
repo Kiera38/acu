@@ -116,7 +116,6 @@ struct Inst {
 
     struct Cast {
         InstRef value;
-        types::SpecType target_type;
     };
 
     struct CreateStruct {
@@ -201,9 +200,8 @@ struct Inst {
 
     [[nodiscard]] bool has_value() const {
         return !data.is<Store>() && !data.is<SetField>() &&
-               !data.is<SetItem>() && !data.is<Jump>() &&
-               !data.is<Branch>() && !data.is<Return>() &&
-               !data.is<VarDecl>();
+               !data.is<SetItem>() && !data.is<Jump>() && !data.is<Branch>() &&
+               !data.is<Return>() && !data.is<VarDecl>();
     }
 
     [[nodiscard]] bool is_terminator() const {
@@ -228,7 +226,9 @@ public:
 
     [[nodiscard]] std::string_view name() const { return name_; }
     [[nodiscard]] Param param(ParamRef ref) const { return params_[ref]; }
-    [[nodiscard]] IndexSpan<const Param, ParamRef> params() const { return params_.data(); }
+    [[nodiscard]] IndexSpan<const Param, ParamRef> params() const {
+        return params_.data();
+    }
     [[nodiscard]] IndexSpan<Param, ParamRef> params() { return params_.data(); }
     [[nodiscard]] types::SpecType return_type() const { return return_type_; }
     void set_type(std::span<const Param> params, types::SpecType return_type) {
@@ -240,18 +240,20 @@ public:
         return_type_ = return_type;
     }
 
-    [[nodiscard]] const Inst& inst(InstRef ref) const {
-        return insts_[ref];
-    }
+    [[nodiscard]] const Inst& inst(InstRef ref) const { return insts_[ref]; }
     [[nodiscard]] Inst& inst(InstRef ref) { return insts_[ref]; }
-    [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const { return insts_.data(); }
+    [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const {
+        return insts_.data();
+    }
     [[nodiscard]] IndexSpan<Inst, InstRef> insts() { return insts_.data(); }
 
     [[nodiscard]] const Block& block(BlockRef ref) const {
         return blocks_[ref];
     }
     [[nodiscard]] Block& block(BlockRef ref) { return blocks_[ref]; }
-    [[nodiscard]] IndexSpan<const Block, BlockRef> blocks() const { return blocks_.data(); }
+    [[nodiscard]] IndexSpan<const Block, BlockRef> blocks() const {
+        return blocks_.data();
+    }
     [[nodiscard]] IndexSpan<Block, BlockRef> blocks() { return blocks_.data(); }
 
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
@@ -261,9 +263,7 @@ public:
         return std::span(inst_refs_).subspan(refs.start, refs.count);
     }
 
-    InstRef add(const Inst& inst) {
-        return insts_.push_back(inst);
-    }
+    InstRef add(const Inst& inst) { return insts_.push_back(inst); }
 
     BlockRef add_block(Block block) {
         return blocks_.push_back(std::move(block));
@@ -329,20 +329,21 @@ private:
 
 class Module {
 public:
-    Module() = default;
+    Module(types::TypePool& types): types_(&types) {}
     Func& func(FuncRef ref) { return funcs_[ref]; }
-    [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const { return funcs_.data(); }
+    [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const {
+        return funcs_.data();
+    }
     [[nodiscard]] IndexSpan<Func, FuncRef> funcs() { return funcs_.data(); }
-    [[nodiscard]] const Func& func(FuncRef ref) const {
-        return funcs_[ref];
-    }
+    [[nodiscard]] const Func& func(FuncRef ref) const { return funcs_[ref]; }
 
-    FuncRef add(Func&& func) {
-        return funcs_.push_back(std::move(func));
-    }
+    FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }
+
+    types::TypePool& types() { return *types_; }
 
 private:
     IndexVector<Func, FuncRef> funcs_;
+    types::TypePool* types_;
 };
 
 }

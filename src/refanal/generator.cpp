@@ -36,7 +36,9 @@ public:
         std::vector<ir::Param> rparams;
         rparams.reserve(sparams.size());
         for (auto i : sparams.indices()) {
-            rparams.push_back(ir::Param {.name=sparams[i].name, .type=sparams[i].type});
+            rparams.push_back(
+                ir::Param {.name = sparams[i].name, .type = sparams[i].type}
+            );
         }
         rfunc_.set_type(rparams, sfunc_->return_type());
 
@@ -73,7 +75,7 @@ public:
         auto current = sblock.start;
         while (current.index <= sblock.end.index) {
             current = visit_inst(current);
-            current = SemInstRef{current.index + 1};
+            current = SemInstRef {current.index + 1};
         }
     }
 
@@ -102,9 +104,7 @@ public:
         emit_inst(jump);
     }
 
-    ir::InstRef get_mapped(::acu::ir::InstRef sref) {
-        return inst_map_[sref];
-    }
+    ir::InstRef get_mapped(::acu::ir::InstRef sref) { return inst_map_[sref]; }
 
     ir::InstRef get_mapped(std::optional<::acu::ir::InstRef> sref) {
         if (!sref) return ir::InstRef {~0u};
@@ -119,10 +119,7 @@ public:
         auto actual_type = afunc_->inst_types[sref];
         if (actual_type.type != expected_type.type) {
             ir::Inst cast_inst {
-                .data =
-                    ir::Inst::Cast {
-                        .value = rref, .target_type = expected_type
-                    },
+                .data = ir::Inst::Cast {.value = rref},
                 .type = expected_type,
                 .location = loc,
             };
@@ -423,10 +420,9 @@ public:
                     visit_block(*inst.else_block);
                     jump_to(merge_block, sinst.location);
                     if (inst.else_block->start.index == skip_idx.index + 1) {
-                        skip_idx =
-                            inst.else_block->end.index > skip_idx.index
-                                ? inst.else_block->end
-                                : skip_idx;
+                        skip_idx = inst.else_block->end.index > skip_idx.index
+                                       ? inst.else_block->end
+                                       : skip_idx;
                     }
                 }
 
@@ -574,7 +570,6 @@ public:
                 emit(
                     ir::Inst::Cast {
                         .value = get_mapped(inst.value),
-                        .target_type = inst.type
                     }
                 );
                 return sref;
@@ -649,8 +644,8 @@ public:
     }
 };
 
-ir::Module generate(const semanal::AnalyzedModule& analyzed_module) {
-    ir::Module rmod;
+ir::Module generate(semanal::AnalyzedModule& analyzed_module) {
+    ir::Module rmod (analyzed_module.ir_module.types());
     for (const auto& afunc : analyzed_module.analyzed_funcs) {
         const auto& sfunc = analyzed_module.ir_module.func(afunc.ref);
         FuncGenerator fg(analyzed_module, afunc, sfunc);

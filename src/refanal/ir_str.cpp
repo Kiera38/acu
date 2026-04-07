@@ -142,7 +142,7 @@ std::string to_string(
                     ir_str += std::format(
                         "cast %{} to type {}",
                         i.value.index,
-                        i.target_type.type.index
+                        inst.type.type.index
                     );
                 },
                 [&](const ir::Inst::CreateStruct& i) {
