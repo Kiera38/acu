@@ -83,6 +83,15 @@ func bubble_sort(a: Ptr[Int], n: Int):
         std::cout << "\n=== LLVM IR ===\n";
         llvm_module->print(llvm::outs(), nullptr);
 
+        std::cout << "\n=== OPTIMIZING LLVM IR ===\n";
+        acu::codegen::optimize(*llvm_module, llvm::OptimizationLevel::O3);
+        std::cout << "\n=== OPTIMIZED LLVM IR ===\n";
+        llvm_module->print(llvm::outs(), nullptr);
+
+        std::cout << "\n=== EMITTING OBJECT FILE ===\n";
+        acu::codegen::emit_object_file(*llvm_module, "test.o");
+        std::cout << "Object file emitted to test.o\n";
+
         std::cout << "\n=== JIT EXECUTION ===\n";
         auto jit = acu::codegen::JIT::create();
         if (jit) {

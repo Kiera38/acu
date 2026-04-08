@@ -5,7 +5,16 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Passes/OptimizationLevel.h>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/TargetParser/Host.h>
 
 #include <stdexcept>
 
@@ -13,15 +22,25 @@
 #include "refanal/ir.h"
 #include "semanal/types.h"
 
+
 namespace acu::codegen {
 
 class Generator {
 public:
-    Generator(llvm::LLVMContext& context, const refanal::ir::Module& module)
-        : context_(context), ir_module_(module), builder_(context) {}
+    Generator(
+        llvm::LLVMContext& context,
+        const refanal::ir::Module& module,
+        const llvm::DataLayout& layout
+    )
+        : context_(context),
+          ir_module_(module),
+          layout_(layout),
+          builder_(context) {}
 
     std::unique_ptr<llvm::Module> generate() {
         llvm_module_ = std::make_unique<llvm::Module>("acu_module", context_);
+        llvm_module_->setDataLayout(layout_);
+
         functions_.clear();
         functions_.reserve(ir_module_.funcs().size());
         for (const auto& ir_func : ir_module_.funcs()) {
@@ -71,6 +90,7 @@ private:
 
     llvm::LLVMContext& context_;
     const refanal::ir::Module& ir_module_;
+    const llvm::DataLayout& layout_;
     std::unique_ptr<llvm::Module> llvm_module_;
     llvm::IRBuilder<> builder_;
 
@@ -80,16 +100,41 @@ private:
 };
 
 std::unique_ptr<llvm::Module> generate(
-    llvm::LLVMContext& context, const refanal::ir::Module& module
+    llvm::LLVMContext& context,
+    const refanal::ir::Module& module,
+    std::optional<llvm::DataLayout> layout
 ) {
-    Generator generator(context, module);
+    if (layout) {
+        Generator generator(context, module, *layout);
+        return generator.generate();
+    }
+
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+
+    std::string error;
+    auto triple = llvm::sys::getDefaultTargetTriple();
+    const llvm::Target* target =
+        llvm::TargetRegistry::lookupTarget(triple, error);
+    if (!target) {
+        throw std::runtime_error("Failed to lookup target: " + error);
+    }
+
+    llvm::TargetOptions opt;
+    auto machine =
+        std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
+            triple, "generic", "", opt, llvm::Reloc::PIC_
+        ));
+    auto dl = machine->createDataLayout();
+
+    Generator generator(context, module, dl);
     return generator.generate();
 }
 
 bool Generator::is_small(llvm::Type* type) {
     if (type->isVoidTy()) return true;
     if (!type->isSized()) return false;
-    return llvm_module_->getDataLayout().getTypeAllocSize(type) <= 16;
+    return layout_.getTypeAllocSize(type) <= 16;
 }
 
 llvm::Type* Generator::get_base_type(types::TypeId type_id) {
@@ -361,7 +406,6 @@ void Generator::generate_func(
                         case refanal::ir::Inst::BinaryOp::BitXor:
                             return builder_.CreateXor(l, r);
                     }
-                    return nullptr;
                 },
                 [&](const refanal::ir::Inst::Comparison& c) -> llvm::Value* {
                     llvm::Value* l = get_value(
@@ -413,7 +457,6 @@ void Generator::generate_func(
                                 return builder_.CreateICmpNE(l, r);
                         }
                     }
-                    return nullptr;
                 },
                 [&](const refanal::ir::Inst::Call& c) -> llvm::Value* {
                     llvm::Value* callee = get_value(
@@ -497,8 +540,14 @@ void Generator::generate_func(
                     }
                     auto& from_type = ir_module_.types().get(from_type_id);
                     auto& to_type = ir_module_.types().get(to_type_id);
-                    if (from_type.data.is<types::Type::Array>() && to_type.data.is<types::Type::Ptr>()) {
-                        return get_value(ir_func, llvm_func, cast.value, types::Specifier::Var);
+                    if (from_type.data.is<types::Type::Array>() &&
+                        to_type.data.is<types::Type::Ptr>()) {
+                        return get_value(
+                            ir_func,
+                            llvm_func,
+                            cast.value,
+                            types::Specifier::Var
+                        );
                     }
 
                     llvm::Value* val = get_value(
@@ -736,7 +785,6 @@ void Generator::generate_func(
                         case refanal::ir::Inst::UnaryOp::BitNot:
                             return builder_.CreateNot(v);
                     }
-                    return nullptr;
                 },
                 [&](const refanal::ir::Inst::Array& arr) -> llvm::Value* {
                     llvm::Type* at = get_base_type(inst.type.type);
@@ -760,6 +808,63 @@ void Generator::generate_func(
         }
     }
     llvm::verifyFunction(*llvm_func);
+}
+
+void optimize(llvm::Module& module, llvm::OptimizationLevel level) {
+    llvm::LoopAnalysisManager lam;
+    llvm::FunctionAnalysisManager fam;
+    llvm::CGSCCAnalysisManager cgam;
+    llvm::ModuleAnalysisManager mam;
+
+    llvm::PassBuilder pb;
+
+    pb.registerModuleAnalyses(mam);
+    pb.registerCGSCCAnalyses(cgam);
+    pb.registerFunctionAnalyses(fam);
+    pb.registerLoopAnalyses(lam);
+    pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+    llvm::ModulePassManager mpm = pb.buildPerModuleDefaultPipeline(level);
+    mpm.run(module, mam);
+}
+
+void emit_object_file(llvm::Module& module, const std::string& filename) {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+
+    std::string error;
+    auto triple = llvm::sys::getDefaultTargetTriple();
+    const llvm::Target* target =
+        llvm::TargetRegistry::lookupTarget(triple, error);
+    if (!target) {
+        throw std::runtime_error("Failed to lookup target: " + error);
+    }
+
+    llvm::TargetOptions opt;
+    auto* machine = target->createTargetMachine(
+        triple, "generic", "", opt, llvm::Reloc::PIC_
+    );
+
+    module.setDataLayout(machine->createDataLayout());
+    module.setTargetTriple(triple);
+
+    std::error_code ec;
+    llvm::raw_fd_ostream dest(filename, ec, llvm::sys::fs::OF_None);
+    if (ec) {
+        throw std::runtime_error("Could not open file: " + ec.message());
+    }
+
+    llvm::legacy::PassManager pass;
+    if (machine->addPassesToEmitFile(
+            pass, dest, nullptr, llvm::CodeGenFileType::ObjectFile
+        )) {
+        throw std::runtime_error(
+            "TargetMachine can't emit a file of this type"
+        );
+    }
+
+    pass.run(module);
+    dest.flush();
 }
 
 }
