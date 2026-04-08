@@ -27,12 +27,7 @@ void set_defaults(ir::Module& module, ir::Func& func) {
             [&](ir::Inst::CreateStruct&) { return Specifier::Val; },
             [&](ir::Inst::Array&) { return Specifier::Val; },
             [&](ir::Inst::AddressOf&) { return Specifier::Val; },
-            [&](ir::Inst::LoadParam& lp) {
-                if (func.param(lp.param).type.specifier == Specifier::Var) {
-                    return Specifier::Let;
-                }
-                return Specifier::Let;
-            },
+            [&](ir::Inst::LoadParam& lp) { return Specifier::Let; },
             [&](ir::Inst::Call& c) {
                 auto func_type = module.types().get(insts[c.value].type.type);
                 auto spec = func_type.data.get<types::Type::Func>()
@@ -96,7 +91,7 @@ void infer_specifiers(
                     return ptr_type.type.specifier == Specifier::Var;
                 },
                 [&](ir::Inst::Cast& c) -> bool {
-                    return can_be_var[c.value];
+                    return inst.type.specifier == Specifier::Var;
                 },
                 [&](auto&) -> bool { return false; }
             );
@@ -120,7 +115,7 @@ void infer_specifiers(
                 } else {
                     err_handler.error(
                         loc,
-                        std::string("cannot mutate immutable value"),
+                        "cannot mutate immutable value",
                         std::string("this ") + std::string(context) +
                             " requires a mutable reference (var), but the "
                             "value is immutable (let)"
@@ -137,43 +132,45 @@ void infer_specifiers(
             auto& inst = insts[i];
             inst.data.visit(
                 [&](ir::Inst::Store& s) {
-                    make_var(s.var, inst.location, "assignment");
+                    if(insts[s.var].type.specifier == Specifier::Var) {
+                        make_var(s.value, inst.location, "assignment");
+                    }
                 },
                 [&](ir::Inst::SetField& sf) {
-                    if (make_var(sf.var, inst.location, "field assignment")) {
-                        auto& var = insts[sf.var];
-                        auto& struct_type =
-                            module.types()
-                                .get(var.type.type)
-                                .data.get<types::Type::Struct>();
-                        if (struct_type.fields[sf.index].type.specifier ==
-                            Specifier::Var) {
-                            make_var(
-                                sf.value,
-                                inst.location,
-                                "field assignment value"
-                            );
-                        }
+                    auto& var = insts[sf.var];
+                    auto& struct_type = module.types()
+                                            .get(var.type.type)
+                                            .data.get<types::Type::Struct>();
+                    auto field_spec =
+                        struct_type.fields[sf.index].type.specifier;
+                    if (field_spec == Specifier::Var) {
+                        make_var(
+                            sf.value, inst.location, "field assignment value"
+                        );
+                    } else if (field_spec == Specifier::Val) {
+                        make_var(sf.var, inst.location, "val field assignment");
                     }
                 },
                 [&](ir::Inst::SetItem& si) {
-                    if (make_var(si.var, inst.location, "item assignment")) {
-                        auto& var = insts[si.var];
-                        auto& type = module.types().get(var.type.type);
-                        Specifier item_spec = [&] {
-                            if (auto ptr =
-                                    type.data.get_if<types::Type::Ptr>()) {
-                                return ptr->type.specifier;
-                            } else {
-                                return type.data.get<types::Type::Array>()
+                    auto& var = insts[si.var];
+                    auto& type = module.types().get(var.type.type);
+                    Specifier item_spec = [&] {
+                        if (auto ptr = type.data.get_if<types::Type::Ptr>()) {
+                            return ptr->type.specifier;
+                        } else {
+                            auto array_item_spec =
+                                type.data.get<types::Type::Array>()
                                     .item.specifier;
-                            }
-                        }();
-                        if (item_spec == Specifier::Var) {
                             make_var(
-                                si.value, inst.location, "item assignment value"
+                                si.var, inst.location, "val item assignment"
                             );
+                            return array_item_spec;
                         }
+                    }();
+                    if (item_spec == Specifier::Var) {
+                        make_var(
+                            si.value, inst.location, "item assignment value"
+                        );
                     }
                 },
                 [&](ir::Inst::Call& call) {

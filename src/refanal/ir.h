@@ -340,6 +340,7 @@ public:
     FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }
 
     types::TypePool& types() { return *types_; }
+    const types::TypePool& types() const { return *types_; }
 
 private:
     IndexVector<Func, FuncRef> funcs_;

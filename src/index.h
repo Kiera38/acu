@@ -73,8 +73,8 @@ public:
     IndexSpan(T* data, std::size_t size) : span_(data, size) {}
     IndexSpan(std::span<T> span) : span_(span) {}
 
-    [[nodiscard]] T& operator[](I i) const { return span_[i.index]; }
-    [[nodiscard]] T& at(I i) const { return span_.at(i.index); }
+    [[nodiscard]] decltype(auto) operator[](I i) const { return span_[i.index]; }
+    [[nodiscard]] decltype(auto) at(I i) const { return span_.at(i.index); }
 
     [[nodiscard]] std::size_t size() const { return span_.size(); }
     [[nodiscard]] bool empty() const { return span_.empty(); }
@@ -92,8 +92,8 @@ public:
 
     index_range indices() const { return index_range(index_iterator(0), index_iterator(span_.size())); }
 
-    [[nodiscard]] T& front() const { return span_.front(); }
-    [[nodiscard]] T& back() const { return span_.back(); }
+    [[nodiscard]] decltype(auto) front() const { return span_.front(); }
+    [[nodiscard]] decltype(auto) back() const { return span_.back(); }
 
     [[nodiscard]] I last_index() const {
         return I {static_cast<decltype(I::index)>(span_.size() - 1)};
@@ -137,11 +137,11 @@ public:
         return I {index};
     }
 
-    T& operator[](I i) { return vec[i.index]; }
-    const T& operator[](I i) const { return vec[i.index]; }
+    decltype(auto) operator[](I i) { return vec[i.index]; }
+    decltype(auto) operator[](I i) const { return vec[i.index]; }
 
-    T& at(I i) { return vec.at(i.index); }
-    const T& at(I i) const { return vec.at(i.index); }
+    decltype(auto) at(I i) { return vec.at(i.index); }
+    decltype(auto) at(I i) const { return vec.at(i.index); }
 
     [[nodiscard]] std::size_t size() const { return vec.size(); }
     [[nodiscard]] bool empty() const { return vec.empty(); }
@@ -158,10 +158,10 @@ public:
     index_range indices() { return index_range(index_iterator(0), index_iterator(vec.size())); }
     index_range indices() const { return index_range(index_iterator(0), index_iterator(vec.size())); }
 
-    T& front() { return vec.front(); }
-    const T& front() const { return vec.front(); }
-    T& back() { return vec.back(); }
-    const T& back() const { return vec.back(); }
+    decltype(auto) front() { return vec.front(); }
+    decltype(auto) front() const { return vec.front(); }
+    decltype(auto) back() { return vec.back(); }
+    decltype(auto) back() const { return vec.back(); }
 
     [[nodiscard]] I last_index() const {
         return I {static_cast<decltype(I::index)>(vec.size() - 1)};

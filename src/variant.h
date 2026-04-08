@@ -8,6 +8,8 @@ namespace acu::utils {
 template <typename... T>
 struct Overloaded : T... {
     using T::operator()...;
+    // Explicit constructor to help some compilers
+    Overloaded(T&&... args) : T(std::forward<T>(args))... {}
 };
 
 template <typename... T>
@@ -16,7 +18,7 @@ Overloaded(T...) -> Overloaded<T...>;
 template <typename... T>
 struct Variant {
     std::variant<T...> value;
-    // Constructor from any compatible type (perfect forwarding)
+    
     template <typename U>
         requires(
             std::is_constructible_v<std::variant<T...>, U> &&
@@ -25,152 +27,69 @@ struct Variant {
     Variant(U&& u) : value(std::forward<U>(u)) {}
     Variant() = default;
 
-    // Check if holds alternative of type U
-    template <typename U>
-    [[nodiscard]] constexpr bool is() const {
-        return std::holds_alternative<U>(value);
-    }
+    template <typename U> [[nodiscard]] constexpr bool is() const { return std::holds_alternative<U>(value); }
+    template <typename U> U& get() { return std::get<U>(value); }
+    template <typename U> const U& get() const { return std::get<U>(value); }
+    template <typename U> [[nodiscard]] constexpr U* get_if() { return std::get_if<U>(&value); }
+    template <typename U> [[nodiscard]] constexpr const U* get_if() const { return std::get_if<U>(&value); }
 
-    // Get reference to held value of type U (throws if wrong type)
-    template <typename U>
-    U& get() {
-        return std::get<U>(value);
-    }
-
-    // Get const reference to held value of type U (throws if wrong type)
-    template <typename U>
-    const U& get() const {
-        return std::get<U>(value);
-    }
-
-    // Get pointer to held value of type U (returns nullptr if wrong type)
-    template <typename U>
-    [[nodiscard]] constexpr U* get_if() {
-        return std::get_if<U>(&value);
-    }
-
-    template <typename U>
-    [[nodiscard]] constexpr const U* get_if() const {
-        return std::get_if<U>(&value);
-    }
-
-    // Visit with a single function
+    // Simplified visit to help MSVC
     template <typename Func>
     auto visit(Func&& func) & {
-        using ResultType =
-            decltype(std::visit(std::forward<Func>(func), value));
-        if constexpr (std::is_void_v<ResultType>) {
-            std::visit(std::forward<Func>(func), value);
-        } else {
-            return std::visit(std::forward<Func>(func), value);
-        }
+        return std::visit(std::forward<Func>(func), value);
     }
 
     template <typename Func>
     auto visit(Func&& func) const& {
-        using ResultType =
-            decltype(std::visit(std::forward<Func>(func), value));
-        if constexpr (std::is_void_v<ResultType>) {
-            std::visit(std::forward<Func>(func), value);
-        } else {
-            return std::visit(std::forward<Func>(func), value);
-        }
+        return std::visit(std::forward<Func>(func), value);
     }
 
     template <typename Func>
     auto visit(Func&& func) && {
-        using ResultType =
-            decltype(std::visit(std::forward<Func>(func), std::move(value)));
-        if constexpr (std::is_void_v<ResultType>) {
-            std::visit(std::forward<Func>(func), std::move(value));
-        } else {
-            return std::visit(std::forward<Func>(func), std::move(value));
-        }
+        return std::visit(std::forward<Func>(func), std::move(value));
     }
 
     template <typename Func>
     auto visit(Func&& func) const&& {
-        using ResultType =
-            decltype(std::visit(std::forward<Func>(func), std::move(value)));
-        if constexpr (std::is_void_v<ResultType>) {
-            std::visit(std::forward<Func>(func), std::move(value));
-        } else {
-            return std::visit(std::forward<Func>(func), std::move(value));
-        }
+        return std::visit(std::forward<Func>(func), std::move(value));
     }
 
-    // Visit with multiple functions (overloaded)
-    template <typename... Func>
-    auto visit(Func&&... funcs) & {
-        auto visitor = Overloaded {std::forward<Func>(funcs)...};
-        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
-            std::visit(visitor, value);
-        } else {
-            return std::visit(visitor, value);
-        }
+    // Overloaded visit
+    template <typename... Funcs>
+    auto visit(Funcs&&... funcs) & {
+        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, value);
     }
 
-    template <typename... Func>
-    auto visit(Func&&... funcs) const& {
-        auto visitor = Overloaded {std::forward<Func>(funcs)...};
-        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
-            std::visit(visitor, value);
-        } else {
-            return std::visit(visitor, value);
-        }
+    template <typename... Funcs>
+    auto visit(Funcs&&... funcs) const& {
+        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, value);
     }
 
-    template <typename... Func>
-    auto visit(Func&&... funcs) && {
-        auto visitor = Overloaded {std::forward<Func>(funcs)...};
-        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
-            std::visit(visitor, value);
-        } else {
-            return std::visit(visitor, value);
-        }
+    template <typename... Funcs>
+    auto visit(Funcs&&... funcs) && {
+        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, std::move(value));
     }
 
-    template <typename... Func>
-    auto visit(Func&&... funcs) const&& {
-        auto visitor = Overloaded {std::forward<Func>(funcs)...};
-        if constexpr (std::is_void_v<decltype(std::visit(visitor, value))>) {
-            std::visit(visitor, value);
-        } else {
-            return std::visit(visitor, value);
-        }
+    template <typename... Funcs>
+    auto visit(Funcs&&... funcs) const&& {
+        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, std::move(value));
     }
 
-    // Index of the currently held alternative
-    [[nodiscard]] constexpr std::size_t index() const noexcept {
-        return value.index();
-    }
-
-    // Check if valueless by exception
-    [[nodiscard]] constexpr bool valueless_by_exception() const noexcept {
-        return value.valueless_by_exception();
-    }
-
-    // Emplace a new value
-    template <typename U, typename... Args>
-    U& emplace(Args&&... args) {
-        return value.template emplace<U>(std::forward<Args>(args)...);
-    }
+    [[nodiscard]] constexpr std::size_t index() const noexcept { return value.index(); }
+    [[nodiscard]] constexpr bool valueless_by_exception() const noexcept { return value.valueless_by_exception(); }
 
     template <typename U, typename... Args>
-    U& emplace(std::initializer_list<U> il, Args&&... args) {
-        return value.template emplace<U>(il, std::forward<Args>(args)...);
-    }
+    U& emplace(Args&&... args) { return value.template emplace<U>(std::forward<Args>(args)...); }
 
-    // Helper method to safely get value with fallback
+    template <typename U, typename... Args>
+    U& emplace(std::initializer_list<U> il, Args&&... args) { return value.template emplace<U>(il, std::forward<Args>(args)...); }
+
     template <typename U>
     U get_or(U&& fallback) const {
-        if (is<U>()) {
-            return std::get<U>(value);
-        }
+        if (is<U>()) return std::get<U>(value);
         return std::forward<U>(fallback);
     }
 
-    // Helper method to apply function if type matches
     template <typename U, typename Func>
     bool apply_if(Func&& func) {
         if (is<U>()) {
@@ -180,10 +99,7 @@ struct Variant {
         return false;
     }
 
-    // Equality comparison
     bool operator==(const Variant& other) const { return value == other.value; }
-
-    // Inequality comparison
     bool operator!=(const Variant& other) const { return value != other.value; }
 };
-}  // namespace acu::utils
+}

@@ -1,6 +1,10 @@
 #include <iostream>
 #include <string>
 
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+
 #include "errors.h"
 #include "parser/parser.h"
 #include "refanal/generator.h"
@@ -8,6 +12,8 @@
 #include "refanal/optimizer.h"
 #include "semanal/semanal.h"
 #include "source.h"
+#include "codegen/generator.h"
+#include "codegen/jit.h"
 
 int main() {
     acu::Source source;
@@ -70,6 +76,31 @@ func bubble_sort(a: Ptr[Int], n: Int):
 
         std::cout << "\n=== REFANAL IR ===\n";
         std::cout << acu::refanal::to_string(refanal_module, analyzed) << "\n";
+
+        llvm::LLVMContext context;
+        auto llvm_module = acu::codegen::generate(context, refanal_module);
+
+        std::cout << "\n=== LLVM IR ===\n";
+        llvm_module->print(llvm::outs(), nullptr);
+
+        std::cout << "\n=== JIT EXECUTION ===\n";
+        auto jit = acu::codegen::JIT::create();
+        if (jit) {
+            if (auto err = jit->add_module(std::move(llvm_module))) {
+                std::cerr << "Failed to add module to JIT\n";
+            } else {
+                auto main_func = jit->get_main();
+                if (main_func) {
+                    std::cout << "Running main()...\n";
+                    int result = (*main_func)();
+                    std::cout << "main() returned: " << result << "\n";
+                } else {
+                    std::cerr << "Failed to find main function in JIT\n";
+                }
+            }
+        } else {
+            std::cerr << "Failed to create JIT\n";
+        }
 
     } catch (const std::exception& e) {
         if (err_handler.has_errors()) {
