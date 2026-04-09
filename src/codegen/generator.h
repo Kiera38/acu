@@ -4,7 +4,6 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/DataLayout.h>
 #include <llvm/Passes/OptimizationLevel.h>
-#include <memory>
 #include <optional>
 
 #include "refanal/ir.h"

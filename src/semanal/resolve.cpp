@@ -328,6 +328,7 @@ private:
                         case Var: return types::Specifier::Var;
                         case Val: return types::Specifier::Val;
                     }
+                    std::unreachable();
                 }();
                 return {
                     .type = resolve_type(*spec.type).type,
@@ -473,6 +474,7 @@ private:
                         case BitOr: return ir::Inst::BinaryOp::BitOr;
                         case BitXor: return ir::Inst::BinaryOp::BitXor;
                     }
+                    std::unreachable();
                 }();
                 convert_store(
                     func.add({
@@ -801,6 +803,7 @@ private:
                             case Equal: return ir::ComparisonOp::Equal;
                             case NotEqual: return ir::ComparisonOp::NotEqual;
                         }
+                        std::unreachable();
                     }();
                     comparators.push_back({
                         .value = right_block,

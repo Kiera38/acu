@@ -4,13 +4,40 @@ project(acu)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(AUI_VERSION v8.0.0-rc.20)
+# Use AUI.Boot
+file(
+    DOWNLOAD
+    https://raw.githubusercontent.com/aui-framework/aui/${AUI_VERSION}/aui.boot.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/aui.boot.cmake
+)
+include(${CMAKE_CURRENT_BINARY_DIR}/aui.boot.cmake)
+set(AUIB_VALID_INSTALLATION_PATHS "C:/Program Files/Microsoft Visual Studio/*")
+auib_import(
+    LLVM https://github.com/llvm/llvm-project 
+    VERSION llvmorg-22.1.3
+    LINK STATIC
+    CMAKE_ARGS 
+        -DLLVM_INCLUDE_EXAMPLES=OFF
+        -DLLVM_BUILD_EXAMPLES=OFF
+        -DLLVM_INCLUDE_TESTS=OFF
+        -DLLVM_BUILD_TESTS=OFF
+        -DLLVM_INCLUDE_BENCHMARKS=OFF
+        -DLLVM_BUILD_BENCHMARKS=OFF
+        -DLLVM_INCLUDE_TOOLS=OFF
+        # Force TableGen to be built with optimization. This will significantly improve build time.
+        -DLLVM_OPTIMIZED_TABLEGEN=ON
+        # Limit the maximum number of concurrent link jobs to 1. This should fix low amount of memory issue for link.
+        -DLLVM_PARALLEL_LINK_JOBS=1
+        -DLLVM_INSTALL_PACKAGE_DIR:PATH=share/llvm
+        -DLLVM_TARGETS_TO_BUILD=Native
+    CMAKE_WORKING_DIR llvm
+)
+
 # Find LLVM
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-
-include_directories(${LLVM_INCLUDE_DIRS})
-add_definitions(${LLVM_DEFINITIONS})
 
 # Map LLVM components to library names
 llvm_map_components_to_libnames(llvm_libs
@@ -32,26 +59,6 @@ llvm_map_components_to_libnames(llvm_libs
     transformutils
     analysis
 )
-
-# Fix LLVM's hardcoded path to diaguids.lib if it's incorrect
-if(MSVC)
-    set(OLD_DIA_PATH "C:/Program Files/Microsoft Visual Studio/2022/Community/DIA SDK/lib/amd64/diaguids.lib")
-    set(NEW_DIA_PATH "C:/Program Files/Microsoft Visual Studio/18/Community/DIA SDK/lib/amd64/diaguids.lib")
-    
-    # We also need to fix transitive dependencies. Since we can't easily list all LLVM targets,
-    # we'll try to fix the ones we know or that are commonly used.
-    set(LLVM_TARGETS_TO_FIX ${llvm_libs} LLVMDebugInfoPDB LLVMDebugInfoCodeView LLVMSymbolize)
-    
-    foreach(tgt ${LLVM_TARGETS_TO_FIX})
-        if(TARGET ${tgt})
-            get_target_property(libs ${tgt} INTERFACE_LINK_LIBRARIES)
-            if(libs)
-                string(REPLACE "${OLD_DIA_PATH}" "${NEW_DIA_PATH}" fixed_libs "${libs}")
-                set_target_properties(${tgt} PROPERTIES INTERFACE_LINK_LIBRARIES "${fixed_libs}")
-            endif()
-        endif()
-    endforeach()
-endif()
 
 message(STATUS "LLVM LIBS: ${llvm_libs}")
 
@@ -79,12 +86,14 @@ add_executable(acu
 )
 
 # Set include directories
+target_include_directories(acu SYSTEM PRIVATE
+    ${LLVM_INCLUDE_DIRS}
+)
 target_include_directories(acu PRIVATE
     src
 )
 
-# Link LLVM libraries
-if(MSVC)
-    target_link_libraries(acu PRIVATE "C:/Program Files/Microsoft Visual Studio/18/Community/DIA SDK/lib/amd64/diaguids.lib")
-endif()
+# LLVM Definitions
+target_compile_definitions(acu PRIVATE ${LLVM_DEFINITIONS})
+
 target_link_libraries(acu PRIVATE ${llvm_libs})

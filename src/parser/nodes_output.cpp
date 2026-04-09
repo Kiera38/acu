@@ -1,3 +1,4 @@
+#include <utility>
 #include "nodes.h"
 #include "source.h"
 
@@ -241,6 +242,7 @@ std::string to_string(Expr::Specifier spec) {
         case Var: return "var";
         case Val: return "val";
     }
+    std::unreachable();
 }
 
 std::string to_string(const Expr::Spec& spec, acu::Location location = {}) {
@@ -369,6 +371,7 @@ std::string assign_op_to_string(Stmt::AssignOp op) {
         case BitOr: return "|=";
         case BitXor: return "^=";
     }
+    std::unreachable();
 }
 
 std::string to_string(
