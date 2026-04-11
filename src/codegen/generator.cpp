@@ -434,15 +434,15 @@ private:
 
                 return to_type.data.visit(
                     [&](const types::Type::Bool&) -> llvm::Value* {
-                        if (to_type.data.is<types::Type::Int>())
+                        if (from_type.data.is<types::Type::Int>())
                             return builder_.CreateICmpNE(
                                 val, llvm::ConstantInt::get(val->getType(), 0)
                             );
-                        if (to_type.data.is<types::Type::Float>())
+                        if (from_type.data.is<types::Type::Float>())
                             return builder_.CreateFCmpONE(
                                 val, llvm::ConstantFP::getZero(val->getType())
                             );
-                        if (to_type.data.is<types::Type::Ptr>())
+                        if (from_type.data.is<types::Type::Ptr>())
                             return builder_.CreateICmpNE(
                                 val,
                                 llvm::ConstantPointerNull::get(
@@ -454,12 +454,12 @@ private:
                         throw std::runtime_error("unsupported cast to bool");
                     },
                     [&](const types::Type::Int& to_i) -> llvm::Value* {
-                        if (to_type.data.is<types::Type::Int>()) {
+                        if (from_type.data.is<types::Type::Int>()) {
                             return builder_.CreateIntCast(
                                 val, to_llvm_type, to_i.is_signed
                             );
                         }
-                        if (to_type.data.is<types::Type::Float>()) {
+                        if (from_type.data.is<types::Type::Float>()) {
                             return to_i.is_signed ? builder_.CreateFPToSI(
                                                         val, to_llvm_type
                                                     )
@@ -467,13 +467,13 @@ private:
                                                         val, to_llvm_type
                                                     );
                         }
-                        if (to_type.data.is<types::Type::Ptr>()) {
+                        if (from_type.data.is<types::Type::Ptr>()) {
                             return builder_.CreatePtrToInt(val, to_llvm_type);
                         }
                         throw std::runtime_error("unsupported cast to int");
                     },
                     [&](const types::Type::Float& to_f) -> llvm::Value* {
-                        if (to_type.data.is<types::Type::Int>()) {
+                        if (from_type.data.is<types::Type::Int>()) {
                             const auto& from_i =
                                 from_type.data.get<types::Type::Int>();
                             return from_i.is_signed ? builder_.CreateSIToFP(
@@ -483,16 +483,16 @@ private:
                                                           val, to_llvm_type
                                                       );
                         }
-                        if (to_type.data.is<types::Type::Float>()) {
+                        if (from_type.data.is<types::Type::Float>()) {
                             return builder_.CreateFPCast(val, to_llvm_type);
                         }
                         throw std::runtime_error("unsupported cast to float");
                     },
                     [&](const types::Type::Ptr&) -> llvm::Value* {
-                        if (to_type.data.is<types::Type::Ptr>()) {
+                        if (from_type.data.is<types::Type::Ptr>()) {
                             return val;
                         }
-                        if (to_type.data.is<types::Type::Int>()) {
+                        if (from_type.data.is<types::Type::Int>()) {
                             return builder_.CreateIntToPtr(val, to_llvm_type);
                         }
                         throw std::runtime_error("unsupported cast to ptr");

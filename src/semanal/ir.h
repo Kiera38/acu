@@ -226,11 +226,14 @@ struct Comparator {
 
 class Func {
 public:
-    Func(std::string_view name) : name_(name) {}
-
+    Func(std::string_view name, Location location)
+        : name_(name), location_(location) {}
+    [[nodiscard]] Location location() const { return location_; }
     [[nodiscard]] std::string_view name() const { return name_; }
     [[nodiscard]] Param param(ParamRef ref) const { return params_[ref]; }
-    [[nodiscard]] IndexSpan<const Param, ParamRef> params() const { return params_.data(); }
+    [[nodiscard]] IndexSpan<const Param, ParamRef> params() const {
+        return params_.data();
+    }
     [[nodiscard]] types::SpecType return_type() const { return return_type_; }
     void set_type(std::span<const Param> params, types::SpecType return_type) {
         params_.clear();
@@ -238,7 +241,9 @@ public:
         return_type_ = return_type;
     }
     [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref]; }
-    [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const { return insts_.data(); }
+    [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const {
+        return insts_.data();
+    }
     [[nodiscard]] IndexSpan<const Inst, InstRef> block(Block block) const {
         return insts_.data().subspan(
             block.start, block.end.index - block.start.index + 1
@@ -251,20 +256,18 @@ public:
     [[nodiscard]] std::span<const Comparator> comparators(
         Comparators comparators
     ) const {
-        return std::span(comparators_).subspan(comparators.start, comparators.count);
+        return std::span(comparators_)
+            .subspan(comparators.start, comparators.count);
     }
 
     [[nodiscard]] std::span<Comparator> comparators(Comparators comparators) {
-        return std::span(comparators_).subspan(comparators.start, comparators.count);
+        return std::span(comparators_)
+            .subspan(comparators.start, comparators.count);
     }
 
-    InstRef add(const Inst& inst) {
-        return insts_.push_back(inst);
-    }
+    InstRef add(const Inst& inst) { return insts_.push_back(inst); }
 
-    [[nodiscard]] InstRef last_inst() const {
-        return insts_.last_index();
-    }
+    [[nodiscard]] InstRef last_inst() const { return insts_.last_index(); }
 
     void set_loop_block(InstRef loop, Block block) {
         insts_[loop].data.get<Inst::Loop>().block = block;
@@ -303,6 +306,7 @@ public:
     }
 
 private:
+    Location location_;
     std::string_view name_;
     IndexVector<Param, ParamRef> params_;
     types::SpecType return_type_;
@@ -316,13 +320,9 @@ public:
     Module() = default;
     Func& func(FuncRef ref) { return funcs_[ref]; }
     [[nodiscard]] std::span<const Func> funcs() const { return funcs_.data(); }
-    [[nodiscard]] const Func& func(FuncRef ref) const {
-        return funcs_[ref];
-    }
+    [[nodiscard]] const Func& func(FuncRef ref) const { return funcs_[ref]; }
 
-    FuncRef add(Func&& func) {
-        return funcs_.push_back(std::move(func));
-    }
+    FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }
 
     types::TypePool& types() { return types_; }
     [[nodiscard]] const types::TypePool& types() const { return types_; }

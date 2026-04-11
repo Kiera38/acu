@@ -1,19 +1,17 @@
 func main() Int:
-    var a = [10, 100, 30, 7]
+    let a = [10, 100, 30, 7]
     bubble_sort(a as Ptr[Int], 4)
-    var b = 
     return 0
 
 
 func bubble_sort(a: Ptr[Int], n: Int):
-    var swapped
-    var i = 0
+    i = 0
     while i < n -1:
         swapped = 0
-        var j = 0
+        j = 0
         while j < n-i-1:
             if a[j] > a[j+1]:
-                var t = a[j+1]
+                t = a[j+1]
                 a[j+1] = a[j]
                 a[j] = t
                 swapped = 1

@@ -2,6 +2,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -23,6 +24,11 @@
 #include "semanal/semanal.h"
 #include "source.h"
 
+enum class RunMode {
+    Jit,
+    Compile
+};
+
 struct Config {
     std::filesystem::path input_path;
     std::filesystem::path output_path;
@@ -32,7 +38,7 @@ struct Config {
     bool show_refanal = false;
     bool show_llvm = false;
     bool show_opt_llvm = false;
-    bool run_jit = true;
+    RunMode mode = RunMode::Jit;
 };
 
 namespace {
@@ -41,16 +47,18 @@ void print_help(const char* prog_name) {
     std::cout
         << "Usage: " << prog_name << " <input_file> [options]\n"
         << "Options:\n"
-        << "  -o <path>                    Set output object file path\n"
-        << "  -O0, -O1, -O2, -O3, -Os, -Oz Set optimization level (default: -O0)\n"
-        << "  --emit-ast                   Show Ast\n"
-        << "  --emit-semanal               Show Semanal IR\n"
-        << "  --emit-refanal               Show Refanal IR\n"
-        << "  --emit-llvm                  Show LLVM IR (pre-optimization)\n"
-        << "  --emit-opt-llvm              Show optimized LLVM IR\n"
-        << "  --show-ir                    Show all intermediate representations\n"
-        << "  --no-jit                     Do not execute the code after compilation\n"
-        << "  -h, --help                   Show this help message\n";
+        << "  -o <path>         Set output object file path\n"
+        << "  -O0, -O1, -O2,\n"
+        << "  -O3, -Os, -Oz     Set optimization level (default: -O0)\n"
+        << "  --emit-ast        Show Ast\n"
+        << "  --emit-semanal    Show Semanal IR\n"
+        << "  --emit-refanal    Show Refanal IR\n"
+        << "  --emit-llvm       Show LLVM IR (pre-optimization)\n"
+        << "  --emit-opt-llvm   Show optimized LLVM IR\n"
+        << "  --show-ir         Show all intermediate representations\n"
+        << "  --compile, -c     Compile to object file (no execution)\n"
+        << "  --run, --jit      Execute with JIT (default)\n"
+        << "  -h, --help        Show this help message\n";
 }
 
 std::optional<Config> parse_args(int argc, char** argv) {
@@ -70,6 +78,7 @@ std::optional<Config> parse_args(int argc, char** argv) {
         } else if (arg == "-o") {
             if (i + 1 < args.size()) {
                 config.output_path = args[++i];
+                config.mode = RunMode::Compile;
             } else {
                 std::cerr << "Error: -o requires an output path\n";
                 return std::nullopt;
@@ -99,8 +108,10 @@ std::optional<Config> parse_args(int argc, char** argv) {
         } else if (arg == "--show-ir") {
             config.show_ast = config.show_semanal = config.show_refanal =
                 config.show_llvm = config.show_opt_llvm = true;
-        } else if (arg == "--no-jit") {
-            config.run_jit = false;
+        } else if (arg == "--compile" || arg == "-c") {
+            config.mode = RunMode::Compile;
+        } else if (arg == "--run" || arg == "--jit") {
+            config.mode = RunMode::Jit;
         } else if (arg.starts_with("-")) {
             std::cerr << "Unknown option: " << arg << "\n";
             return std::nullopt;
@@ -125,11 +136,12 @@ std::optional<Config> parse_args(int argc, char** argv) {
         return std::nullopt;
     }
 
-    if (config.output_path.empty()) {
+    if (config.mode == RunMode::Compile && config.output_path.empty()) {
         config.output_path = config.input_path.stem().string() + ".o";
     }
     return config;
 }
+
 
 std::optional<acu::Source> read_file(const std::filesystem::path& path) {
     std::ifstream file(path);
@@ -208,32 +220,14 @@ std::optional<acu::refanal::ir::Module> refanal(
     return refanal_module;
 }
 
-std::optional<acu::refanal::ir::Module> analyze(
-    acu::Source& source, acu::ErrorHandler& err_handler, const Config& config
-) {
-    auto module = parse_module(source, err_handler, config.show_ast);
-    if (!module) {
-        return std::nullopt;
-    }
-    auto analyzed = semanal(*module, source, err_handler, config.show_semanal);
-    if (!analyzed) {
-        return std::nullopt;
-    }
-    auto refanal_module =
-        refanal(*analyzed, source, err_handler, config.show_refanal);
-    if (!refanal_module) {
-        return std::nullopt;
-    }
-    return refanal_module;
-}
-
 std::unique_ptr<llvm::Module> generate_llvm(
     llvm::LLVMContext& context,
     const acu::refanal::ir::Module& module,
     const acu::Source& source,
-    const Config& config
+    const Config& config,
+    std::optional<llvm::DataLayout> layout
 ) {
-    auto llvm_module = acu::codegen::generate(context, module);
+    auto llvm_module = acu::codegen::generate(context, module, layout);
     if (config.show_llvm) {
         std::cout << "\nLLVM IR\n";
         llvm_module->print(llvm::outs(), nullptr);
@@ -247,24 +241,34 @@ std::unique_ptr<llvm::Module> generate_llvm(
     return llvm_module;
 }
 
-void run_jit(std::unique_ptr<llvm::Module> llvm_module) {
+void run_jit(
+    const acu::refanal::ir::Module& module,
+    const acu::Source& source,
+    const Config& config
+) {
     std::cout << "\nJIT EXECUTION\n";
     auto jit = acu::codegen::JIT::create();
-    if (jit) {
-        if (auto err = jit->add_module(std::move(llvm_module))) {
-            std::cerr << "Failed to add module to JIT\n";
-        } else {
-            auto main_func = jit->get_main();
-            if (main_func) {
-                std::cout << "Running main()...\n";
-                int result = (*main_func)();
-                std::cout << "main() returned: " << result << "\n";
-            } else {
-                std::cerr << "Failed to find main function in JIT\n";
-            }
-        }
-    } else {
+    if (!jit) {
         std::cerr << "Failed to create JIT\n";
+        return;
+    }
+
+    auto context = std::make_unique<llvm::LLVMContext>();
+    auto llvm_module = generate_llvm(
+        *context, module, source, config, jit->get_data_layout()
+    );
+
+    if (auto err = jit->add_module(std::move(llvm_module), std::move(context))) {
+        std::cerr << "Failed to add module to JIT\n";
+    } else {
+        auto main_func = jit->get_main();
+        if (main_func) {
+            std::cout << "Running main()...\n";
+            int result = (*main_func)();
+            std::cout << "main() returned: " << result << "\n";
+        } else {
+            std::cerr << "Failed to find main function in JIT\n";
+        }
     }
 }
 
@@ -274,16 +278,19 @@ void codegen(
     acu::ErrorHandler& err_handler,
     const Config& config
 ) {
-    llvm::LLVMContext context;
-    auto llvm_module = generate_llvm(context, module, source, config);
-
-    acu::codegen::emit_object_file(*llvm_module, config.output_path.string());
-    if (config.show_refanal || config.show_llvm || config.show_opt_llvm) {
-        std::cout << "\nObject file emitted to " << config.output_path << "\n";
-    }
-
-    if (config.run_jit) {
-        run_jit(std::move(llvm_module));
+    if (config.mode == RunMode::Compile) {
+        auto context = std::make_unique<llvm::LLVMContext>();
+        auto llvm_module =
+            generate_llvm(*context, module, source, config, std::nullopt);
+        acu::codegen::emit_object_file(
+            *llvm_module, config.output_path.string()
+        );
+        if (config.show_refanal || config.show_llvm || config.show_opt_llvm) {
+            std::cout << "\nObject file emitted to " << config.output_path
+                      << "\n";
+        }
+    } else {
+        run_jit(module, source, config);
     }
 }
 }
@@ -300,8 +307,18 @@ int main(int argc, char** argv) {
     acu::ErrorHandler err_handler;
 
     try {
-        auto refanal_module = analyze(*source, err_handler, *config);
-        if(!refanal_module) {
+        auto module = parse_module(*source, err_handler, config->show_ast);
+        if (!module) {
+            return 1;
+        }
+        auto analyzed =
+            semanal(*module, *source, err_handler, config->show_semanal);
+        if (!analyzed) {
+            return 1;
+        }
+        auto refanal_module =
+            refanal(*analyzed, *source, err_handler, config->show_refanal);
+        if (!refanal_module) {
             return 1;
         }
         codegen(*refanal_module, *source, err_handler, *config);

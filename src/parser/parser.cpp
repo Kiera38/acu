@@ -1,6 +1,7 @@
 #include "parser.h"
 
 #include <stdexcept>
+#include <string_view>
 
 #include "lexer.h"
 #include "nodes.h"
@@ -18,41 +19,38 @@ class Parser {
 public:
     Parser(Lexer& lexer, ErrorHandler& err_handler)
         : err_handler_(&err_handler) {
-        Token token;
-        do {
+        Token token = lexer.next_token();
+        tokens_.push_back(token);
+        while (token.type != TokenType::EndOfFile) {
             token = lexer.next_token();
             tokens_.push_back(token);
-        } while (token.type != TokenType::EndOfFile);
+        }
     }
 
     nodes::Module parse() {
-        std::vector<std::unique_ptr<nodes::Stmt>> imports;
-        std::vector<nodes::Func> funcs;
-        std::vector<nodes::Struct> structs;
+        std::vector<nodes::Item> items;
 
-        // Сначала парсим импорты (они должны быть в начале)
         while (check(TokenType::Using) || check(TokenType::From)) {
             try {
                 if (match(TokenType::Using)) {
-                    imports.push_back(parse_use_stmt());
+                    items.push_back(parse_use_stmt());
                 } else if (match(TokenType::From)) {
-                    imports.push_back(parse_from_use_stmt());
+                    items.push_back(parse_from_use_stmt());
                 }
             } catch (const ParseError& e) {
                 synchronize_imports();
             }
         }
 
-        // Затем парсим функции и структуры
         while (!at_end()) {
             try {
                 if (match(TokenType::NewLine)) {
                     continue;
                 }
                 if (match(TokenType::Func)) {
-                    funcs.push_back(parse_function());
+                    items.push_back(parse_function());
                 } else if (match(TokenType::Struct)) {
-                    structs.push_back(parse_struct());
+                    items.push_back(parse_struct());
                 } else {
                     Token token = peek();
                     err_handler_->error(
@@ -64,11 +62,7 @@ public:
                 synchronize_items();
             }
         }
-        return nodes::Module {
-            .imports = std::move(imports),
-            .funcs = std::move(funcs),
-            .structs = std::move(structs)
-        };
+        return nodes::Module {std::move(items)};
     }
 
 private:
@@ -76,7 +70,7 @@ private:
     std::vector<Token> tokens_;
     std::size_t current_ = 0;
 
-    Token peek(int rel_pos = 0) const {
+    [[nodiscard]] Token peek(int rel_pos = 0) const {
         std::ptrdiff_t pos = static_cast<std::ptrdiff_t>(current_) + rel_pos;
         if (pos < 0) {
             return tokens_[0];
@@ -87,8 +81,6 @@ private:
         return tokens_[pos];
     }
 
-    // Helper functions to convert TokenType to operation enums using switch
-    // statements
     nodes::Expr::BinaryOp get_binary_op(TokenType type) {
         switch (type) {
             case TokenType::Plus: return nodes::Expr::BinaryOp::Add;
@@ -130,8 +122,7 @@ private:
             case TokenType::EqualEqual: return nodes::Expr::ComparisonOp::Equal;
             case TokenType::NotEqual:
                 return nodes::Expr::ComparisonOp::NotEqual;
-            default:
-                throw ParseError("Invalid comparison operation token");
+            default: throw ParseError("Invalid comparison operation token");
         }
     }
 
@@ -148,14 +139,15 @@ private:
             case TokenType::AmpEqual: return nodes::Stmt::AssignOp::BitAnd;
             case TokenType::PipeEqual: return nodes::Stmt::AssignOp::BitOr;
             case TokenType::CaretEqual: return nodes::Stmt::AssignOp::BitXor;
-            default:
-                throw ParseError("Invalid assignment operation token");
+            default: throw ParseError("Invalid assignment operation token");
         }
     }
 
-    bool check(TokenType type) const { return peek().type == type; }
+    [[nodiscard]] bool check(TokenType type) const {
+        return peek().type == type;
+    }
 
-    bool at_end() const { return check(TokenType::EndOfFile); }
+    [[nodiscard]] bool at_end() const { return check(TokenType::EndOfFile); }
 
     Token next() {
         if (!at_end()) {
@@ -205,14 +197,14 @@ private:
 
     std::unique_ptr<nodes::Expr> parse_type() { return parse_spec(); }
 
-    std::unique_ptr<nodes::Stmt> parse_use_stmt() {
-        Location location = peek(-1).location;  // 'using' token location
+    nodes::Item parse_use_stmt() {
+        Location location = peek(-1).location;
         std::vector<std::string_view> module_name = parse_module_name();
         expect(TokenType::NewLine, "Expected newline after import statement");
 
-        return std::make_unique<nodes::Stmt>(
-            location, nodes::Stmt::Use {std::move(module_name)}
-        );
+        return {
+            .location = location, .data = nodes::Use {std::move(module_name)}
+        };
     }
 
     std::vector<std::string_view> parse_module_name() {
@@ -230,12 +222,12 @@ private:
         return name;
     }
 
-    std::unique_ptr<nodes::Stmt> parse_from_use_stmt() {
-        Location location = peek(-1).location;  // 'from' token location
+    nodes::Item parse_from_use_stmt() {
+        Location location = peek(-1).location;
         std::vector<std::string_view> module_name = parse_module_name();
         expect(TokenType::Using, "Expected 'using' after module name");
 
-        std::vector<nodes::Stmt::UseItem> items;
+        std::vector<nodes::UseItem> items;
         bool need_rparen = match(TokenType::LParen);
         while (true) {
             Token name_token = expect(
@@ -244,7 +236,6 @@ private:
             std::string_view name = name_token.value.get<std::string_view>();
             std::optional<std::string_view> alias;
 
-            // Проверяем наличие 'as' для альяса
             if (match(TokenType::As)) {
                 Token alias_token = expect(
                     TokenType::Identifier, "Expected alias name after 'as'"
@@ -253,7 +244,7 @@ private:
             }
 
             items.emplace_back(
-                nodes::Stmt::UseItem {
+                nodes::UseItem {
                     .location = name_token.location,
                     .name = name,
                     .alias = alias
@@ -268,15 +259,15 @@ private:
             expect(TokenType::RParen, "Expected ')' after import list");
         }
         expect(TokenType::NewLine, "Expected newline after import statement");
-        return std::make_unique<nodes::Stmt>(nodes::Stmt {
+        return {
             .location = location,
-            .value = nodes::Stmt::FromUse {
+            .data = nodes::FromUse {
                 .module_name = std::move(module_name), .items = std::move(items)
             }
-        });
+        };
     }
 
-    nodes::Func parse_function() {
+    nodes::Item parse_function() {
         Token name = expect(TokenType::Identifier, "expected function name");
         expect(TokenType::LParen, "Expected '(' after function name");
         std::vector<nodes::FuncArg> args;
@@ -311,12 +302,14 @@ private:
             expect(TokenType::Colon, "Expected ':' before function body");
         }
 
-        return nodes::Func {
+        return {
             .location = name.location,
-            .name = std::get<std::string_view>(name.value.value),
-            .args = std::move(args),
-            .return_type = std::move(return_type),
-            .body = parse_body()
+            .data = nodes::Func {
+                .name = name.value.get<std::string_view>(),
+                .args = std::move(args),
+                .return_type = std::move(return_type),
+                .body = parse_body()
+            }
         };
     }
 
@@ -324,11 +317,11 @@ private:
         while (!at_end()) {
             TokenType type = peek().type;
             if (type == TokenType::Comma) {
-                return false;  // Found a comma, can continue with next arg
+                return false;
             }
             if (type == TokenType::RParen || type == TokenType::NewLine ||
                 type == TokenType::Colon) {
-                return true;  // Reached end of parameter list or line
+                return true;
             }
             next();
         }
@@ -337,15 +330,15 @@ private:
 
     bool synchronize_struct_field() { return synchronize_func_arg(); }
 
-    nodes::Struct parse_struct() {
+    nodes::Item parse_struct() {
         Token name = expect(TokenType::Identifier, "expected struct name");
         std::vector<nodes::StructField> fields;
         expect(TokenType::LParen, "Expected '(' after struct name");
         while (!match(TokenType::RParen) && !at_end()) {
             try {
                 fields.push_back(parse_struct_field());
-            } catch(const ParseError& e) {
-                if(synchronize_struct_field()) {
+            } catch (const ParseError& e) {
+                if (synchronize_struct_field()) {
                     expect(TokenType::RParen, "Expected ')' after fields");
                     break;
                 }
@@ -356,9 +349,12 @@ private:
             }
         }
         expect(TokenType::NewLine, "Expected new line after struct");
-        return nodes::Struct {
-            .name = name.value.get<std::string_view>(),
-            .fields = std::move(fields)
+        return {
+            .location = name.location,
+            .data = nodes::Struct {
+                .name = name.value.get<std::string_view>(),
+                .fields = std::move(fields)
+            }
         };
     }
 
@@ -402,7 +398,7 @@ private:
         while (!at_end()) {
             TokenType type = peek().type;
             if (type == TokenType::NewLine) {
-                next();  // consume NewLine and stop
+                next();
                 return;
             }
             switch (type) {
@@ -415,8 +411,7 @@ private:
                 case TokenType::Continue:
                 case TokenType::Return:
                 case TokenType::Using:
-                case TokenType::From:
-                    return;  // stop but don't consume
+                case TokenType::From: return;
                 default: next(); break;
             }
         }
@@ -446,12 +441,6 @@ private:
             return std::make_unique<nodes::Stmt>(
                 peek(-2).location, nodes::Stmt::Continue {}
             );
-        }
-        if (match(TokenType::Using)) {
-            return parse_use_stmt();
-        }
-        if (match(TokenType::From)) {
-            return parse_from_use_stmt();
         }
         return parse_assign();
     }
@@ -487,7 +476,7 @@ private:
         std::unique_ptr<nodes::Stmt> else_block = nullptr;
         if (match(TokenType::Else)) {
             if (match(TokenType::If)) {
-                else_block = parse_if_stmt();  // Вложенный if
+                else_block = parse_if_stmt();
             } else {
                 expect(TokenType::Colon, "Expected ':' after else");
                 else_block = parse_body();
@@ -650,7 +639,7 @@ private:
         Call,
     };
 
-    Precedence get_precedence(TokenType type) const {
+    [[nodiscard]] Precedence get_precedence(TokenType type) const {
         switch (type) {
             case TokenType::Or: return Precedence::LogicalOr;
             case TokenType::And: return Precedence::LogicalAnd;
@@ -659,26 +648,21 @@ private:
             case TokenType::LessEqual:
             case TokenType::GreaterEqual:
             case TokenType::EqualEqual:
-            case TokenType::NotEqual:
-                return Precedence::Comparison;
+            case TokenType::NotEqual: return Precedence::Comparison;
             case TokenType::Pipe: return Precedence::BitOr;
             case TokenType::Caret: return Precedence::BitXor;
             case TokenType::Amp: return Precedence::BitAnd;
             case TokenType::LessLess:
-            case TokenType::GreaterGreater:
-                return Precedence::Shift;
+            case TokenType::GreaterGreater: return Precedence::Shift;
             case TokenType::Plus:
-            case TokenType::Minus:
-                return Precedence::Sum;
+            case TokenType::Minus: return Precedence::Sum;
             case TokenType::Star:
             case TokenType::Slash:
-            case TokenType::Percent:
-                return Precedence::Product;
+            case TokenType::Percent: return Precedence::Product;
             case TokenType::LParen:
             case TokenType::LBracket:
             case TokenType::Dot:
-            case TokenType::As:
-                return Precedence::Call;
+            case TokenType::As: return Precedence::Call;
             default: return Precedence::Lowest;
         }
     }

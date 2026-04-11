@@ -174,21 +174,6 @@ struct Stmt {
         AssignOp op;
     };
 
-    struct Use {
-        std::vector<std::string_view> module_name;
-    };
-
-    struct UseItem {
-        Location location;
-        std::string_view name;
-        std::optional<std::string_view> alias;
-    };
-
-    struct FromUse {
-        std::vector<std::string_view> module_name;
-        std::vector<UseItem> items;
-    };
-
     Location location;
     utils::Variant<
         Expr,
@@ -200,10 +185,23 @@ struct Stmt {
         Break,
         Continue,
         Assign,
-        OpAssign,
-        Use,
-        FromUse>
+        OpAssign>
         value;
+};
+
+struct Use {
+    std::vector<std::string_view> module_name;
+};
+
+struct UseItem {
+    Location location;
+    std::string_view name;
+    std::optional<std::string_view> alias;
+};
+
+struct FromUse {
+    std::vector<std::string_view> module_name;
+    std::vector<UseItem> items;
 };
 
 struct FuncArg {
@@ -213,7 +211,6 @@ struct FuncArg {
 };
 
 struct Func {
-    Location location;
     std::string_view name;
     std::vector<FuncArg> args;
     std::unique_ptr<Expr> return_type;
@@ -227,15 +224,17 @@ struct StructField {
 };
 
 struct Struct {
-    Location location;
     std::string_view name;
     std::vector<StructField> fields;
 };
 
+struct Item {
+    Location location;
+    utils::Variant<Use, FromUse, Func, Struct> data;
+};
+
 struct Module {
-    std::vector<std::unique_ptr<Stmt>> imports;
-    std::vector<Func> funcs;
-    std::vector<Struct> structs;
+    std::vector<Item> items;
 };
 
 std::string to_string(const nodes::Expr& expr);

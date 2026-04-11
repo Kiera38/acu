@@ -15,6 +15,7 @@
 #include "semanal/ir.h"
 #include "semanal/semanal.h"
 #include "semanal/types.h"
+#include "source.h"
 
 namespace acu::semanal {
 namespace {
@@ -98,17 +99,25 @@ public:
         : module_(&module), err_handler_(&err_handler) {}
 
     ir::Module resolve() {
-        for (const auto& struct_def : module_->structs) {
-            create_struct_def(struct_def);
+        for (const auto& item : module_->items) {
+            item.data.visit(
+                [&](const nodes::Func& func) {
+                    create_func_def(func, item.location);
+                },
+                [&](const nodes::Struct& struct_def) {
+                    create_struct_def(struct_def, item.location);
+                },
+                [&](const auto&) {}
+            );
         }
-        for (const auto& func : module_->funcs) {
-            create_func_def(func);
-        }
-        for (const auto& struct_def : module_->structs) {
-            populate_struct_fields(struct_def);
-        }
-        for (const auto& func : module_->funcs) {
-            resolve_func_body(func);
+        for (const auto& item : module_->items) {
+            item.data.visit(
+                [&](const nodes::Func& func) { resolve_func_def(func); },
+                [&](const nodes::Struct& struct_def) {
+                    resolve_struct_def(struct_def);
+                },
+                [&](const auto&) {}
+            );
         }
 
         return std::move(ir_module_);
@@ -117,7 +126,6 @@ public:
 private:
     std::string suggest_similar_name(std::string_view name) {
         auto names = context_.get_all_names();
-        // Add built-in types to suggestions
         static constexpr std::array<std::string_view, 18> builtins = {
             "Int",
             "Int8",
@@ -160,20 +168,20 @@ private:
         return "";
     }
 
-    void create_struct_def(const nodes::Struct& struct_node) {
+    void create_struct_def(
+        const nodes::Struct& struct_node, Location location
+    ) {
         auto type_id = ir_module_.types().add_struct({
             .name = struct_node.name,
-            .location = struct_node.location,
+            .location = location,
         });
         context_.add(struct_node.name, {type_id});
     }
 
-    void populate_struct_fields(const nodes::Struct& struct_node) {
-        // Get the type ID for this struct
+    void resolve_struct_def(const nodes::Struct& struct_node) {
         auto type_id_it = context_.find(struct_node.name);
         if (type_id_it != nullptr) {
             auto type_id = type_id_it->data.get<types::TypeId>();
-            // Prepare the fields
             std::vector<types::Type::StructField> fields;
             fields.reserve(struct_node.fields.size());
             for (const auto& field : struct_node.fields) {
@@ -187,13 +195,13 @@ private:
         }
     }
 
-    void create_func_def(const nodes::Func& func_node) {
-        ir::Func ir_func(func_node.name);
+    void create_func_def(const nodes::Func& func_node, Location location) {
+        ir::Func ir_func(func_node.name, location);
         auto func_ref = ir_module_.add(std::move(ir_func));
         context_.add(func_node.name, {func_ref});
     }
 
-    void resolve_func_body(const nodes::Func& func_node) {
+    void resolve_func_def(const nodes::Func& func_node) {
         auto* entry = context_.find(func_node.name);
         if (entry) {
             ir::Func& ir_func = ir_module_.func(entry->data.get<ir::FuncRef>());
@@ -362,11 +370,10 @@ private:
                 if (data.type) {
                     type = resolve_type(*data.type);
                 }
-                auto var_ref = func.add(
-                    {.data =
-                         ir::Inst::VarDecl {.name = data.name, .type = type},
-                     .location = stmt.location}
-                );
+                auto var_ref = func.add({
+                    .data = ir::Inst::VarDecl {.name = data.name, .type = type},
+                    .location = stmt.location,
+                });
 
                 context_.add(data.name, {var_ref});
                 if (data.init) {
@@ -489,17 +496,6 @@ private:
                     func,
                     *data.target
                 );
-            },
-            [&](const nodes::Stmt::Use& data) {
-                // Handle import statements like 'use module.name'
-                // For now, we'll just recognize the import
-                // In a full implementation, we would load the module and add
-                // its symbols to scope
-            },
-            [&](const nodes::Stmt::FromUse& data) {
-                // Handle import statements like 'from module.name import item1,
-                // item2' For now, we'll just recognize the import In a full
-                // implementation, we would load specific items from the module
             },
             [&](const auto&) {}
         );
