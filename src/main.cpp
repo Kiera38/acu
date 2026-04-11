@@ -24,10 +24,7 @@
 #include "semanal/semanal.h"
 #include "source.h"
 
-enum class RunMode {
-    Jit,
-    Compile
-};
+enum class RunMode { Jit, Compile };
 
 struct Config {
     std::filesystem::path input_path;
@@ -44,21 +41,20 @@ struct Config {
 namespace {
 
 void print_help(const char* prog_name) {
-    std::cout
-        << "Usage: " << prog_name << " <input_file> [options]\n"
-        << "Options:\n"
-        << "  -o <path>         Set output object file path\n"
-        << "  -O0, -O1, -O2,\n"
-        << "  -O3, -Os, -Oz     Set optimization level (default: -O0)\n"
-        << "  --emit-ast        Show Ast\n"
-        << "  --emit-semanal    Show Semanal IR\n"
-        << "  --emit-refanal    Show Refanal IR\n"
-        << "  --emit-llvm       Show LLVM IR (pre-optimization)\n"
-        << "  --emit-opt-llvm   Show optimized LLVM IR\n"
-        << "  --show-ir         Show all intermediate representations\n"
-        << "  --compile, -c     Compile to object file (no execution)\n"
-        << "  --run, --jit      Execute with JIT (default)\n"
-        << "  -h, --help        Show this help message\n";
+    std::cout << "Usage: " << prog_name << " <input_file> [options]\n"
+              << "Options:\n"
+              << "  -o <path>         Set output object file path\n"
+              << "  -O0, -O1, -O2,\n"
+              << "  -O3, -Os, -Oz     Set optimization level (default: -O0)\n"
+              << "  --emit-ast        Show Ast\n"
+              << "  --emit-semanal    Show Semanal IR\n"
+              << "  --emit-refanal    Show Refanal IR\n"
+              << "  --emit-llvm       Show LLVM IR (pre-optimization)\n"
+              << "  --emit-opt-llvm   Show optimized LLVM IR\n"
+              << "  --show-ir         Show all intermediate representations\n"
+              << "  --compile, -c     Compile to object file (no execution)\n"
+              << "  --run, --jit      Execute with JIT (default)\n"
+              << "  -h, --help        Show this help message\n";
 }
 
 std::optional<Config> parse_args(int argc, char** argv) {
@@ -141,7 +137,6 @@ std::optional<Config> parse_args(int argc, char** argv) {
     }
     return config;
 }
-
 
 std::optional<acu::Source> read_file(const std::filesystem::path& path) {
     std::ifstream file(path);
@@ -254,11 +249,11 @@ void run_jit(
     }
 
     auto context = std::make_unique<llvm::LLVMContext>();
-    auto llvm_module = generate_llvm(
-        *context, module, source, config, jit->get_data_layout()
-    );
+    auto llvm_module =
+        generate_llvm(*context, module, source, config, jit->get_data_layout());
 
-    if (auto err = jit->add_module(std::move(llvm_module), std::move(context))) {
+    if (auto err =
+            jit->add_module(std::move(llvm_module), std::move(context))) {
         std::cerr << "Failed to add module to JIT\n";
     } else {
         auto main_func = jit->get_main();

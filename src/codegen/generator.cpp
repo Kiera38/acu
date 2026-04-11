@@ -56,8 +56,11 @@ public:
                 )
             );
         }
-        for (auto i : ir_module_.funcs().indices())
-            generate_func(ir_module_.func(i), functions_[i]);
+        for (auto i : ir_module_.funcs().indices()) {
+            if (!ir_module_.func(i).is_extern()) {
+                generate_func(ir_module_.func(i), functions_[i]);
+            }
+        }
         return std::move(llvm_module_);
     }
 
@@ -656,7 +659,7 @@ private:
         };
         llvm::Value* value = inst_values_[ref];
         if (is_ref(result_type)) {
-            if (is_ref(inst.type)) {
+            if (is_ref(inst.type) || value->getType()->isPointerTy()) {
                 return value;
             } else {
                 llvm::IRBuilder<> eb(

@@ -194,8 +194,6 @@ bool Lexer::match(char32_t c) {
 void Lexer::skip_whitespace() {
     while (!at_end() &&
            (peek() == U' ' || peek() == U'\t' || peek() == U'\r')) {
-        // treat carriage return as ordinary whitespace so it doesn't
-        // produce an unexpected token when reading Windows line endings
         next();
     }
 }
@@ -320,6 +318,7 @@ Token Lexer::identifier_or_keyword() {
 
     static const std::unordered_map<std::string_view, TokenType> keywords = {
         {"func", TokenType::Func},
+        {"extern", TokenType::Extern},
         {"if", TokenType::If},
         {"else", TokenType::Else},
         {"while", TokenType::While},
@@ -501,12 +500,8 @@ Token Lexer::character() {
 
 Token Lexer::string() {
     std::uint32_t start_byte_index = byte_index_;
-
-    // consume opening '"'
     next();
-
     std::string value;
-
     while (peek() != U'"' && !at_end()) {
         char32_t c = next();
         if (c == U'\\') {
@@ -542,7 +537,6 @@ Token Lexer::string() {
                     );
             }
         } else {
-            // Convert the Unicode character to UTF-8 bytes and append to value
             std::array<char, 4> utf8_buffer {};
             size_t len = encode_utf8(c, utf8_buffer);
             for (size_t i = 0; i < len; ++i) {
@@ -558,9 +552,7 @@ Token Lexer::string() {
         );
         throw std::runtime_error("Unterminated string literal");
     }
-
-    next();  // consume closing "
-
+    next();
     return make_token(
         TokenType::String, start_byte_index, {source_->strings.intern(value)}
     );
@@ -589,7 +581,6 @@ Token Lexer::operator_() {
         {"^", TokenType::Caret},         {"^=", TokenType::CaretEqual}
     };
 
-    // Look ahead to find the longest matching operator
     std::string_view text_remaining = source_text_.substr(byte_index_);
     std::string_view longest_match;
 
@@ -601,7 +592,6 @@ Token Lexer::operator_() {
     }
 
     if (!longest_match.empty()) {
-        // Advance position by the length of the matched operator
         for (size_t i = 0; i < longest_match.length(); ++i) {
             next();
         }
@@ -633,8 +623,6 @@ Token Lexer::next_token() {
 
     if (is_unicode_digit(c)) {
         if (c == U'0' && !at_end_index(byte_index_ + 1)) {
-            // For checking the next character, we need to decode the next UTF-8
-            // sequence
             auto [next_ch, next_len] =
                 decode_utf8(source_text_, byte_index_ + 1);
             if (next_ch == U'x' || next_ch == U'X') {
@@ -661,12 +649,10 @@ Token Lexer::next_token() {
     }
 
     if (c == U'\n' || c == U'\r') {
-        // normalize CR and LF to a single newline token; if we see CRLF,
-        // consume both characters so we don't emit two tokens.
         std::uint32_t start_byte_index = byte_index_;
         begin_of_line_ = true;
         if (c == U'\r' && peek() == U'\n') {
-            next();  // consume the LF after the CR
+            next();
         }
         Token token = make_token(TokenType::NewLine, start_byte_index);
         return token;
@@ -675,10 +661,10 @@ Token Lexer::next_token() {
     return operator_();
 }
 
-// Helper function to get token type name as string
 std::string token_type_to_string(TokenType type) {
     switch (type) {
         case TokenType::Func: return "FUNC";
+        case TokenType::Extern: return "EXTERN";
         case TokenType::If: return "IF";
         case TokenType::Else: return "ELSE";
         case TokenType::While: return "WHILE";
@@ -749,17 +735,15 @@ std::string token_type_to_string(TokenType type) {
     }
 }
 
-// Helper function to get token value as string
 std::string token_value_to_string(const Token& token) {
     return token.value.visit(
         [](bool val) -> std::string { return val ? "true" : "false"; },
         [](std::int64_t val) { return std::to_string(val); },
         [](double val) { return std::to_string(val); },
-        [](char32_t val) {  // Convert char32_t to UTF-8 string
+        [](char32_t val) {
             if (val < 0x80) {
                 return std::string(1, static_cast<char>(val));
             } else {
-                // For simplicity, return the codepoint as a string
                 return "U+" + std::to_string(static_cast<uint32_t>(val));
             }
         },
@@ -767,7 +751,6 @@ std::string token_value_to_string(const Token& token) {
     );
 }
 
-// Helper function to get complete token representation as string
 std::string token_to_string(const Token& token) {
     std::string result = token_type_to_string(token.type);
     if (token.type == TokenType::Identifier ||
@@ -780,4 +763,4 @@ std::string token_to_string(const Token& token) {
     return result;
 }
 
-}  // namespace acu::parser
+}

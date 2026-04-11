@@ -196,7 +196,7 @@ private:
     }
 
     void create_func_def(const nodes::Func& func_node, Location location) {
-        ir::Func ir_func(func_node.name, location);
+        ir::Func ir_func(func_node.name, location, func_node.is_extern);
         auto func_ref = ir_module_.add(std::move(ir_func));
         context_.add(func_node.name, {func_ref});
     }
@@ -209,7 +209,17 @@ private:
             ir_params.reserve(func_node.args.size());
             for (const auto& arg : func_node.args) {
                 auto param_type = resolve_type(*arg.type);
-                if (param_type.specifier == types::Specifier::None) {
+                if (func_node.is_extern) {
+                    if (param_type.specifier != types::Specifier::None &&
+                        param_type.specifier != types::Specifier::Val) {
+                        err_handler_->error(
+                            arg.location,
+                            "in extern function all parameters must have 'val' "
+                            "specifier"
+                        );
+                    }
+                    param_type.specifier = types::Specifier::Val;
+                } else if (param_type.specifier == types::Specifier::None) {
                     param_type.specifier = types::Specifier::Let;
                 }
                 ir_params.push_back({.name = arg.name, .type = param_type});
@@ -217,18 +227,33 @@ private:
             types::SpecType return_type = {.type = types::None};
             if (func_node.return_type) {
                 return_type = resolve_type(*func_node.return_type);
+                if (func_node.is_extern) {
+                    if (return_type.specifier != types::Specifier::None &&
+                        return_type.specifier != types::Specifier::Val) {
+                        err_handler_->error(
+                            func_node.return_type->location,
+                            "in extern function return type must have val "
+                            "specifier"
+                        );
+                    }
+                    return_type.specifier = types::Specifier::Val;
+                } else if (return_type.specifier == types::Specifier::None) {
+                    return_type.specifier = types::Specifier::Val;
+                }
             }
             ir_func.set_type(ir_params, return_type);
 
-            context_.push();
-            for (size_t i = 0; i < ir_params.size(); ++i) {
-                context_.add(
-                    func_node.args[i].name,
-                    {ir::ParamRef {static_cast<std::uint32_t>(i)}}
-                );
+            if (!func_node.is_extern && func_node.body) {
+                context_.push();
+                for (size_t i = 0; i < ir_params.size(); ++i) {
+                    context_.add(
+                        func_node.args[i].name,
+                        {ir::ParamRef {static_cast<std::uint32_t>(i)}}
+                    );
+                }
+                resolve_stmt(*func_node.body, ir_func);
+                context_.pop();
             }
-            resolve_stmt(*func_node.body, ir_func);
-            context_.pop();
         }
     }
 
@@ -309,6 +334,9 @@ private:
                         return {.type = types::None};
                     }
                     auto type = resolve_type(*node.args[0]);
+                    if (type.specifier == types::Specifier::None) {
+                        type.specifier = types::Specifier::Val;
+                    }
                     auto length = get_int_const(*node.args[1]);
                     return {.type = ir_module_.types().add_array(type, length)};
                 } else if (name.name == "Ptr") {
@@ -318,11 +346,11 @@ private:
                         );
                         return {.type = types::None};
                     }
-                    return {
-                        .type = ir_module_.types().add_ptr(
-                            resolve_type(*node.args[0])
-                        )
-                    };
+                    auto type = resolve_type(*node.args[0]);
+                    if (type.specifier == types::Specifier::None) {
+                        type.specifier = types::Specifier::Val;
+                    }
+                    return {.type = ir_module_.types().add_ptr(type)};
                 } else {
                     err_handler_->error(expr.location, "unknown type");
                     return {.type = types::None};

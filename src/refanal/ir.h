@@ -222,9 +222,11 @@ struct Param {
 
 class Func {
 public:
-    Func(std::string_view name) : name_(name) {}
+    Func(std::string_view name, bool is_extern = false)
+        : name_(name), is_extern_(is_extern) {}
 
     [[nodiscard]] std::string_view name() const { return name_; }
+    [[nodiscard]] bool is_extern() const { return is_extern_; }
     [[nodiscard]] Param param(ParamRef ref) const { return params_[ref]; }
     [[nodiscard]] IndexSpan<const Param, ParamRef> params() const {
         return params_.data();
@@ -320,6 +322,7 @@ public:
 
 private:
     std::string_view name_;
+    bool is_extern_ = false;
     IndexVector<Param, ParamRef> params_;
     types::SpecType return_type_;
     IndexVector<Inst, InstRef> insts_;

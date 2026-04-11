@@ -47,8 +47,11 @@ public:
                 if (match(TokenType::NewLine)) {
                     continue;
                 }
-                if (match(TokenType::Func)) {
-                    items.push_back(parse_function());
+                if (match(TokenType::Extern)) {
+                    expect(TokenType::Func, "Expected 'func' after 'extern'");
+                    items.push_back(parse_function(true));
+                } else if (match(TokenType::Func)) {
+                    items.push_back(parse_function(false));
                 } else if (match(TokenType::Struct)) {
                     items.push_back(parse_struct());
                 } else {
@@ -267,7 +270,7 @@ private:
         };
     }
 
-    nodes::Item parse_function() {
+    nodes::Item parse_function(bool is_extern) {
         Token name = expect(TokenType::Identifier, "expected function name");
         expect(TokenType::LParen, "Expected '(' after function name");
         std::vector<nodes::FuncArg> args;
@@ -297,18 +300,29 @@ private:
         }
 
         std::unique_ptr<nodes::Expr> return_type = nullptr;
-        if (!match(TokenType::Colon)) {
-            return_type = parse_type();
-            expect(TokenType::Colon, "Expected ':' before function body");
+        std::unique_ptr<nodes::Stmt> body = nullptr;
+
+        if (is_extern) {
+            if (!match(TokenType::NewLine)) {
+                return_type = parse_type();
+                expect(TokenType::NewLine, "Expected newline after extern function declaration");
+            }
+        } else {
+            if (!match(TokenType::Colon)) {
+                return_type = parse_type();
+                expect(TokenType::Colon, "Expected ':' before function body");
+            }
+            body = parse_body();
         }
 
         return {
             .location = name.location,
             .data = nodes::Func {
+                .is_extern = is_extern,
                 .name = name.value.get<std::string_view>(),
                 .args = std::move(args),
                 .return_type = std::move(return_type),
-                .body = parse_body()
+                .body = std::move(body)
             }
         };
     }

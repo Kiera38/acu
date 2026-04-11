@@ -226,10 +226,11 @@ struct Comparator {
 
 class Func {
 public:
-    Func(std::string_view name, Location location)
-        : name_(name), location_(location) {}
+    Func(std::string_view name, Location location, bool is_extern = false)
+        : name_(name), location_(location), is_extern_(is_extern) {}
     [[nodiscard]] Location location() const { return location_; }
     [[nodiscard]] std::string_view name() const { return name_; }
+    [[nodiscard]] bool is_extern() const { return is_extern_; }
     [[nodiscard]] Param param(ParamRef ref) const { return params_[ref]; }
     [[nodiscard]] IndexSpan<const Param, ParamRef> params() const {
         return params_.data();
@@ -308,6 +309,7 @@ public:
 private:
     Location location_;
     std::string_view name_;
+    bool is_extern_ = false;
     IndexVector<Param, ParamRef> params_;
     types::SpecType return_type_;
     IndexVector<Inst, InstRef> insts_;

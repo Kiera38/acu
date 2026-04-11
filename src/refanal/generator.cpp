@@ -29,7 +29,10 @@ public:
         const semanal::AnalyzedFunc& afunc,
         const ::acu::ir::Func& sfunc
     )
-        : amod_(&amod), afunc_(&afunc), sfunc_(&sfunc), rfunc_(sfunc.name()) {}
+        : amod_(&amod),
+          afunc_(&afunc),
+          sfunc_(&sfunc),
+          rfunc_(sfunc.name(), sfunc.is_extern()) {}
 
     ir::Func generate() {
         const auto& sparams = sfunc_->params();
@@ -645,7 +648,7 @@ public:
 };
 
 ir::Module generate(semanal::AnalyzedModule& analyzed_module) {
-    ir::Module rmod (analyzed_module.ir_module.types());
+    ir::Module rmod(analyzed_module.ir_module.types());
     for (const auto& afunc : analyzed_module.analyzed_funcs) {
         const auto& sfunc = analyzed_module.ir_module.func(afunc.ref);
         FuncGenerator fg(analyzed_module, afunc, sfunc);

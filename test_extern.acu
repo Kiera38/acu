@@ -1,0 +1,5 @@
+extern func puts(s: Ptr[UInt8]) Int32
+extern func getchar() Int32
+
+func main():
+    puts("Hello, world!" as Ptr[UInt8])

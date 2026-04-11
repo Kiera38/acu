@@ -388,7 +388,7 @@ std::string to_string(
     );
 }
 
-std::string to_string(const Stmt::Use& use, acu::Location location = {}) {
+std::string to_string(const Use& use, acu::Location location = {}) {
     std::string module_str = join_vector(
         use.module_name, ".", [](const auto& name) { return std::string(name); }
     );
@@ -398,7 +398,7 @@ std::string to_string(const Stmt::Use& use, acu::Location location = {}) {
 }
 
 std::string to_string(
-    const Stmt::FromUse& from_use, acu::Location location = {}
+    const FromUse& from_use, acu::Location location = {}
 ) {
     std::string module_str =
         join_vector(from_use.module_name, ".", [](const auto& name) {
@@ -459,7 +459,7 @@ std::string to_string(const Stmt& stmt) {
     });
 }
 
-std::string to_string(const Func& func) {
+std::string to_string(const Func& func, acu::Location location = {}) {
     std::string name_str = std::string(func.name);
     std::string args_str = join_vector(func.args, ",\n", [](const auto& arg) {
         return indent_string(to_string(arg), 2);
@@ -470,18 +470,20 @@ std::string to_string(const Func& func) {
     std::string return_type_str =
         func.return_type ? indent_string(to_string(*func.return_type), 2)
                          : "None";
-    std::string body_str = indent_string(to_string(*func.body), 2);
+    std::string body_str =
+        func.body ? indent_string(to_string(*func.body), 2) : "None";
     return std::format(
-        "Func(\n  {},\n  [{}],\n  {},\n  {}\n) @ {}",
+        "Func(\n  {},\n  {}[{}],\n  {},\n  {}\n) @ {}",
         name_str,
+        func.is_extern ? "extern, " : "",
         args_str,
         return_type_str,
         body_str,
-        location_to_string(func.location)
+        location_to_string(location)
     );
 }
 
-std::string to_string(const Struct& struct_def) {
+std::string to_string(const Struct& struct_def, acu::Location location = {}) {
     std::string fields =
         join_vector(struct_def.fields, ",\n", [](const StructField& field) {
             return indent_string(to_string(field));
@@ -490,24 +492,28 @@ std::string to_string(const Struct& struct_def) {
         "Struct(\n  {},\n[{}]\n) @ {}",
         struct_def.name,
         fields,
-        location_to_string(struct_def.location)
+        location_to_string(location)
     );
 }
 
 std::string to_string(const Module& module) {
-    std::string imports =
-        join_vector(module.imports, ",\n", [](const auto& stmt) {
-            return indent_string(to_string(*stmt));
+    std::string items =
+        join_vector(module.items, ",\n", [](const Item& item) {
+            return item.data.visit(
+                [&item](const Use& use) {
+                    return indent_string(to_string(use, item.location));
+                },
+                [&item](const FromUse& from_use) {
+                    return indent_string(to_string(from_use, item.location));
+                },
+                [&item](const Func& func) {
+                    return indent_string(to_string(func, item.location));
+                },
+                [&item](const Struct& struct_def) {
+                    return indent_string(to_string(struct_def, item.location));
+                }
+            );
         });
-    std::string funcs = join_vector(module.funcs, ",\n", [](const Func& func) {
-        return indent_string(to_string(func));
-    });
-    std::string structs =
-        join_vector(module.structs, ",\n", [](const Struct& struct_def) {
-            return indent_string(to_string(struct_def));
-        });
-    return std::format(
-        "Module(\n  [{}],\n  [{}],\n  [{}]\n)", imports, funcs, structs
-    );
+    return std::format("Module(\n  [{}]\n)", items);
 }
 }

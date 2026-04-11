@@ -211,6 +211,7 @@ struct FuncArg {
 };
 
 struct Func {
+    bool is_extern = false;
     std::string_view name;
     std::vector<FuncArg> args;
     std::unique_ptr<Expr> return_type;

@@ -10,6 +10,7 @@
 namespace acu::parser {
 enum class TokenType : std::uint8_t {
     Func,
+    Extern,
     If,
     Else,
     While,
@@ -40,7 +41,6 @@ enum class TokenType : std::uint8_t {
     StarEqual,
     SlashEqual,
     PercentEqual,
-
     Less,
     LessEqual,
     Greater,

@@ -157,11 +157,11 @@ struct TypeVar {
                             pool.to_string(*type)
                         )
                     );
-                } else{
-                    type = {*unified, type->specifier};
+                } else {
+                    type = {.type = *unified, .specifier = type->specifier};
                 }
             } else {
-                type = {tp, types::Specifier::None};
+                type = {.type = tp, .specifier = types::Specifier::None};
                 define_loc = loc;
             }
         }
@@ -212,7 +212,13 @@ struct TypeVar {
         const types::TypePool& pool,
         ErrorHandler& err_handler
     ) {
-        lock({.type=tp, .specifier=types::Specifier::None}, loc, source, pool, err_handler);
+        lock(
+            {.type = tp, .specifier = types::Specifier::None},
+            loc,
+            source,
+            pool,
+            err_handler
+        );
     }
 
     types::TypeId union_tp(
@@ -225,14 +231,14 @@ struct TypeVar {
         if (other.type.has_value()) {
             return add_type(other.type->type, loc, source, pool, err_handler);
         }
-        return type->type;
+        return type.has_value() ? type->type : types::None;
     }
 
     [[nodiscard]] bool defined() const { return type.has_value(); }
 
     [[nodiscard]] types::SpecType get() const {
         if (!type.has_value()) {
-            return {.type=types::None, .specifier=types::Specifier::None};
+            return {.type = types::None, .specifier = types::Specifier::None};
         }
         return *type;
     }
@@ -266,11 +272,14 @@ public:
         func_type_id_ = module.func_type(func_ref);
         const auto& type = module.types().get(func_type_id_);
         if (!type.data.is<types::Type::Func>()) {
-            throw std::runtime_error("Internal error: Function type is not a Func type");
+            throw std::runtime_error(
+                "Internal error: Function type is not a Func type"
+            );
         }
     }
 
     [[nodiscard]] ir::FuncRef func_ref() const { return func_ref_; }
+    [[nodiscard]] bool is_extern() const { return func_->is_extern(); }
 
     [[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types() const {
         IndexVector<types::SpecType, ir::InstRef> result;
@@ -278,11 +287,16 @@ public:
             const auto& var = type_vars_.vars[i];
             if (!var.defined()) {
                 err_handler_->error(
-                    func_->inst(ir::InstRef {static_cast<std::uint32_t>(i.index)})
+                    func_
+                        ->inst(
+                            ir::InstRef {static_cast<std::uint32_t>(i.index)}
+                        )
                         .location,
                     "Type variable not defined (inference failed)"
                 );
-                result.push_back({.type=types::None, .specifier=types::Specifier::None});
+                result.push_back(
+                    {.type = types::None, .specifier = types::Specifier::None}
+                );
             } else {
                 result.push_back(var.get());
             }
@@ -293,7 +307,9 @@ public:
     bool propagate() {
         changed_ = false;
         current_inst_ = 0;
-        propagate_range(ir::Block{.start=ir::InstRef{0}, .end=func_->last_inst()});
+        propagate_range(
+            ir::Block {.start = ir::InstRef {0}, .end = func_->last_inst()}
+        );
         return changed_;
     }
 
@@ -322,7 +338,11 @@ private:
                     [&](char32_t) { return types::UInt32; },
                     [&](std::string_view v) {
                         return type_pool_->add_array(
-                            {.type=types::UInt8, .specifier=types::Specifier::Val}, v.size()
+                            {
+                                .type = types::UInt8,
+                                .specifier = types::Specifier::Val,
+                            },
+                            v.size() + 1
                         );
                     },
                     [&](ir::FuncRef func_ref) {
@@ -510,7 +530,9 @@ private:
             [&](const ir::Inst::Return& data) {
                 if (data.value.has_value()) {
                     add_type(
-                        *data.value, get_func_type().return_type.type, inst.location
+                        *data.value,
+                        get_func_type().return_type.type,
+                        inst.location
                     );
                 }
                 lock_type(ref, types::Nothing, inst.location);
@@ -642,18 +664,22 @@ private:
 
     void add_type(ir::InstRef inst, types::TypeId type, Location loc) {
         auto& tv = type_vars_[inst];
+        bool previously_defined = tv.defined();
+        auto previous_type = tv.get().type;
         auto tp = tv.add_type(type, loc, *source_, *type_pool_, *err_handler_);
-        if (!tv.defined() || tp != tv.get().type) {
+        if (!previously_defined || tp != previous_type) {
             changed_ = true;
         }
     }
 
     void copy_type(ir::InstRef src, ir::InstRef dest, Location loc) {
         auto& tv = type_vars_[dest];
+        bool previously_defined = tv.defined();
+        auto previous_type = tv.get().type;
         auto tp = tv.union_tp(
             type_vars_[src], loc, *source_, *type_pool_, *err_handler_
         );
-        if (!tv.defined() || tp != tv.get().type) {
+        if (!previously_defined || tp != previous_type) {
             changed_ = true;
         }
     }
@@ -697,6 +723,13 @@ AnalyzedModule type_analyze(
     while (!analyzers.empty()) {
         auto analyzer = std::move(analyzers.front());
         analyzers.pop_front();
+        if (analyzer.is_extern()) {
+            result.analyzed_funcs.push_back({
+                .ref = analyzer.func_ref(),
+                .inst_types = {},
+            });
+            continue;
+        }
         if (analyzer.propagate()) {
             analyzers.push_back(std::move(analyzer));
         } else {
