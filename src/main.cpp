@@ -1,4 +1,6 @@
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include <llvm/Support/raw_ostream.h>
@@ -15,34 +17,19 @@
 #include "codegen/generator.h"
 #include "codegen/jit.h"
 
-int main() {
+int main(int argc, char** argv) {
     acu::Source source;
     source.module_name = "test";
     source.path = "test.acu";
     source.content = R"(
 func main() Int:
-    a = [10, 100, 30, 7]
-    s = "hello"
-    c = 'A'
-    bubble_sort(a as Ptr[Int], 4)
-    return 0
-
-
-func bubble_sort(a: Ptr[Int], n: Int):
-    let i = 0
-    while i < n -1:
-        swapped = false
-        j = 0
-        while j < n-i-1:
-            if a[j] > a[j+1]:
-                t = a[j+1]
-                a[j+1] = a[j]
-                a[j] = t
-                swapped = true
-            j+=1
-        if not swapped:
-            break
-        i+=1
+    let a = 10
+    let b = 20
+    let c = 30
+    let res = a * (b + c)
+    let p = &a
+    let value = p.*
+    return res
 )";
 
     acu::ErrorHandler err_handler;

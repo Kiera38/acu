@@ -41,7 +41,8 @@ void ErrorHandler::emit_all(const Source& source) const {
         );
 
         // Snippet extraction
-        std::size_t line_start = source.content.rfind('\n', err.location.start);
+        auto start = source.content[err.location.start] == '\n' ? err.location.start - 1 : err.location.start;
+        std::size_t line_start = source.content.rfind('\n', start);
         if (line_start == std::string::npos) {
             line_start = 0;
         } else {
@@ -52,6 +53,9 @@ void ErrorHandler::emit_all(const Source& source) const {
         if (line_end == std::string::npos) {
             line_end = source.content.size();
         }
+        if(line_end <= line_start) {
+            line_end = line_start + 1;
+        }
 
         std::string_view line = std::string_view(source.content)
                                     .substr(line_start, line_end - line_start);
@@ -59,7 +63,7 @@ void ErrorHandler::emit_all(const Source& source) const {
 
         // Caret
         std::uint32_t column =
-            err.location.start - static_cast<std::uint32_t>(line_start);
+            start - static_cast<std::uint32_t>(line_start);
         std::string caret(column, ' ');
         caret += color_code;
         caret += "^";
