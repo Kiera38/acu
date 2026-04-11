@@ -2,13 +2,13 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/Support/raw_ostream.h>
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "codegen/generator.h"
@@ -24,7 +24,7 @@
 #include "semanal/semanal.h"
 #include "source.h"
 
-enum class RunMode { Jit, Compile };
+enum class RunMode : std::uint8_t { Jit, Compile };
 
 struct Config {
     std::filesystem::path input_path;
@@ -57,9 +57,13 @@ void print_help(const char* prog_name) {
               << "  -h, --help        Show this help message\n";
 }
 
-std::optional<Config> parse_args(int argc, char** argv) {
+std::optional<Config> parse_args(std::span<char*> argv) {
     Config config;
-    std::vector<std::string> args(argv + 1, argv + argc);
+    std::vector<std::string> args;
+    args.reserve(argv.size()-1);
+    for (auto arg : argv) {
+        args.emplace_back(arg);
+    }
 
     if (args.empty()) {
         print_help(argv[0]);
@@ -222,7 +226,7 @@ std::unique_ptr<llvm::Module> generate_llvm(
     const Config& config,
     std::optional<llvm::DataLayout> layout
 ) {
-    auto llvm_module = acu::codegen::generate(context, module, layout);
+    auto llvm_module = acu::codegen::generate(context, module, std::move(layout));
     if (config.show_llvm) {
         std::cout << "\nLLVM IR\n";
         llvm_module->print(llvm::outs(), nullptr);
@@ -291,7 +295,7 @@ void codegen(
 }
 
 int main(int argc, char** argv) {
-    auto config = parse_args(argc, argv);
+    auto config = parse_args({argv, static_cast<std::size_t>(argc)});
     if (!config) {
         return 1;
     }

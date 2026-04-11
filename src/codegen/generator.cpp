@@ -32,15 +32,15 @@ public:
         const refanal::ir::Module& module,
         const llvm::DataLayout& layout
     )
-        : context_(context), ir_module_(module), layout_(layout) {}
+        : context_(&context), ir_module_(&module), layout_(&layout) {}
 
     std::unique_ptr<llvm::Module> generate() {
-        llvm_module_ = std::make_unique<llvm::Module>("acu_module", context_);
-        llvm_module_->setDataLayout(layout_);
+        llvm_module_ = std::make_unique<llvm::Module>("acu_module", *context_);
+        llvm_module_->setDataLayout(*layout_);
 
         functions_.clear();
-        functions_.reserve(ir_module_.funcs().size());
-        for (const auto& ir_func : ir_module_.funcs()) {
+        functions_.reserve(ir_module_->funcs().size());
+        for (const auto& ir_func : ir_module_->funcs()) {
             std::vector<llvm::Type*> param_types;
             for (const auto& param : ir_func.params())
                 param_types.push_back(get_rep_type(param.type));
@@ -56,9 +56,9 @@ public:
                 )
             );
         }
-        for (auto i : ir_module_.funcs().indices()) {
-            if (!ir_module_.func(i).is_extern()) {
-                generate_func(ir_module_.func(i), functions_[i]);
+        for (auto i : ir_module_->funcs().indices()) {
+            if (!ir_module_->func(i).is_extern()) {
+                generate_func(ir_module_->func(i), functions_[i]);
             }
         }
         return std::move(llvm_module_);
@@ -70,37 +70,37 @@ private:
     );
 
     llvm::Type* get_base_type(types::TypeId type_id) {
-        const auto& t = ir_module_.types().get(type_id);
+        const auto& t = ir_module_->types().get(type_id);
         return t.data.visit(
             [&](const types::Type::None&) -> llvm::Type* {
-                return llvm::Type::getVoidTy(context_);
+                return llvm::Type::getVoidTy(*context_);
             },
             [&](const types::Type::Nothing&) -> llvm::Type* {
-                return llvm::Type::getVoidTy(context_);
+                return llvm::Type::getVoidTy(*context_);
             },
             [&](const types::Type::Bool&) -> llvm::Type* {
-                return llvm::Type::getInt1Ty(context_);
+                return llvm::Type::getInt1Ty(*context_);
             },
             [&](const types::Type::Int& i) -> llvm::Type* {
-                return llvm::Type::getIntNTy(context_, i.bits);
+                return llvm::Type::getIntNTy(*context_, i.bits);
             },
             [&](const types::Type::Float& f) -> llvm::Type* {
                 return (f == types::Type::Float::F32)
-                           ? llvm::Type::getFloatTy(context_)
-                           : llvm::Type::getDoubleTy(context_);
+                           ? llvm::Type::getFloatTy(*context_)
+                           : llvm::Type::getDoubleTy(*context_);
             },
             [&](const types::Type::Ptr&) -> llvm::Type* {
-                return llvm::PointerType::get(context_, 0);
+                return llvm::PointerType::get(*context_, 0);
             },
             [&](const types::Type::Func&) -> llvm::Type* {
-                return llvm::PointerType::get(context_, 0);
+                return llvm::PointerType::get(*context_, 0);
             },
             [&](const types::Type::Array& a) -> llvm::Type* {
                 return llvm::ArrayType::get(get_rep_type(a.item), a.length);
             },
             [&](const types::Type::Struct& s) -> llvm::Type* {
                 if (auto* st =
-                        llvm::StructType::getTypeByName(context_, s.name)) {
+                        llvm::StructType::getTypeByName(*context_, s.name)) {
                     return st;
                 }
                 std::vector<llvm::Type*> fields;
@@ -108,10 +108,10 @@ private:
                 for (const auto& f : s.fields) {
                     fields.push_back(get_rep_type(f.type));
                 }
-                return llvm::StructType::create(context_, fields, s.name);
+                return llvm::StructType::create(*context_, fields, s.name);
             },
             [&](const auto&) -> llvm::Type* {
-                return llvm::Type::getVoidTy(context_);
+                return llvm::Type::getVoidTy(*context_);
             }
         );
     }
@@ -119,16 +119,16 @@ private:
     llvm::Type* get_rep_type(types::SpecType st) {
         llvm::Type* base = get_base_type(st.type);
         if (st.specifier == types::Specifier::Var)
-            return llvm::PointerType::get(context_, 0);
+            return llvm::PointerType::get(*context_, 0);
         if (st.specifier == types::Specifier::Let && !is_small(base))
-            return llvm::PointerType::get(context_, 0);
+            return llvm::PointerType::get(*context_, 0);
         return base;
     }
 
     bool is_small(llvm::Type* type) {
         if (type->isVoidTy()) return true;
         if (!type->isSized()) return false;
-        return layout_.getTypeAllocSize(type) <= 16;
+        return layout_->getTypeAllocSize(type) <= 16;
     }
 
     bool is_ref(types::SpecType st) {
@@ -137,9 +137,9 @@ private:
                 !is_small(get_base_type(st.type)));
     }
 
-    llvm::LLVMContext& context_;
-    const refanal::ir::Module& ir_module_;
-    const llvm::DataLayout& layout_;
+    llvm::LLVMContext* context_;
+    const refanal::ir::Module* ir_module_;
+    const llvm::DataLayout* layout_;
     std::unique_ptr<llvm::Module> llvm_module_;
     IndexVector<llvm::Function*, refanal::ir::FuncRef> functions_;
 
@@ -156,7 +156,7 @@ public:
         : generator(&generator),
           ir_func(&ir_func),
           llvm_func(&llvm_func),
-          builder_(generator.context_) {}
+          builder_(*generator.context_) {}
 
     void generate() {
         if (ir_func->blocks().empty()) return;
@@ -164,7 +164,7 @@ public:
         for (auto i : ir_func->blocks().indices()) {
             blocks_.push_back(
                 llvm::BasicBlock::Create(
-                    generator->context_,
+                    *generator->context_,
                     "block" + std::to_string(i.index),
                     llvm_func
                 )
@@ -207,7 +207,7 @@ private:
                 return c.value.visit(
                     [&](bool b) -> llvm::Value* {
                         return llvm::ConstantInt::get(
-                            llvm::Type::getInt1Ty(generator->context_), b
+                            llvm::Type::getInt1Ty(*generator->context_), b
                         );
                     },
                     [&](std::int64_t i) -> llvm::Value* {
@@ -222,7 +222,7 @@ private:
                     },
                     [&](char32_t ch) -> llvm::Value* {
                         return llvm::ConstantInt::get(
-                            llvm::Type::getInt32Ty(generator->context_), ch
+                            llvm::Type::getInt32Ty(*generator->context_), ch
                         );
                     },
                     [&](std::string_view s) -> llvm::Value* {
@@ -370,7 +370,7 @@ private:
                 if (auto* f = t.data.get_if<types::Type::Func>()) {
                     func_type_info = f;
                 } else if (auto* p = t.data.get_if<types::Type::Ptr>()) {
-                    func_type_info = generator->ir_module_.types()
+                    func_type_info = generator->ir_module_->types()
                                          .get(p->type.type)
                                          .data.get_if<types::Type::Func>();
                 }
@@ -425,8 +425,8 @@ private:
                     return get_value(cast.value, inst.type.specifier);
                 }
                 auto& from_type =
-                    generator->ir_module_.types().get(from_type_id);
-                auto& to_type = generator->ir_module_.types().get(to_type_id);
+                    generator->ir_module_->types().get(from_type_id);
+                auto& to_type = generator->ir_module_->types().get(to_type_id);
                 if (from_type.data.is<types::Type::Array>() &&
                     to_type.data.is<types::Type::Ptr>()) {
                     return get_value(cast.value, types::Specifier::Var);
@@ -509,7 +509,7 @@ private:
                 llvm::Type* st = get_base_type(cs.struct_type);
                 llvm::Value* sv = llvm::UndefValue::get(st);
                 auto args = ir_func->inst_refs(cs.args);
-                const auto& struct_def = generator->ir_module_.types()
+                const auto& struct_def = generator->ir_module_->types()
                                              .get(cs.struct_type)
                                              .data.get<types::Type::Struct>();
                 for (uint32_t i = 0; i < args.size(); ++i) {
@@ -649,7 +649,7 @@ private:
 
     const types::Type& get_type(const refanal::ir::Inst& inst) {
         types::TypeId type = inst.type.type;
-        return generator->ir_module_.types().get(type);
+        return generator->ir_module_->types().get(type);
     }
 
     llvm::Value* get_value(refanal::ir::InstRef ref, types::Specifier spec) {
