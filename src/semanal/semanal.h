@@ -1,5 +1,6 @@
 #pragma once
 
+#include <span>
 #include "../index.h"
 #include "errors.h"
 #include "parser/nodes.h"
@@ -7,7 +8,14 @@
 #include "semanal/types.h"
 
 namespace acu::semanal {
-ir::Package resolve(const nodes::Module& module, ErrorHandler& err_handler);
+struct ModuleInfo {
+    const Source* source;
+    const nodes::Module* module;
+};
+
+ir::Package resolve(
+    std::span<const ModuleInfo> modules, ErrorHandler& err_handler
+);
 
 struct AnalyzedFunc {
     ir::FuncRef ref{};
@@ -20,6 +28,6 @@ struct AnalyzedPackage {
 };
 
 AnalyzedPackage type_analyze(
-    ir::Package package, const Source& source, ErrorHandler& err_handler
+    ir::Package package, ErrorHandler& err_handler
 );
 }

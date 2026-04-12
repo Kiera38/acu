@@ -26,7 +26,7 @@
 enum class RunMode : std::uint8_t { Jit, Compile };
 
 struct Config {
-    std::filesystem::path input_path;
+    std::vector<std::filesystem::path> input_paths;
     std::filesystem::path output_path;
     llvm::OptimizationLevel opt_level = llvm::OptimizationLevel::O0;
     bool show_ast = false;
@@ -40,7 +40,7 @@ struct Config {
 namespace {
 
 void print_help(const char* prog_name) {
-    std::cout << "Usage: " << prog_name << " <input_file> [options]\n"
+    std::cout << "Usage: " << prog_name << " <input_files...> [options]\n"
               << "Options:\n"
               << "  -o <path>         Set output object file path\n"
               << "  -O0, -O1, -O2,\n"
@@ -59,7 +59,7 @@ void print_help(const char* prog_name) {
 std::optional<Config> parse_args(std::span<char*> argv) {
     Config config;
     std::vector<std::string_view> args;
-    args.reserve(argv.size()-1);
+    args.reserve(argv.size() - 1);
     for (auto arg : argv.subspan(1)) {
         args.emplace_back(arg);
     }
@@ -115,28 +115,24 @@ std::optional<Config> parse_args(std::span<char*> argv) {
             std::cerr << "Unknown option: " << arg << "\n";
             return std::nullopt;
         } else {
-            if (config.input_path.empty()) {
-                config.input_path = arg;
-            } else {
-                std::cerr << "Multiple input files specified: "
-                          << config.input_path << " and " << arg << "\n";
-                return std::nullopt;
-            }
+            config.input_paths.emplace_back(arg);
         }
     }
 
-    if (config.input_path.empty()) {
+    if (config.input_paths.empty()) {
         std::cerr << "Error: no input file specified\n";
         return std::nullopt;
     }
 
-    if (!std::filesystem::exists(config.input_path)) {
-        std::cerr << "Error: file not found: " << config.input_path << "\n";
-        return std::nullopt;
+    for (const auto& path : config.input_paths) {
+        if (!std::filesystem::exists(path)) {
+            std::cerr << "Error: file not found: " << path << "\n";
+            return std::nullopt;
+        }
     }
 
     if (config.mode == RunMode::Compile && config.output_path.empty()) {
-        config.output_path = config.input_path.stem().string() + ".o";
+        config.output_path = config.input_paths[0].stem().string() + ".o";
     }
     return config;
 }
@@ -163,35 +159,41 @@ std::optional<acu::nodes::Module> parse_module(
 ) {
     auto module = acu::parser::parse(source, err_handler);
     if (err_handler.has_errors()) {
-        err_handler.emit_all(source);
+        err_handler.emit_all();
         return std::nullopt;
     }
     if (show_ast) {
-        std::cout << "\nAST\n";
+        std::cout << "\nAST for " << source.module_name << "\n";
         std::cout << acu::nodes::to_string(module);
     }
     return module;
 }
 
 std::optional<acu::semanal::AnalyzedPackage> semanal(
-    const acu::nodes::Module& module,
-    const acu::Source& source,
+    const std::vector<acu::nodes::Module>& modules,
+    const std::vector<acu::Source>& sources,
     acu::ErrorHandler& err_handler,
     bool show_semanal
 ) {
-    auto ir_module = acu::semanal::resolve(module, err_handler);
+    std::vector<acu::semanal::ModuleInfo> mod_infos;
+    mod_infos.reserve(modules.size());
+    for (size_t i = 0; i < modules.size(); ++i) {
+        mod_infos.push_back({.source = &sources[i], .module = &modules[i]});
+    }
+
+    auto ir_package = acu::semanal::resolve(mod_infos, err_handler);
     if (err_handler.has_errors()) {
-        err_handler.emit_all(source);
+        err_handler.emit_all();
         return std::nullopt;
     }
     if (show_semanal) {
         std::cout << "\nSEMANAL IR\n";
-        std::cout << acu::ir::to_string(ir_module);
+        std::cout << acu::ir::to_string(ir_package);
     }
 
-    auto analyzed = acu::semanal::type_analyze(ir_module, source, err_handler);
+    auto analyzed = acu::semanal::type_analyze(ir_package, err_handler);
     if (err_handler.has_errors()) {
-        err_handler.emit_all(source);
+        err_handler.emit_all();
         return std::nullopt;
     }
     return analyzed;
@@ -199,7 +201,7 @@ std::optional<acu::semanal::AnalyzedPackage> semanal(
 
 std::optional<acu::refanal::ir::Module> refanal(
     acu::semanal::AnalyzedPackage& analyzed,
-    const acu::Source& source,
+    const std::vector<acu::Source>& sources,
     acu::ErrorHandler& err_handler,
     bool show_refanal
 ) {
@@ -207,7 +209,7 @@ std::optional<acu::refanal::ir::Module> refanal(
     acu::refanal::optimize(refanal_module, analyzed, err_handler);
 
     if (err_handler.has_errors()) {
-        err_handler.emit_all(source);
+        err_handler.emit_all();
         return std::nullopt;
     }
 
@@ -221,11 +223,11 @@ std::optional<acu::refanal::ir::Module> refanal(
 std::unique_ptr<llvm::Module> generate_llvm(
     llvm::LLVMContext& context,
     const acu::refanal::ir::Module& module,
-    const acu::Source& source,
     const Config& config,
     std::optional<llvm::DataLayout> layout
 ) {
-    auto llvm_module = acu::codegen::generate(context, module, std::move(layout));
+    auto llvm_module =
+        acu::codegen::generate(context, module, std::move(layout));
     if (config.show_llvm) {
         std::cout << "\nLLVM IR\n";
         llvm_module->print(llvm::outs(), nullptr);
@@ -239,11 +241,7 @@ std::unique_ptr<llvm::Module> generate_llvm(
     return llvm_module;
 }
 
-void run_jit(
-    const acu::refanal::ir::Module& module,
-    const acu::Source& source,
-    const Config& config
-) {
+void run_jit(const acu::refanal::ir::Module& module, const Config& config) {
     std::cout << "\nJIT EXECUTION\n";
     auto jit = acu::codegen::JIT::create();
     if (!jit) {
@@ -253,7 +251,7 @@ void run_jit(
 
     auto context = std::make_unique<llvm::LLVMContext>();
     auto llvm_module =
-        generate_llvm(*context, module, source, config, jit->get_data_layout());
+        generate_llvm(*context, module, config, jit->get_data_layout());
 
     if (auto err =
             jit->add_module(std::move(llvm_module), std::move(context))) {
@@ -270,16 +268,11 @@ void run_jit(
     }
 }
 
-void codegen(
-    const acu::refanal::ir::Module& module,
-    const acu::Source& source,
-    acu::ErrorHandler& err_handler,
-    const Config& config
-) {
+void codegen(const acu::refanal::ir::Module& module, const Config& config) {
     if (config.mode == RunMode::Compile) {
         auto context = std::make_unique<llvm::LLVMContext>();
         auto llvm_module =
-            generate_llvm(*context, module, source, config, std::nullopt);
+            generate_llvm(*context, module, config, std::nullopt);
         acu::codegen::emit_object_file(
             *llvm_module, config.output_path.string()
         );
@@ -288,7 +281,7 @@ void codegen(
                       << "\n";
         }
     } else {
-        run_jit(module, source, config);
+        run_jit(module, config);
     }
 }
 }
@@ -298,34 +291,44 @@ int main(int argc, char** argv) {
     if (!config) {
         return 1;
     }
-    auto source = read_file(config->input_path);
-    if (!source) {
-        return 1;
+
+    std::vector<acu::Source> sources;
+    for (const auto& path : config->input_paths) {
+        auto source = read_file(path);
+        if (!source) {
+            return 1;
+        }
+        sources.push_back(std::move(*source));
     }
+
     acu::ErrorHandler err_handler;
 
     try {
-        auto module = parse_module(*source, err_handler, config->show_ast);
-        if (!module) {
-            return 1;
+        std::vector<acu::nodes::Module> modules;
+        for (auto& source : sources) {
+            auto module = parse_module(source, err_handler, config->show_ast);
+            if (!module) {
+                return 1;
+            }
+            modules.push_back(std::move(*module));
         }
+
         auto analyzed =
-            semanal(*module, *source, err_handler, config->show_semanal);
+            semanal(modules, sources, err_handler, config->show_semanal);
         if (!analyzed) {
             return 1;
         }
+
         auto refanal_module =
-            refanal(*analyzed, *source, err_handler, config->show_refanal);
+            refanal(*analyzed, sources, err_handler, config->show_refanal);
         if (!refanal_module) {
             return 1;
         }
-        codegen(*refanal_module, *source, err_handler, *config);
+
+        codegen(*refanal_module, *config);
+
     } catch (const std::exception& e) {
-        if (err_handler.has_errors()) {
-            err_handler.emit_all(*source);
-        } else {
-            std::cerr << "Exception caught: " << e.what() << '\n';
-        }
+        std::cerr << "Exception caught: " << e.what() << '\n';
         return 1;
     } catch (...) {
         std::cerr << "Unknown exception caught!" << '\n';

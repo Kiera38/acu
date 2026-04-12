@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -42,12 +43,19 @@ std::size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
 
 class Context {
 public:
-    Context() { push(); }
+    Context(const Source& source) : source_(&source) { push(); }
 
     struct ScopeEntry {
-        utils::Variant<ir::InstRef, ir::ParamRef, ir::FuncRef, types::TypeId>
+        utils::Variant<
+            ir::InstRef,
+            ir::ParamRef,
+            ir::FuncRef,
+            types::TypeId,
+            std::string_view>
             data;
     };
+
+    [[nodiscard]] const Source& source() const { return *source_; }
 
     void push() { scopes_stack_.emplace_back(); }
 
@@ -78,46 +86,110 @@ public:
     }
 
 private:
+    const Source* source_;
     std::vector<std::unordered_map<std::string_view, ScopeEntry>> scopes_stack_;
 };
 
 std::uint8_t as_uint8(
-    std::string_view str, Location loc, ErrorHandler& err_handler
+    std::string_view str,
+    const Source& source,
+    Location loc,
+    ErrorHandler& err_handler
 ) {
     std::uint8_t result = 0;
     auto [ptr, err] =
         std::from_chars(str.data(), str.data() + str.length(), result);
     if (err != std::errc {}) {
-        err_handler.error(loc, "error in number");
+        err_handler.error(source, loc, "error in number");
     }
     return result;
 }
 
 class Resolver {
 public:
-    explicit Resolver(const nodes::Module& module, ErrorHandler& err_handler)
-        : module_(&module), err_handler_(&err_handler) {}
+    explicit Resolver(
+        std::span<const ModuleInfo> modules, ErrorHandler& err_handler
+    )
+        : modules_(modules), err_handler_(&err_handler) {}
 
     ir::Package resolve() {
-        for (const auto& item : module_->items) {
-            item.data.visit(
-                [&](const nodes::Func& func) {
-                    create_func_def(func, item.location);
-                },
-                [&](const nodes::Struct& struct_def) {
-                    create_struct_def(struct_def, item.location);
-                },
-                [&](const auto&) {}
-            );
+        for (const auto& mod : modules_) {
+            module_contexts_.insert({mod.source->module_name, Context(*mod.source)});
+            context_ = &module_contexts_.at(mod.source->module_name);
+            for (const auto& item : mod.module->items) {
+                item.data.visit(
+                    [&](const nodes::Func& func) {
+                        create_func_def(func, item.location);
+                    },
+                    [&](const nodes::Struct& struct_def) {
+                        create_struct_def(struct_def, item.location);
+                    },
+                    [&](const auto&) {}
+                );
+            }
         }
-        for (const auto& item : module_->items) {
-            item.data.visit(
-                [&](const nodes::Func& func) { resolve_func_def(func); },
-                [&](const nodes::Struct& struct_def) {
-                    resolve_struct_def(struct_def);
-                },
-                [&](const auto&) {}
-            );
+
+        for (const auto& mod : modules_) {
+            context_ = &module_contexts_.at(mod.source->module_name);
+
+            for (const auto& item : mod.module->items) {
+                item.data.visit(
+                    [&](const nodes::Use& use) {
+                        if (use.module_name.size() == 1) {
+                            auto name = use.module_name[0];
+                            if (module_contexts_.contains(name)) {
+                                context_->add(name, {name});
+                            } else {
+                                err_handler_->error(
+                                    context_->source(),
+                                    item.location,
+                                    std::format("module '{}' not found", name)
+                                );
+                            }
+                        }
+                    },
+                    [&](const nodes::FromUse& use) {
+                        if (use.module_name.size() == 1) {
+                            auto mod_name = use.module_name[0];
+                            if (auto it = module_contexts_.find(mod_name);
+                                it != module_contexts_.end()) {
+                                for (const auto& item : use.items) {
+                                    if (auto entry =
+                                            it->second.find(item.name)) {
+                                        context_->add(
+                                            item.alias.value_or(item.name),
+                                            *entry
+                                        );
+                                    } else {
+                                        err_handler_->error(
+                                            context_->source(),
+                                            item.location,
+                                            std::format(
+                                                "name '{}' not found in "
+                                                "module '{}'",
+                                                item.name,
+                                                mod_name
+                                            )
+                                        );
+                                    }
+                                }
+                            } else {
+                                err_handler_->error(
+                                    context_->source(),
+                                    item.location,
+                                    std::format(
+                                        "module '{}' not found", mod_name
+                                    )
+                                );
+                            }
+                        }
+                    },
+                    [&](const nodes::Func& func) { resolve_func_def(func); },
+                    [&](const nodes::Struct& struct_def) {
+                        resolve_struct_def(struct_def);
+                    }
+                );
+            }
         }
 
         return std::move(ir_package_);
@@ -125,7 +197,7 @@ public:
 
 private:
     std::string suggest_similar_name(std::string_view name) {
-        auto names = context_.get_all_names();
+        auto names = context_->get_all_names();
         static constexpr std::array<std::string_view, 18> builtins = {
             "Int",
             "Int8",
@@ -173,13 +245,14 @@ private:
     ) {
         auto type_id = ir_package_.types().add_struct({
             .name = struct_node.name,
+            .source = &context_->source(),
             .location = location,
         });
-        context_.add(struct_node.name, {type_id});
+        context_->add(struct_node.name, {type_id});
     }
 
     void resolve_struct_def(const nodes::Struct& struct_node) {
-        auto type_id_it = context_.find(struct_node.name);
+        auto type_id_it = context_->find(struct_node.name);
         if (type_id_it != nullptr) {
             auto type_id = type_id_it->data.get<types::TypeId>();
             std::vector<types::Type::StructField> fields;
@@ -196,15 +269,18 @@ private:
     }
 
     void create_func_def(const nodes::Func& func_node, Location location) {
-        ir::Func ir_func(func_node.name, location, func_node.is_extern);
+        ir::Func ir_func(
+            func_node.name, context_->source(), location, func_node.is_extern
+        );
         auto func_ref = ir_package_.add(std::move(ir_func));
-        context_.add(func_node.name, {func_ref});
+        context_->add(func_node.name, {func_ref});
     }
 
     void resolve_func_def(const nodes::Func& func_node) {
-        auto* entry = context_.find(func_node.name);
+        auto* entry = context_->find(func_node.name);
         if (entry) {
-            ir::Func& ir_func = ir_package_.func(entry->data.get<ir::FuncRef>());
+            ir::Func& ir_func =
+                ir_package_.func(entry->data.get<ir::FuncRef>());
             std::vector<ir::Param> ir_params;
             ir_params.reserve(func_node.args.size());
             for (const auto& arg : func_node.args) {
@@ -213,6 +289,7 @@ private:
                     if (param_type.specifier != types::Specifier::None &&
                         param_type.specifier != types::Specifier::Val) {
                         err_handler_->error(
+                            context_->source(),
                             arg.location,
                             "in extern function all parameters must have 'val' "
                             "specifier"
@@ -231,6 +308,7 @@ private:
                     if (return_type.specifier != types::Specifier::None &&
                         return_type.specifier != types::Specifier::Val) {
                         err_handler_->error(
+                            context_->source(),
                             func_node.return_type->location,
                             "in extern function return type must have val "
                             "specifier"
@@ -244,29 +322,49 @@ private:
             ir_func.set_type(ir_params, return_type);
 
             if (!func_node.is_extern && func_node.body) {
-                context_.push();
+                context_->push();
                 for (size_t i = 0; i < ir_params.size(); ++i) {
-                    context_.add(
+                    context_->add(
                         func_node.args[i].name,
                         {ir::ParamRef {static_cast<std::uint32_t>(i)}}
                     );
                 }
                 resolve_stmt(*func_node.body, ir_func);
-                context_.pop();
+                context_->pop();
             }
         }
+    }
+
+    const Context::ScopeEntry* find_in_module(
+        std::string_view module_name, std::string_view item_name
+    ) {
+        if (auto entry = context_->find(module_name)) {
+            if (auto* mod_name_ptr = entry->data.get_if<std::string_view>()) {
+                auto mod_name = *mod_name_ptr;
+                if (auto it = module_contexts_.find(mod_name);
+                    it != module_contexts_.end()) {
+                    if (auto item_entry = it->second.find(item_name)) {
+                        return item_entry;
+                    }
+                }
+            }
+        }
+        return nullptr;
     }
 
     types::SpecType resolve_type(const nodes::Expr& expr) {
         return expr.value.visit(
             [&](const nodes::Expr::Name& name) -> types::SpecType {
-                if (auto type = context_.find(name.name)) {
+                if (auto type = context_->find(name.name)) {
                     return {.type = type->data.get<types::TypeId>()};
                 } else {
                     if (name.name.starts_with("Int")) {
                         if (name.name == "Int") return {.type = types::Int};
                         auto bits = as_uint8(
-                            name.name.substr(3), expr.location, *err_handler_
+                            name.name.substr(3),
+                            context_->source(),
+                            expr.location,
+                            *err_handler_
                         );
                         switch (bits) {
                             case 8: return {.type = types::Int8};
@@ -275,14 +373,19 @@ private:
                             case 64: return {.type = types::Int64};
                             default:
                                 err_handler_->error(
-                                    expr.location, "unsupported integer size"
+                                    context_->source(),
+                                    expr.location,
+                                    "unsupported integer size"
                                 );
                                 return {.type = types::None};
                         }
                     } else if (name.name.starts_with("UInt")) {
                         if (name.name == "UInt") return {.type = types::UInt};
                         auto bits = as_uint8(
-                            name.name.substr(4), expr.location, *err_handler_
+                            name.name.substr(4),
+                            context_->source(),
+                            expr.location,
+                            *err_handler_
                         );
                         switch (bits) {
                             case 8: return {.type = types::UInt8};
@@ -291,21 +394,28 @@ private:
                             case 64: return {.type = types::UInt64};
                             default:
                                 err_handler_->error(
-                                    expr.location, "unsupported integer size"
+                                    context_->source(),
+                                    expr.location,
+                                    "unsupported integer size"
                                 );
                                 return {.type = types::None};
                         }
                     } else if (name.name.starts_with("Float")) {
                         if (name.name == "Float") return {.type = types::Float};
                         auto bits = as_uint8(
-                            name.name.substr(5), expr.location, *err_handler_
+                            name.name.substr(5),
+                            context_->source(),
+                            expr.location,
+                            *err_handler_
                         );
                         switch (bits) {
                             case 32: return {.type = types::Float32};
                             case 64: return {.type = types::Float64};
                             default:
                                 err_handler_->error(
-                                    expr.location, "unsupported float size"
+                                    context_->source(),
+                                    expr.location,
+                                    "unsupported float size"
                                 );
                                 return {.type = types::None};
                         }
@@ -317,6 +427,7 @@ private:
                         return {.type = types::Nothing};
                     }
                     err_handler_->error(
+                        context_->source(),
                         expr.location,
                         std::format("name '{}' not found", name.name),
                         suggest_similar_name(name.name)
@@ -329,7 +440,9 @@ private:
                 if (name.name == "Array") {
                     if (node.args.size() != 2) {
                         err_handler_->error(
-                            expr.location, "Array type has 2 parameters"
+                            context_->source(),
+                            expr.location,
+                            "Array type has 2 parameters"
                         );
                         return {.type = types::None};
                     }
@@ -338,11 +451,15 @@ private:
                         type.specifier = types::Specifier::Val;
                     }
                     auto length = get_int_const(*node.args[1]);
-                    return {.type = ir_package_.types().add_array(type, length)};
+                    return {
+                        .type = ir_package_.types().add_array(type, length)
+                    };
                 } else if (name.name == "Ptr") {
                     if (node.args.size() != 1) {
                         err_handler_->error(
-                            expr.location, "Ptr type has 1 parameter"
+                            context_->source(),
+                            expr.location,
+                            "Ptr type has 1 parameter"
                         );
                         return {.type = types::None};
                     }
@@ -352,7 +469,9 @@ private:
                     }
                     return {.type = ir_package_.types().add_ptr(type)};
                 } else {
-                    err_handler_->error(expr.location, "unknown type");
+                    err_handler_->error(
+                        context_->source(), expr.location, "unknown type"
+                    );
                     return {.type = types::None};
                 }
             },
@@ -371,8 +490,26 @@ private:
                     .specifier = specifier
                 };
             },
+            [&](const nodes::Expr::GetAttr& node) -> types::SpecType {
+                if (auto* name_node =
+                        node.value->value.get_if<nodes::Expr::Name>()) {
+                    if (auto item_entry =
+                            find_in_module(name_node->name, node.name)) {
+                        if (auto* type_id_ptr =
+                                item_entry->data.get_if<types::TypeId>()) {
+                            return {.type = *type_id_ptr};
+                        }
+                    }
+                }
+                err_handler_->error(
+                    context_->source(), expr.location, "expr is not a type"
+                );
+                return {.type = types::None};
+            },
             [&](const auto&) -> types::SpecType {
-                err_handler_->error(expr.location, "expr is not a type");
+                err_handler_->error(
+                    context_->source(), expr.location, "expr is not a type"
+                );
                 return {.type = types::None};
             }
         );
@@ -384,7 +521,9 @@ private:
                 return *val;
             }
         }
-        err_handler_->error(expr.location, "Expected integer constant");
+        err_handler_->error(
+            context_->source(), expr.location, "Expected integer constant"
+        );
         return 0;
     }
 
@@ -403,7 +542,7 @@ private:
                     .location = stmt.location,
                 });
 
-                context_.add(data.name, {var_ref});
+                context_->add(data.name, {var_ref});
                 if (data.init) {
                     auto value_ref = resolve_expr(*data.init, func);
                     func.add({
@@ -416,11 +555,11 @@ private:
                 }
             },
             [&](const nodes::Stmt::Block& data) {
-                context_.push();
+                context_->push();
                 for (const auto& stmt : data.stmts) {
                     resolve_stmt(*stmt, func);
                 }
-                context_.pop();
+                context_->pop();
             },
             [&](const nodes::Stmt::If& data) {
                 auto cond_ref = resolve_expr(*data.cond, func);
@@ -548,7 +687,7 @@ private:
     ) {
         return expr.value.visit(
             [&](const nodes::Expr::Name& node) {
-                if (auto var = context_.find(node.name)) {
+                if (auto var = context_->find(node.name)) {
                     auto ref = var->data.get<ir::InstRef>();
                     return func.add({
                         .data = ir::Inst::Store {.var = ref, .value = value},
@@ -559,7 +698,7 @@ private:
                         .data = ir::Inst::VarDecl {.name = node.name},
                         .location = expr.location,
                     });
-                    context_.add(node.name, {var_ref});
+                    context_->add(node.name, {var_ref});
                     return func.add({
                         .data =
                             ir::Inst::Store {.var = var_ref, .value = value},
@@ -579,20 +718,22 @@ private:
                 });
             },
             [&](const nodes::Expr::GetAttr& node) {
-                return func.add(
-                    {.data =
-                         ir::Inst::SetAttr {
-                             .var = resolve_expr(*node.value, func),
-                             .value = value,
-                             .name = node.name,
-                         },
-                     .location = expr.location}
-                );
+                return func.add({
+                    .data =
+                        ir::Inst::SetAttr {
+                            .var = resolve_expr(*node.value, func),
+                            .value = value,
+                            .name = node.name,
+                        },
+                    .location = expr.location,
+                });
             },
             [&](const auto&) -> ir::InstRef {
                 err_handler_->error(
+                    context_->source(),
                     expr.location,
-                    "cannot use this expression on the left side of assignment"
+                    "cannot use this expression on the left "
+                    "side of assignment"
                 );
                 return value;
             }
@@ -612,7 +753,7 @@ private:
                 });
             },
             [&](const nodes::Expr::Name& node) {
-                auto entry = context_.find(node.name);
+                auto entry = context_->find(node.name);
                 if (entry != nullptr) {
                     return func.add(entry->data.visit(
                         [&](ir::InstRef var_ref) -> ir::Inst {
@@ -649,6 +790,7 @@ private:
                     ));
                 } else {
                     err_handler_->error(
+                        context_->source(),
                         expr.location,
                         std::format("name '{}' not found", node.name),
                         suggest_similar_name(node.name)
@@ -768,6 +910,34 @@ private:
                 });
             },
             [&](const nodes::Expr::GetAttr& node) {
+                if (auto* name_node =
+                        node.value->value.get_if<nodes::Expr::Name>()) {
+                    if (auto item_entry =
+                            find_in_module(name_node->name, node.name)) {
+                        return func.add(item_entry->data.visit(
+                            [&](ir::FuncRef func_ref) -> ir::Inst {
+                                return {
+                                    .data = ir::Inst::Const {.value = func_ref},
+                                    .location = expr.location
+                                };
+                            },
+                            [&](types::TypeId struct_ref) -> ir::Inst {
+                                return {
+                                    .data =
+                                        ir::Inst::Const {.value = struct_ref},
+                                    .location = expr.location
+                                };
+                            },
+                            [&](const auto&) -> ir::Inst {
+                                throw std::runtime_error("");
+                                return {
+                                    .data = ir::Inst::Const {false},
+                                    .location = expr.location
+                                };
+                            }
+                        ));
+                    }
+                }
                 auto obj_ref = resolve_expr(*node.value, func);
                 return func.add({
                     .data =
@@ -800,7 +970,9 @@ private:
                 if (node.operands.size() < 2 || node.operators.size() < 1 ||
                     node.operands.size() != node.operators.size() + 1) {
                     err_handler_->error(
-                        expr.location, "Invalid comparison expression"
+                        context_->source(),
+                        expr.location,
+                        "Invalid comparison expression"
                     );
                     return func.add(ir::Inst {});
                 }
@@ -841,15 +1013,18 @@ private:
         );
     }
 
-    const nodes::Module* module_;
+    std::span<const ModuleInfo> modules_;
     ErrorHandler* err_handler_;
     ir::Package ir_package_;
-    Context context_;
+    std::unordered_map<std::string_view, Context> module_contexts_;
+    Context* context_ = nullptr;
 };
 }
 
-ir::Package resolve(const nodes::Module& module, ErrorHandler& err_handler) {
-    Resolver resolver(module, err_handler);
+ir::Package resolve(
+    std::span<const ModuleInfo> modules, ErrorHandler& err_handler
+) {
+    Resolver resolver(modules, err_handler);
     return resolver.resolve();
 }
 }

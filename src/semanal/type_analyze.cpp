@@ -135,6 +135,7 @@ struct TypeVar {
                         );
                     }
                     err_handler.error(
+                        source,
                         loc,
                         std::format(
                             "Type mismatch: cannot convert {} to {}",
@@ -150,6 +151,7 @@ struct TypeVar {
                 auto unified = unify(type->type, tp);
                 if (!unified.has_value()) {
                     err_handler.error(
+                        source,
                         loc,
                         std::format(
                             "Type mismatch: cannot unify {} and {}",
@@ -177,7 +179,9 @@ struct TypeVar {
     ) {
         if (locked) {
             err_handler.error(
-                loc, std::format("Internal error: Type variable already locked")
+                source,
+                loc,
+                std::format("Internal error: Type variable already locked")
             );
             return;
         }
@@ -189,6 +193,7 @@ struct TypeVar {
                 );
             }
             err_handler.error(
+                source,
                 loc,
                 std::format(
                     "Type mismatch: cannot convert {} to {}",
@@ -258,18 +263,15 @@ struct TypeVarMap {
 class TypeAnalyzer {
 public:
     TypeAnalyzer(
-        ir::Package& package,
-        const Source& source,
-        ir::FuncRef func_ref,
-        ErrorHandler& err_handler
+        ir::Package& package, ir::FuncRef func_ref, ErrorHandler& err_handler
     )
         : package_(&package),
-          source_(&source),
           type_pool_(&package.types()),
           func_ref_(func_ref),
           func_(&package.func(func_ref)),
           err_handler_(&err_handler) {
         func_type_id_ = package.func_type(func_ref);
+        source_ = &func_->source();
         const auto& type = package.types().get(func_type_id_);
         if (!type.data.is<types::Type::Func>()) {
             throw std::runtime_error(
@@ -287,11 +289,8 @@ public:
             const auto& var = type_vars_.vars[i];
             if (!var.defined()) {
                 err_handler_->error(
-                    func_
-                        ->inst(
-                            ir::InstRef {static_cast<std::uint32_t>(i.index)}
-                        )
-                        .location,
+                    *source_,
+                    func_->inst(i).location,
                     "Type variable not defined (inference failed)"
                 );
                 result.push_back(
@@ -389,6 +388,7 @@ private:
 
                         if (!ok) {
                             err_handler_->error(
+                                *source_,
                                 inst.location,
                                 std::format(
                                     "Type mismatch: binary operation "
@@ -407,6 +407,7 @@ private:
                 auto left_tp = type_vars_[data.left].type;
                 if (left_tp && !can_convert(left_tp->type, types::Bool)) {
                     err_handler_->error(
+                        *source_,
                         inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
@@ -418,6 +419,7 @@ private:
                     auto right_tp = type_vars_[data.right.end].type;
                     if (right_tp && !can_convert(right_tp->type, types::Bool)) {
                         err_handler_->error(
+                            *source_,
                             inst.location,
                             std::format(
                                 "Type mismatch: cannot convert '{}' to Bool",
@@ -433,6 +435,7 @@ private:
                     auto val_tp = type_vars_[data.value].type;
                     if (val_tp && !can_convert(val_tp->type, types::Bool)) {
                         err_handler_->error(
+                            *source_,
                             inst.location,
                             std::format(
                                 "Type mismatch: cannot convert '{}' to Bool",
@@ -485,6 +488,7 @@ private:
                                               arg_tp->type, ft->params[i].type
                                           )) {
                                 err_handler_->error(
+                                    *source_,
                                     inst.location,
                                     std::format(
                                         "Type mismatch: cannot convert "
@@ -512,6 +516,7 @@ private:
                 auto cond_tp = type_vars_[data.value].type;
                 if (cond_tp && !can_convert(cond_tp->type, types::Bool)) {
                     err_handler_->error(
+                        *source_,
                         inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
@@ -645,6 +650,7 @@ private:
                 if (from_tp.has_value() &&
                     !can_cast(from_tp->type, data.type.type, *type_pool_)) {
                     err_handler_->error(
+                        *source_,
                         inst.location,
                         std::format(
                             "Type mismatch: cannot explicitly cast {} to {}",
@@ -656,7 +662,9 @@ private:
             },
             [&](const auto& i) {
                 err_handler_->error(
-                    inst.location, "Internal error: Unknown instruction"
+                    *source_,
+                    inst.location,
+                    "Internal error: Unknown instruction"
                 );
             }
         );
@@ -711,14 +719,11 @@ private:
 };
 }
 
-AnalyzedPackage type_analyze(
-    ir::Package package, const Source& source, ErrorHandler& err_handler
-) {
+AnalyzedPackage type_analyze(ir::Package package, ErrorHandler& err_handler) {
     AnalyzedPackage result;
     std::deque<TypeAnalyzer> analyzers;
-    for (std::uint32_t i = 0; i < package.funcs().size(); ++i) {
-        ir::FuncRef ref {i};
-        analyzers.emplace_back(package, source, ref, err_handler);
+    for (auto func_ref : package.funcs().indices()) {
+        analyzers.emplace_back(package, func_ref, err_handler);
     }
     while (!analyzers.empty()) {
         auto analyzer = std::move(analyzers.front());

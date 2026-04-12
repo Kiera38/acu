@@ -45,6 +45,9 @@ struct SpecType {
     Specifier specifier = Specifier::None;
 
     bool operator==(const SpecType& other) const {
+        if(specifier == Specifier::None || other.specifier == Specifier::None) {
+            return type == other.type;
+        }
         return type == other.type && specifier == other.specifier;
     }
 };
@@ -81,6 +84,7 @@ struct Type {
     struct Struct {
         std::string_view name;
         std::vector<StructField> fields;
+        const Source* source;
         Location location;
     };
 

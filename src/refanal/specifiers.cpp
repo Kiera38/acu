@@ -119,6 +119,7 @@ void infer_specifiers(
                     return true;
                 } else {
                     err_handler.error(
+                        func.source(),
                         loc,
                         "cannot mutate immutable value",
                         std::string("this ") + std::string(context) +

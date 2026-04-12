@@ -15,6 +15,7 @@ public:
     explicit Lexer(Source& source, ErrorHandler& err_handler);
 
     Token next_token();
+    [[nodiscard]]const Source& source() {return *source_;}
 
 private:
     // Internal implementation methods

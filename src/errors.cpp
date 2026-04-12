@@ -5,7 +5,7 @@
 
 namespace acu {
 
-void ErrorHandler::emit_all(const Source& source) const {
+void ErrorHandler::emit_all() const {
     for (const auto& err : errors_) {
         std::string severity_str;
         std::string color_code;
@@ -30,7 +30,7 @@ void ErrorHandler::emit_all(const Source& source) const {
                 break;
         }
 
-        auto location_str = err.location.to_string(source);
+        auto location_str = err.location.to_string(*err.source);
         std::cerr << std::format(
             "{}: {}{}{}: {}\n",
             location_str,
@@ -41,29 +41,31 @@ void ErrorHandler::emit_all(const Source& source) const {
         );
 
         // Snippet extraction
-        auto start = source.content[err.location.start] == '\n' ? err.location.start - 1 : err.location.start;
-        std::size_t line_start = source.content.rfind('\n', start);
+        auto start = err.source->content[err.location.start] == '\n'
+                         ? err.location.start - 1
+                         : err.location.start;
+        std::size_t line_start = err.source->content.rfind('\n', start);
         if (line_start == std::string::npos) {
             line_start = 0;
         } else {
             line_start += 1;
         }
 
-        std::size_t line_end = source.content.find('\n', err.location.start);
+        std::size_t line_end =
+            err.source->content.find('\n', err.location.start);
         if (line_end == std::string::npos) {
-            line_end = source.content.size();
+            line_end = err.source->content.size();
         }
-        if(line_end <= line_start) {
+        if (line_end <= line_start) {
             line_end = line_start + 1;
         }
 
-        std::string_view line = std::string_view(source.content)
+        std::string_view line = std::string_view(err.source->content)
                                     .substr(line_start, line_end - line_start);
         std::cerr << " " << line << "\n";
 
         // Caret
-        std::uint32_t column =
-            start - static_cast<std::uint32_t>(line_start);
+        std::uint32_t column = start - static_cast<std::uint32_t>(line_start);
         std::string caret(column, ' ');
         caret += color_code;
         caret += "^";

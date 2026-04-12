@@ -226,8 +226,9 @@ struct Comparator {
 
 class Func {
 public:
-    Func(std::string_view name, Location location, bool is_extern = false)
-        : name_(name), location_(location), is_extern_(is_extern) {}
+    Func(std::string_view name, const Source& source, Location location, bool is_extern = false)
+        : name_(name), source_(&source), location_(location), is_extern_(is_extern) {}
+    [[nodiscard]] const Source& source() const { return *source_; }
     [[nodiscard]] Location location() const { return location_; }
     [[nodiscard]] std::string_view name() const { return name_; }
     [[nodiscard]] bool is_extern() const { return is_extern_; }
@@ -307,6 +308,7 @@ public:
     }
 
 private:
+    const Source* source_;
     Location location_;
     std::string_view name_;
     bool is_extern_ = false;
@@ -321,7 +323,7 @@ class Package {
 public:
     Package() = default;
     Func& func(FuncRef ref) { return funcs_[ref]; }
-    [[nodiscard]] std::span<const Func> funcs() const { return funcs_.data(); }
+    [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const { return funcs_.data(); }
     [[nodiscard]] const Func& func(FuncRef ref) const { return funcs_[ref]; }
 
     FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }

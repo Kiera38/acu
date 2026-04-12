@@ -33,7 +33,7 @@ public:
         : apackage_(&apackage),
           afunc_(&afunc),
           sfunc_(&sfunc),
-          rfunc_(sfunc.name(), sfunc.is_extern()) {}
+          rfunc_(sfunc.name(), sfunc.source(), sfunc.location(), sfunc.is_extern()) {}
 
     ir::Func generate() {
         const auto& sparams = sfunc_->params();

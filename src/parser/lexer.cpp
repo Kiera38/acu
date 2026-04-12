@@ -250,8 +250,9 @@ std::optional<Token> Lexer::check_indent() {
         }
 
         if (indent.length() > prev_indent.length()) {
-            if (indent.substr(0, prev_indent.length()) != prev_indent) {
+            if (!indent.starts_with(prev_indent)) {
                 err_handler_->error(
+                    *source_, 
                     make_token(TokenType::Error, start_byte_index).location,
                     "Incorrect indentation: inconsistent tabs and spaces"
                 );
@@ -267,6 +268,7 @@ std::optional<Token> Lexer::check_indent() {
         while (indent.length() < prev_indent.length()) {
             if (!prev_indent.starts_with(indent)) {
                 err_handler_->error(
+                    *source_, 
                     make_token(TokenType::Error, start_byte_index).location,
                     "Incorrect indentation: inconsistent tabs and spaces"
                 );
@@ -281,6 +283,7 @@ std::optional<Token> Lexer::check_indent() {
 
         if (indent.length() != prev_indent.length()) {
             err_handler_->error(
+                *source_, 
                 make_token(TokenType::Error, start_byte_index).location,
                 "Incorrect indentation size"
             );
@@ -289,6 +292,7 @@ std::optional<Token> Lexer::check_indent() {
 
         if (prev_indent != indent) {
             err_handler_->error(
+                *source_, 
                 make_token(TokenType::Error, start_byte_index).location,
                 "Incorrect indentation: inconsistent tabs and spaces"
             );
@@ -356,6 +360,7 @@ Token Lexer::number() {
             text += '.';
             if (is_float) {
                 err_handler_->error(
+                    *source_, 
                     make_token(TokenType::Error, start_byte_index).location,
                     "Invalid number: multiple decimal points"
                 );
@@ -475,6 +480,7 @@ Token Lexer::character() {
                 case U'\\': return U'\\';
                 default:
                     err_handler_->error(
+                        *source_, 
                         make_token(TokenType::Error, start_byte_index).location,
                         "Unknown escape sequence in character literal"
                     );
@@ -489,6 +495,7 @@ Token Lexer::character() {
 
     if (!match(U'\'')) {
         err_handler_->error(
+            *source_, 
             make_token(TokenType::Error, start_byte_index).location,
             "Unterminated character literal"
         );
@@ -529,6 +536,7 @@ Token Lexer::string() {
                 }
                 default:
                     err_handler_->error(
+                        *source_, 
                         make_token(TokenType::Error, start_byte_index).location,
                         "Unknown escape sequence in string literal"
                     );
@@ -547,6 +555,7 @@ Token Lexer::string() {
 
     if (at_end()) {
         err_handler_->error(
+            *source_, 
             make_token(TokenType::Error, start_byte_index).location,
             "Unterminated string literal"
         );
@@ -600,6 +609,7 @@ Token Lexer::operator_() {
     }
 
     err_handler_->error(
+        *source_,
         make_token(TokenType::Error, start_byte_index).location,
         "Unknown operator"
     );

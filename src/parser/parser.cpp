@@ -18,7 +18,7 @@ public:
 class Parser {
 public:
     Parser(Lexer& lexer, ErrorHandler& err_handler)
-        : err_handler_(&err_handler) {
+        : err_handler_(&err_handler), source_(&lexer.source()) {
         Token token = lexer.next_token();
         tokens_.push_back(token);
         while (token.type != TokenType::EndOfFile) {
@@ -57,7 +57,7 @@ public:
                 } else {
                     Token token = peek();
                     err_handler_->error(
-                        token.location, "Expected function or struct"
+                        *source_, token.location, "Expected function or struct"
                     );
                     synchronize_items();
                 }
@@ -69,6 +69,7 @@ public:
     }
 
 private:
+    const Source* source_;
     ErrorHandler* err_handler_;
     std::vector<Token> tokens_;
     std::size_t current_ = 0;
@@ -172,7 +173,7 @@ private:
             return next();
         }
         Token token = peek();
-        err_handler_->error(token.location, message);
+        err_handler_->error(*source_, token.location, message);
         throw ParseError(message);
     }
 
@@ -755,7 +756,7 @@ private:
                 );
             }
             default:
-                err_handler_->error(token.location, "expected expression");
+                err_handler_->error(*source_, token.location, "expected expression");
                 throw ParseError("expected expression");
         }
     }
