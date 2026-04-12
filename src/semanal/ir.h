@@ -317,9 +317,9 @@ private:
     std::vector<Comparator> comparators_;
 };
 
-class Module {
+class Package {
 public:
-    Module() = default;
+    Package() = default;
     Func& func(FuncRef ref) { return funcs_[ref]; }
     [[nodiscard]] std::span<const Func> funcs() const { return funcs_.data(); }
     [[nodiscard]] const Func& func(FuncRef ref) const { return funcs_[ref]; }
@@ -337,5 +337,5 @@ private:
 };
 
 std::string to_string(const Func& func);
-std::string to_string(const Module& module);
+std::string to_string(const Package& package);
 }

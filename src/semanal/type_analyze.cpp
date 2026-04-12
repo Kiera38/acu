@@ -258,19 +258,19 @@ struct TypeVarMap {
 class TypeAnalyzer {
 public:
     TypeAnalyzer(
-        ir::Module& module,
+        ir::Package& package,
         const Source& source,
         ir::FuncRef func_ref,
         ErrorHandler& err_handler
     )
-        : module_(&module),
+        : package_(&package),
           source_(&source),
-          type_pool_(&module.types()),
+          type_pool_(&package.types()),
           func_ref_(func_ref),
-          func_(&module.func(func_ref)),
+          func_(&package.func(func_ref)),
           err_handler_(&err_handler) {
-        func_type_id_ = module.func_type(func_ref);
-        const auto& type = module.types().get(func_type_id_);
+        func_type_id_ = package.func_type(func_ref);
+        const auto& type = package.types().get(func_type_id_);
         if (!type.data.is<types::Type::Func>()) {
             throw std::runtime_error(
                 "Internal error: Function type is not a Func type"
@@ -346,7 +346,7 @@ private:
                         );
                     },
                     [&](ir::FuncRef func_ref) {
-                        return module_->func_type(func_ref);
+                        return package_->func_type(func_ref);
                     },
                     [&](types::TypeId type_id) { return types::Const; }
                 );
@@ -698,7 +698,7 @@ private:
         changed_ = true;
     }
 
-    ir::Module* module_;
+    ir::Package* package_;
     const Source* source_;
     types::TypePool* type_pool_;
     types::TypeId func_type_id_;
@@ -711,14 +711,14 @@ private:
 };
 }
 
-AnalyzedModule type_analyze(
-    ir::Module module, const Source& source, ErrorHandler& err_handler
+AnalyzedPackage type_analyze(
+    ir::Package package, const Source& source, ErrorHandler& err_handler
 ) {
-    AnalyzedModule result;
+    AnalyzedPackage result;
     std::deque<TypeAnalyzer> analyzers;
-    for (std::uint32_t i = 0; i < module.funcs().size(); ++i) {
+    for (std::uint32_t i = 0; i < package.funcs().size(); ++i) {
         ir::FuncRef ref {i};
-        analyzers.emplace_back(module, source, ref, err_handler);
+        analyzers.emplace_back(package, source, ref, err_handler);
     }
     while (!analyzers.empty()) {
         auto analyzer = std::move(analyzers.front());
@@ -739,7 +739,7 @@ AnalyzedModule type_analyze(
             });
         }
     }
-    result.ir_module = std::move(module);
+    result.ir_package = std::move(package);
     return result;
 }
 

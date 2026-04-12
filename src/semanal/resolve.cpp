@@ -98,7 +98,7 @@ public:
     explicit Resolver(const nodes::Module& module, ErrorHandler& err_handler)
         : module_(&module), err_handler_(&err_handler) {}
 
-    ir::Module resolve() {
+    ir::Package resolve() {
         for (const auto& item : module_->items) {
             item.data.visit(
                 [&](const nodes::Func& func) {
@@ -120,7 +120,7 @@ public:
             );
         }
 
-        return std::move(ir_module_);
+        return std::move(ir_package_);
     }
 
 private:
@@ -171,7 +171,7 @@ private:
     void create_struct_def(
         const nodes::Struct& struct_node, Location location
     ) {
-        auto type_id = ir_module_.types().add_struct({
+        auto type_id = ir_package_.types().add_struct({
             .name = struct_node.name,
             .location = location,
         });
@@ -191,20 +191,20 @@ private:
                 }
                 fields.push_back({.name = field.name, .type = field_type});
             }
-            ir_module_.types().set_struct_fields(type_id, std::move(fields));
+            ir_package_.types().set_struct_fields(type_id, std::move(fields));
         }
     }
 
     void create_func_def(const nodes::Func& func_node, Location location) {
         ir::Func ir_func(func_node.name, location, func_node.is_extern);
-        auto func_ref = ir_module_.add(std::move(ir_func));
+        auto func_ref = ir_package_.add(std::move(ir_func));
         context_.add(func_node.name, {func_ref});
     }
 
     void resolve_func_def(const nodes::Func& func_node) {
         auto* entry = context_.find(func_node.name);
         if (entry) {
-            ir::Func& ir_func = ir_module_.func(entry->data.get<ir::FuncRef>());
+            ir::Func& ir_func = ir_package_.func(entry->data.get<ir::FuncRef>());
             std::vector<ir::Param> ir_params;
             ir_params.reserve(func_node.args.size());
             for (const auto& arg : func_node.args) {
@@ -338,7 +338,7 @@ private:
                         type.specifier = types::Specifier::Val;
                     }
                     auto length = get_int_const(*node.args[1]);
-                    return {.type = ir_module_.types().add_array(type, length)};
+                    return {.type = ir_package_.types().add_array(type, length)};
                 } else if (name.name == "Ptr") {
                     if (node.args.size() != 1) {
                         err_handler_->error(
@@ -350,7 +350,7 @@ private:
                     if (type.specifier == types::Specifier::None) {
                         type.specifier = types::Specifier::Val;
                     }
-                    return {.type = ir_module_.types().add_ptr(type)};
+                    return {.type = ir_package_.types().add_ptr(type)};
                 } else {
                     err_handler_->error(expr.location, "unknown type");
                     return {.type = types::None};
@@ -843,12 +843,12 @@ private:
 
     const nodes::Module* module_;
     ErrorHandler* err_handler_;
-    ir::Module ir_module_;
+    ir::Package ir_package_;
     Context context_;
 };
 }
 
-ir::Module resolve(const nodes::Module& module, ErrorHandler& err_handler) {
+ir::Package resolve(const nodes::Module& module, ErrorHandler& err_handler) {
     Resolver resolver(module, err_handler);
     return resolver.resolve();
 }

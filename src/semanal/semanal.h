@@ -7,19 +7,19 @@
 #include "semanal/types.h"
 
 namespace acu::semanal {
-ir::Module resolve(const nodes::Module& module, ErrorHandler& err_handler);
+ir::Package resolve(const nodes::Module& module, ErrorHandler& err_handler);
 
 struct AnalyzedFunc {
     ir::FuncRef ref{};
     IndexVector<types::SpecType, ir::InstRef> inst_types;
 };
 
-struct AnalyzedModule {
-    ir::Module ir_module;
+struct AnalyzedPackage {
+    ir::Package ir_package;
     std::vector<AnalyzedFunc> analyzed_funcs;
 };
 
-AnalyzedModule type_analyze(
-    ir::Module module, const Source& source, ErrorHandler& err_handler
+AnalyzedPackage type_analyze(
+    ir::Package package, const Source& source, ErrorHandler& err_handler
 );
 }

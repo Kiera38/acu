@@ -148,7 +148,7 @@ std::string TypePool::to_string(SpecType type) const {
 }
 
 namespace acu::ir {
-types::TypeId Module::func_type(FuncRef ref) {
+types::TypeId Package::func_type(FuncRef ref) {
     const auto& func = funcs_[ref];
     auto params =
         func.params() |

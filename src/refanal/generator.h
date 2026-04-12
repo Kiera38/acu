@@ -5,6 +5,6 @@
 
 namespace acu::refanal {
 
-ir::Module generate(semanal::AnalyzedModule& analyzed_module);
+ir::Module generate(semanal::AnalyzedPackage& analyzed_package);
 
 }

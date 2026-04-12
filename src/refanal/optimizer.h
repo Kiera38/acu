@@ -7,7 +7,7 @@ namespace acu::refanal {
 
 void optimize(
     ir::Module& module,
-    semanal::AnalyzedModule& analyzed,
+    semanal::AnalyzedPackage& analyzed,
     ErrorHandler& err_handler
 );
 

@@ -340,12 +340,12 @@ std::string to_string(const Func& func) {
     );
 }
 
-std::string to_string(const Module& module) {
+std::string to_string(const Package& package) {
     std::string funcs_str;
-    for (const auto& func : module.funcs()) {
+    for (const auto& func : package.funcs()) {
         funcs_str += to_string(func) + '\n';
     }
-    return std::format("Module\nfuncs:\n{}", funcs_str);
+    return std::format("Package\nfuncs:\n{}", funcs_str);
 }
 
 }

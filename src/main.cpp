@@ -173,7 +173,7 @@ std::optional<acu::nodes::Module> parse_module(
     return module;
 }
 
-std::optional<acu::semanal::AnalyzedModule> semanal(
+std::optional<acu::semanal::AnalyzedPackage> semanal(
     const acu::nodes::Module& module,
     const acu::Source& source,
     acu::ErrorHandler& err_handler,
@@ -198,7 +198,7 @@ std::optional<acu::semanal::AnalyzedModule> semanal(
 }
 
 std::optional<acu::refanal::ir::Module> refanal(
-    acu::semanal::AnalyzedModule& analyzed,
+    acu::semanal::AnalyzedPackage& analyzed,
     const acu::Source& source,
     acu::ErrorHandler& err_handler,
     bool show_refanal
