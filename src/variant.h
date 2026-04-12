@@ -18,7 +18,7 @@ Overloaded(T...) -> Overloaded<T...>;
 template <typename... T>
 struct Variant {
     std::variant<T...> value;
-    
+
     template <typename U>
         requires(
             std::is_constructible_v<std::variant<T...>, U> &&
@@ -27,11 +27,26 @@ struct Variant {
     Variant(U&& u) : value(std::forward<U>(u)) {}
     Variant() = default;
 
-    template <typename U> [[nodiscard]] constexpr bool is() const { return std::holds_alternative<U>(value); }
-    template <typename U> U& get() { return std::get<U>(value); }
-    template <typename U> const U& get() const { return std::get<U>(value); }
-    template <typename U> [[nodiscard]] constexpr U* get_if() { return std::get_if<U>(&value); }
-    template <typename U> [[nodiscard]] constexpr const U* get_if() const { return std::get_if<U>(&value); }
+    template <typename U>
+    [[nodiscard]] constexpr bool is() const {
+        return std::holds_alternative<U>(value);
+    }
+    template <typename U>
+    U& get() {
+        return std::get<U>(value);
+    }
+    template <typename U>
+    const U& get() const {
+        return std::get<U>(value);
+    }
+    template <typename U>
+    [[nodiscard]] constexpr U* get_if() {
+        return std::get_if<U>(&value);
+    }
+    template <typename U>
+    [[nodiscard]] constexpr const U* get_if() const {
+        return std::get_if<U>(&value);
+    }
 
     // Simplified visit to help MSVC
     template <typename Func>
@@ -57,32 +72,50 @@ struct Variant {
     // Overloaded visit
     template <typename... Funcs>
     auto visit(Funcs&&... funcs) & {
-        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, value);
+        return std::visit(
+            Overloaded<Funcs...> {std::forward<Funcs>(funcs)...}, value
+        );
     }
 
     template <typename... Funcs>
     auto visit(Funcs&&... funcs) const& {
-        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, value);
+        return std::visit(
+            Overloaded<Funcs...> {std::forward<Funcs>(funcs)...}, value
+        );
     }
 
     template <typename... Funcs>
     auto visit(Funcs&&... funcs) && {
-        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, std::move(value));
+        return std::visit(
+            Overloaded<Funcs...> {std::forward<Funcs>(funcs)...},
+            std::move(value)
+        );
     }
 
     template <typename... Funcs>
     auto visit(Funcs&&... funcs) const&& {
-        return std::visit(Overloaded<Funcs...>{std::forward<Funcs>(funcs)...}, std::move(value));
+        return std::visit(
+            Overloaded<Funcs...> {std::forward<Funcs>(funcs)...},
+            std::move(value)
+        );
     }
 
-    [[nodiscard]] constexpr std::size_t index() const noexcept { return value.index(); }
-    [[nodiscard]] constexpr bool valueless_by_exception() const noexcept { return value.valueless_by_exception(); }
+    [[nodiscard]] constexpr std::size_t index() const noexcept {
+        return value.index();
+    }
+    [[nodiscard]] constexpr bool valueless_by_exception() const noexcept {
+        return value.valueless_by_exception();
+    }
 
     template <typename U, typename... Args>
-    U& emplace(Args&&... args) { return value.template emplace<U>(std::forward<Args>(args)...); }
+    U& emplace(Args&&... args) {
+        return value.template emplace<U>(std::forward<Args>(args)...);
+    }
 
     template <typename U, typename... Args>
-    U& emplace(std::initializer_list<U> il, Args&&... args) { return value.template emplace<U>(il, std::forward<Args>(args)...); }
+    U& emplace(std::initializer_list<U> il, Args&&... args) {
+        return value.template emplace<U>(il, std::forward<Args>(args)...);
+    }
 
     template <typename U>
     U get_or(U&& fallback) const {

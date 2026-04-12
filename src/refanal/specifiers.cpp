@@ -76,22 +76,27 @@ void infer_specifiers(
                     return can_be_var[lv.var];
                 },
                 [&](ir::Inst::GetField& gf) -> bool {
-                    if (!can_be_var[gf.value]) return false;
                     auto& type = module.types().get(insts[gf.value].type.type);
                     auto& struct_type = type.data.get<types::Type::Struct>();
                     return struct_type.fields[gf.index].type.specifier !=
                            Specifier::Let;
                 },
                 [&](ir::Inst::GetItem& gi) -> bool {
-                    return can_be_var[gi.value];
+                    auto& type =  module.types().get(insts[gi.value].type.type);
+                    if(const auto& arr_type = type.data.get_if<types::Type::Array>()) {
+                        return arr_type->item.specifier != Specifier::Let;
+                    } else if(const auto& ptr_type = type.data.get_if<types::Type::Ptr>()) {
+                        return ptr_type->type.specifier != Specifier::Let;
+                    }
+                    return false;
                 },
                 [&](ir::Inst::Deref& d) -> bool {
                     auto& type = module.types().get(insts[d.value].type.type);
                     auto& ptr_type = type.data.get<types::Type::Ptr>();
-                    return ptr_type.type.specifier == Specifier::Var;
+                    return ptr_type.type.specifier != Specifier::Let;
                 },
                 [&](ir::Inst::Cast& c) -> bool {
-                    return inst.type.specifier == Specifier::Var;
+                    return inst.type.specifier != Specifier::Let;
                 },
                 [&](auto&) -> bool { return false; }
             );

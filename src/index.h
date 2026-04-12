@@ -170,6 +170,7 @@ public:
     void clear() { vec.clear(); }
     void reserve(std::size_t n) { vec.reserve(n); }
     void resize(std::size_t n) { vec.resize(n); }
+    void resize(std::size_t n, const T& i) { vec.resize(n, i); }
 
     template <std::ranges::range R>
     I append_range(R&& range) {

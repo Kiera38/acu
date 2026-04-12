@@ -45,10 +45,7 @@ public:
         }
         rfunc_.set_type(rparams, sfunc_->return_type());
 
-        inst_map_.resize(sfunc_->insts().size());
-        for (auto& ref : inst_map_.data()) {
-            ref = ir::InstRef {~0u};
-        }
+        inst_map_.resize(sfunc_->insts().size(), ir::InstRef {~0u});
 
         current_block_ = rfunc_.add_block(ir::Block {});
 

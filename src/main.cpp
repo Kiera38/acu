@@ -7,7 +7,6 @@
 #include <iostream>
 #include <optional>
 #include <sstream>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -59,9 +58,9 @@ void print_help(const char* prog_name) {
 
 std::optional<Config> parse_args(std::span<char*> argv) {
     Config config;
-    std::vector<std::string> args;
+    std::vector<std::string_view> args;
     args.reserve(argv.size()-1);
-    for (auto arg : argv) {
+    for (auto arg : argv.subspan(1)) {
         args.emplace_back(arg);
     }
 
@@ -71,7 +70,7 @@ std::optional<Config> parse_args(std::span<char*> argv) {
     }
 
     for (size_t i = 0; i < args.size(); ++i) {
-        const std::string& arg = args[i];
+        std::string_view arg = args[i];
         if (arg == "-h" || arg == "--help") {
             print_help(argv[0]);
             return std::nullopt;

@@ -18,7 +18,6 @@ std::string Location::to_string(const Source& source) const {
     if(line_end <= line_start) {
         line_end = line_start + 1;
     }
-    auto line = source.content.substr(line_start, line_end - line_start);
     auto line_number =
         std::count(
             source.content.begin(), source.content.begin() + start, '\n'

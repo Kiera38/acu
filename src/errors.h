@@ -25,9 +25,12 @@ public:
         std::string message,
         std::string hint = ""
     ) {
-        errors_.push_back(
-            {severity, location, std::move(message), std::move(hint)}
-        );
+        errors_.push_back({
+            .severity = severity,
+            .location = location,
+            .message = std::move(message),
+            .hint = std::move(hint),
+        });
         if (severity == Severity::Error || severity == Severity::Fatal) {
             has_errors_ = true;
         }
