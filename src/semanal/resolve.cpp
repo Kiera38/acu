@@ -118,14 +118,7 @@ public:
 
     ir::Package resolve() {
         for (const auto& mod : modules_) {
-            auto module_name = [&] {
-                if (auto name_start = mod.source->module_name.find_last_of('.');
-                    name_start != std::string::npos) {
-                    return std::string_view(mod.source->module_name)
-                        .substr(name_start);
-                }
-                return std::string_view(mod.source->module_name);
-            }();
+            auto module_name = get_relative_module_name(mod.source->module_name);
             module_contexts_.insert(
                 {module_name, Context(*mod.source)}
             );
@@ -149,7 +142,7 @@ public:
         }
 
         for (const auto& mod : modules_) {
-            context_ = &module_contexts_.at(mod.source->module_name);
+            context_ = &module_contexts_.at(get_relative_module_name(mod.source->module_name));
 
             for (const auto& item : mod.module->items) {
                 item.data.visit(
@@ -168,6 +161,15 @@ public:
         }
 
         return std::move(ir_package_);
+    }
+
+private:
+    std::string_view get_relative_module_name(std::string_view full_name) {
+        if (auto name_start = full_name.find_last_of('.');
+            name_start != std::string::npos) {
+            return full_name.substr(name_start + 1);
+        }
+        return full_name;
     }
 
 private:
@@ -214,10 +216,17 @@ private:
         }
         return "";
     }
-
     Context* get_module_context(
         std::span<const std::string_view> module_name, Location location
     ) {
+        if (module_name.size() < ir_package_.name().size()) {
+            err_handler_->error(
+                context_->source(),
+                location,
+                "using from other package not supported"
+            );
+            return nullptr;
+        }
         for (const auto& [package_name, using_name] :
              std::views::zip(ir_package_.name(), module_name)) {
             if (package_name != using_name) {
@@ -230,24 +239,25 @@ private:
             }
         }
         auto name = std::span(module_name).subspan(ir_package_.name().size());
-        if (name.size() == 1) {
+        if (name.empty()) {
+            if (!ir_package_.name().empty()) {
+                if (auto it = module_contexts_.find(ir_package_.name().back());
+                    it != module_contexts_.end()) {
+                    return &it->second;
+                }
+            }
+        } else if (name.size() == 1) {
             if (auto it = module_contexts_.find(name[0]);
                 it != module_contexts_.end()) {
                 return &it->second;
             }
-            err_handler_->error(
-                context_->source(),
-                location,
-                std::format(
-                    "module '{}' not found", join_module_name(module_name)
-                )
-            );
-            return nullptr;
         }
         err_handler_->error(
             context_->source(),
             location,
-            "using from other package not supported"
+            std::format(
+                "module '{}' not found", join_module_name(module_name)
+            )
         );
         return nullptr;
     }

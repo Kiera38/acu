@@ -147,7 +147,9 @@ std::optional<acu::Source> read_file(
     std::stringstream ss;
     ss << file.rdbuf();
     std::string module_name = path.stem().string();
-    if (!package_name.empty()) {
+    if (module_name == "package") {
+        module_name = package_name;
+    } else if (!package_name.empty()) {
         module_name = package_name + '.' + module_name;
     }
 
@@ -319,8 +321,15 @@ int main(int argc, char** argv) {
             return {config->input_path.parent_path(), ""};
         }
     }();
-    for (const auto& path : package_path) {
+    for (const auto& entry : std::filesystem::directory_iterator(package_path)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        auto path = entry.path();
         if (path.extension().string() != ".acu") {
+            continue;
+        }
+        if (path.stem().string() == "package" && package_name.empty()) {
             continue;
         }
         auto source = read_file(path, package_name);
