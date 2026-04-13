@@ -336,6 +336,7 @@ private:
 
 class Module {
 public:
+    Module() = default;
     Module(types::TypePool& types): types_(&types) {}
     Func& func(FuncRef ref) { return funcs_[ref]; }
     [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const {
@@ -351,7 +352,7 @@ public:
 
 private:
     IndexVector<Func, FuncRef> funcs_;
-    types::TypePool* types_;
+    types::TypePool* types_{};
 };
 
 }

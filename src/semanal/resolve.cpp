@@ -107,9 +107,9 @@ std::uint8_t as_uint8(
 
 class Resolver {
 public:
-    explicit Resolver(
+    Resolver(
         std::vector<std::string_view> package_name,
-        std::span<const ModuleInfo> modules,
+        std::span<const nodes::Module> modules,
         ErrorHandler& err_handler
     )
         : ir_package_(std::move(package_name)),
@@ -124,7 +124,7 @@ public:
             );
             context_ = &module_contexts_.at(module_name);
             auto& module = ir_package_.add_module(module_name);
-            for (const auto& item : mod.module->items) {
+            for (const auto& item : mod.items) {
                 item.data.visit(
                     [&](const nodes::Func& func) {
                         auto func_ref = create_func_def(func, item.location);
@@ -144,7 +144,7 @@ public:
         for (const auto& mod : modules_) {
             context_ = &module_contexts_.at(get_relative_module_name(mod.source->module_name));
 
-            for (const auto& item : mod.module->items) {
+            for (const auto& item : mod.items) {
                 item.data.visit(
                     [&](const nodes::Use& use) {
                         resolve_using(use, item.location);
@@ -1072,7 +1072,7 @@ private:
         );
     }
 
-    std::span<const ModuleInfo> modules_;
+    std::span<const nodes::Module> modules_;
     ErrorHandler* err_handler_;
     ir::Package ir_package_;
     std::unordered_map<std::string_view, Context> module_contexts_;
@@ -1082,7 +1082,7 @@ private:
 
 ir::Package resolve(
     std::vector<std::string_view> package_name,
-    std::span<const ModuleInfo> modules,
+    std::span<const nodes::Module> modules,
     ErrorHandler& err_handler
 ) {
     Resolver resolver(std::move(package_name), modules, err_handler);

@@ -355,6 +355,7 @@ private:
 
 class Package {
 public:
+    Package() = default;
     Package(std::vector<std::string_view> name) : name_(std::move(name)) {}
     [[nodiscard]] std::span<const std::string_view> name() const {
         return name_;

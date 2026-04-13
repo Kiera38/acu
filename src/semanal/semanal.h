@@ -11,14 +11,10 @@
 
 
 namespace acu::semanal {
-struct ModuleInfo {
-    const Source* source;
-    const nodes::Module* module;
-};
 
 ir::Package resolve(
     std::vector<std::string_view> package_name,
-    std::span<const ModuleInfo> modules,
+    std::span<const nodes::Module> modules,
     ErrorHandler& err_handler
 );
 

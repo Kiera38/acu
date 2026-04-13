@@ -68,7 +68,10 @@ public:
                 synchronize_items();
             }
         }
-        return nodes::Module {std::move(items)};
+        return nodes::Module {
+            .source = source_,
+            .items = std::move(items)
+        };
     }
 
 private:

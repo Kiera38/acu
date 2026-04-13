@@ -1,28 +1,11 @@
-#include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
 #include <llvm/IR/LLVMContext.h>
-#include <llvm/Support/raw_ostream.h>
 
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <optional>
-#include <ranges>
-#include <sstream>
-#include <utility>
 #include <vector>
 
-#include "codegen/generator.h"
-#include "codegen/jit.h"
-#include "errors.h"
-#include "parser/nodes.h"
-#include "parser/parser.h"
-#include "refanal/generator.h"
-#include "refanal/ir.h"
-#include "refanal/ir_str.h"
-#include "refanal/optimizer.h"
-#include "semanal/ir.h"
-#include "semanal/semanal.h"
-#include "source.h"
+#include "project.h"
 
 enum class RunMode : std::uint8_t { Jit, Compile };
 
@@ -134,176 +117,6 @@ std::optional<Config> parse_args(std::span<char*> argv) {
     }
     return config;
 }
-
-std::optional<acu::Source> read_file(
-    const std::filesystem::path& path, const std::string& package_name
-) {
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        std::cerr << "Error: could not open file: " << path << "\n";
-        return std::nullopt;
-    }
-
-    std::stringstream ss;
-    ss << file.rdbuf();
-    std::string module_name = path.stem().string();
-    if (module_name == "package") {
-        module_name = package_name;
-    } else if (!package_name.empty()) {
-        module_name = package_name + '.' + module_name;
-    }
-
-    return acu::Source {
-        .module_name = module_name, .path = path.string(), .content = ss.str()
-    };
-}
-
-std::optional<acu::nodes::Module> parse_module(
-    acu::Source& source, acu::ErrorHandler& err_handler, bool show_ast
-) {
-    auto module = acu::parser::parse(source, err_handler);
-    if (err_handler.has_errors()) {
-        err_handler.emit_all();
-        return std::nullopt;
-    }
-    if (show_ast) {
-        std::cout << "\nAST for " << source.module_name << "\n";
-        std::cout << acu::nodes::to_string(module);
-    }
-    return module;
-}
-
-std::vector<std::string_view> split_package_name(
-    const std::string& package_name
-) {
-    if(package_name.empty()) {
-        return {};
-    }
-    std::vector<std::string_view> name;
-    for (auto name_part : package_name | std::views::split('.')) {
-        name.emplace_back(name_part);
-    }
-    return name;
-}
-
-std::optional<acu::semanal::AnalyzedPackage> semanal(
-    const std::string& package_name,
-    const std::vector<acu::nodes::Module>& modules,
-    const std::vector<acu::Source>& sources,
-    acu::ErrorHandler& err_handler,
-    bool show_semanal
-) {
-    std::vector<acu::semanal::ModuleInfo> mod_infos;
-    mod_infos.reserve(modules.size());
-    for (size_t i = 0; i < modules.size(); ++i) {
-        mod_infos.push_back({.source = &sources[i], .module = &modules[i]});
-    }
-
-    auto ir_package = acu::semanal::resolve(
-        split_package_name(package_name), mod_infos, err_handler
-    );
-    if (err_handler.has_errors()) {
-        err_handler.emit_all();
-        return std::nullopt;
-    }
-    if (show_semanal) {
-        std::cout << "\nSEMANAL IR\n";
-        std::cout << acu::ir::to_string(ir_package);
-    }
-
-    auto analyzed = acu::semanal::type_analyze(ir_package, err_handler);
-    if (err_handler.has_errors()) {
-        err_handler.emit_all();
-        return std::nullopt;
-    }
-    return analyzed;
-}
-
-std::optional<acu::refanal::ir::Module> refanal(
-    acu::semanal::AnalyzedPackage& analyzed,
-    const std::vector<acu::Source>& sources,
-    acu::ErrorHandler& err_handler,
-    bool show_refanal
-) {
-    auto refanal_module = acu::refanal::generate(analyzed);
-    acu::refanal::optimize(refanal_module, analyzed, err_handler);
-
-    if (err_handler.has_errors()) {
-        err_handler.emit_all();
-        return std::nullopt;
-    }
-
-    if (show_refanal) {
-        std::cout << "\nREFANAL IR\n";
-        std::cout << acu::refanal::to_string(refanal_module, analyzed) << "\n";
-    }
-    return refanal_module;
-}
-
-std::unique_ptr<llvm::Module> generate_llvm(
-    llvm::LLVMContext& context,
-    const acu::refanal::ir::Module& module,
-    const Config& config,
-    std::optional<llvm::DataLayout> layout
-) {
-    auto llvm_module =
-        acu::codegen::generate(context, module, std::move(layout));
-    if (config.show_llvm) {
-        std::cout << "\nLLVM IR\n";
-        llvm_module->print(llvm::outs(), nullptr);
-    }
-
-    acu::codegen::optimize(*llvm_module, config.opt_level);
-    if (config.show_opt_llvm) {
-        std::cout << "\nOPTIMIZED LLVM IR\n";
-        llvm_module->print(llvm::outs(), nullptr);
-    }
-    return llvm_module;
-}
-
-void run_jit(const acu::refanal::ir::Module& module, const Config& config) {
-    std::cout << "\nJIT EXECUTION\n";
-    auto jit = acu::codegen::JIT::create();
-    if (!jit) {
-        std::cerr << "Failed to create JIT\n";
-        return;
-    }
-
-    auto context = std::make_unique<llvm::LLVMContext>();
-    auto llvm_module =
-        generate_llvm(*context, module, config, jit->get_data_layout());
-
-    if (auto err =
-            jit->add_module(std::move(llvm_module), std::move(context))) {
-        std::cerr << "Failed to add module to JIT\n";
-    } else {
-        auto main_func = jit->get_main();
-        if (main_func) {
-            std::cout << "Running main()...\n";
-            int result = (*main_func)();
-            std::cout << "main() returned: " << result << "\n";
-        } else {
-            std::cerr << "Failed to find main function in JIT\n";
-        }
-    }
-}
-
-void codegen(const acu::refanal::ir::Module& module, const Config& config) {
-    if (config.mode == RunMode::Compile) {
-        auto context = std::make_unique<llvm::LLVMContext>();
-        auto llvm_module =
-            generate_llvm(*context, module, config, std::nullopt);
-        acu::codegen::emit_object_file(
-            *llvm_module, config.output_path.string()
-        );
-        if (config.show_refanal || config.show_llvm || config.show_opt_llvm) {
-            std::cout << "\nObject file emitted to " << config.output_path
-                      << "\n";
-        }
-    } else {
-        run_jit(module, config);
-    }
-}
 }
 
 int main(int argc, char** argv) {
@@ -312,60 +125,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::vector<acu::Source> sources;
-    auto [package_path, package_name] =
-        [&] -> std::pair<std::filesystem::path, std::string> {
-        if (std::filesystem::is_directory(config->input_path)) {
-            return {config->input_path, config->input_path.stem().string()};
-        } else {
-            return {config->input_path.parent_path(), ""};
-        }
-    }();
-    for (const auto& entry : std::filesystem::directory_iterator(package_path)) {
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        auto path = entry.path();
-        if (path.extension().string() != ".acu") {
-            continue;
-        }
-        if (path.stem().string() == "package" && package_name.empty()) {
-            continue;
-        }
-        auto source = read_file(path, package_name);
-        if (!source) {
-            return 1;
-        }
-        sources.push_back(std::move(*source));
-    }
-
-    acu::ErrorHandler err_handler;
-
     try {
-        std::vector<acu::nodes::Module> modules;
-        for (auto& source : sources) {
-            auto module = parse_module(source, err_handler, config->show_ast);
-            if (!module) {
-                return 1;
-            }
-            modules.push_back(std::move(*module));
+        acu::Project project(config->input_path);
+        project.parse(config->show_ast);
+        project.semanal(config->show_semanal);
+        project.refanal(config->show_refanal);
+        if (config->mode == RunMode::Compile) {
+            project.codegen(
+                config->show_llvm,
+                config->show_opt_llvm,
+                config->opt_level,
+                config->output_path
+            );
+        } else {
+            project.run_jit(
+                config->show_llvm, config->show_opt_llvm, config->opt_level
+            );
         }
-
-        auto analyzed = semanal(
-            package_name, modules, sources, err_handler, config->show_semanal
-        );
-        if (!analyzed) {
-            return 1;
-        }
-
-        auto refanal_module =
-            refanal(*analyzed, sources, err_handler, config->show_refanal);
-        if (!refanal_module) {
-            return 1;
-        }
-
-        codegen(*refanal_module, *config);
-
     } catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << '\n';
         return 1;
