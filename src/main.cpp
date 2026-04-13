@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <ranges>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -26,7 +27,7 @@
 enum class RunMode : std::uint8_t { Jit, Compile };
 
 struct Config {
-    std::vector<std::filesystem::path> input_paths;
+    std::filesystem::path input_path;
     std::filesystem::path output_path;
     llvm::OptimizationLevel opt_level = llvm::OptimizationLevel::O0;
     bool show_ast = false;
@@ -115,29 +116,28 @@ std::optional<Config> parse_args(std::span<char*> argv) {
             std::cerr << "Unknown option: " << arg << "\n";
             return std::nullopt;
         } else {
-            config.input_paths.emplace_back(arg);
+            if (!config.input_path.empty()) {
+                std::cerr << "Error: multiple input files specified\n";
+            } else {
+                config.input_path = arg;
+            }
         }
     }
 
-    if (config.input_paths.empty()) {
-        std::cerr << "Error: no input file specified\n";
+    if (!std::filesystem::exists(config.input_path)) {
+        std::cerr << "Error: file not found: " << config.input_path << "\n";
         return std::nullopt;
     }
 
-    for (const auto& path : config.input_paths) {
-        if (!std::filesystem::exists(path)) {
-            std::cerr << "Error: file not found: " << path << "\n";
-            return std::nullopt;
-        }
-    }
-
     if (config.mode == RunMode::Compile && config.output_path.empty()) {
-        config.output_path = config.input_paths[0].stem().string() + ".o";
+        config.output_path = config.input_path.stem().string() + ".o";
     }
     return config;
 }
 
-std::optional<acu::Source> read_file(const std::filesystem::path& path) {
+std::optional<acu::Source> read_file(
+    const std::filesystem::path& path, const std::string& package_name
+) {
     std::ifstream file(path);
     if (!file.is_open()) {
         std::cerr << "Error: could not open file: " << path << "\n";
@@ -146,11 +146,13 @@ std::optional<acu::Source> read_file(const std::filesystem::path& path) {
 
     std::stringstream ss;
     ss << file.rdbuf();
+    std::string module_name = path.stem().string();
+    if (!package_name.empty()) {
+        module_name = package_name + '.' + module_name;
+    }
 
     return acu::Source {
-        .module_name = path.stem().string(),
-        .path = path.string(),
-        .content = ss.str()
+        .module_name = module_name, .path = path.string(), .content = ss.str()
     };
 }
 
@@ -169,7 +171,21 @@ std::optional<acu::nodes::Module> parse_module(
     return module;
 }
 
+std::vector<std::string_view> split_package_name(
+    const std::string& package_name
+) {
+    if(package_name.empty()) {
+        return {};
+    }
+    std::vector<std::string_view> name;
+    for (auto name_part : package_name | std::views::split('.')) {
+        name.emplace_back(name_part);
+    }
+    return name;
+}
+
 std::optional<acu::semanal::AnalyzedPackage> semanal(
+    const std::string& package_name,
     const std::vector<acu::nodes::Module>& modules,
     const std::vector<acu::Source>& sources,
     acu::ErrorHandler& err_handler,
@@ -181,7 +197,9 @@ std::optional<acu::semanal::AnalyzedPackage> semanal(
         mod_infos.push_back({.source = &sources[i], .module = &modules[i]});
     }
 
-    auto ir_package = acu::semanal::resolve(mod_infos, err_handler);
+    auto ir_package = acu::semanal::resolve(
+        split_package_name(package_name), mod_infos, err_handler
+    );
     if (err_handler.has_errors()) {
         err_handler.emit_all();
         return std::nullopt;
@@ -293,8 +311,19 @@ int main(int argc, char** argv) {
     }
 
     std::vector<acu::Source> sources;
-    for (const auto& path : config->input_paths) {
-        auto source = read_file(path);
+    auto [package_path, package_name] =
+        [&] -> std::pair<std::filesystem::path, std::string> {
+        if (std::filesystem::is_directory(config->input_path)) {
+            return {config->input_path, config->input_path.stem().string()};
+        } else {
+            return {config->input_path.parent_path(), ""};
+        }
+    }();
+    for (const auto& path : package_path) {
+        if (path.extension().string() != ".acu") {
+            continue;
+        }
+        auto source = read_file(path, package_name);
         if (!source) {
             return 1;
         }
@@ -313,8 +342,9 @@ int main(int argc, char** argv) {
             modules.push_back(std::move(*module));
         }
 
-        auto analyzed =
-            semanal(modules, sources, err_handler, config->show_semanal);
+        auto analyzed = semanal(
+            package_name, modules, sources, err_handler, config->show_semanal
+        );
         if (!analyzed) {
             return 1;
         }

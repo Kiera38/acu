@@ -108,13 +108,19 @@ std::uint8_t as_uint8(
 class Resolver {
 public:
     explicit Resolver(
-        std::span<const ModuleInfo> modules, ErrorHandler& err_handler
+        std::vector<std::string_view> package_name,
+        std::span<const ModuleInfo> modules,
+        ErrorHandler& err_handler
     )
-        : modules_(modules), err_handler_(&err_handler) {}
+        : ir_package_(std::move(package_name)),
+          modules_(modules),
+          err_handler_(&err_handler) {}
 
     ir::Package resolve() {
         for (const auto& mod : modules_) {
-            module_contexts_.insert({mod.source->module_name, Context(*mod.source)});
+            module_contexts_.insert(
+                {mod.source->module_name, Context(*mod.source)}
+            );
             context_ = &module_contexts_.at(mod.source->module_name);
             for (const auto& item : mod.module->items) {
                 item.data.visit(
@@ -135,54 +141,10 @@ public:
             for (const auto& item : mod.module->items) {
                 item.data.visit(
                     [&](const nodes::Use& use) {
-                        if (use.module_name.size() == 1) {
-                            auto name = use.module_name[0];
-                            if (module_contexts_.contains(name)) {
-                                context_->add(name, {name});
-                            } else {
-                                err_handler_->error(
-                                    context_->source(),
-                                    item.location,
-                                    std::format("module '{}' not found", name)
-                                );
-                            }
-                        }
+                        resolve_using(use, item.location);
                     },
                     [&](const nodes::FromUse& use) {
-                        if (use.module_name.size() == 1) {
-                            auto mod_name = use.module_name[0];
-                            if (auto it = module_contexts_.find(mod_name);
-                                it != module_contexts_.end()) {
-                                for (const auto& item : use.items) {
-                                    if (auto entry =
-                                            it->second.find(item.name)) {
-                                        context_->add(
-                                            item.alias.value_or(item.name),
-                                            *entry
-                                        );
-                                    } else {
-                                        err_handler_->error(
-                                            context_->source(),
-                                            item.location,
-                                            std::format(
-                                                "name '{}' not found in "
-                                                "module '{}'",
-                                                item.name,
-                                                mod_name
-                                            )
-                                        );
-                                    }
-                                }
-                            } else {
-                                err_handler_->error(
-                                    context_->source(),
-                                    item.location,
-                                    std::format(
-                                        "module '{}' not found", mod_name
-                                    )
-                                );
-                            }
-                        }
+                        resolve_using(use, item.location);
                     },
                     [&](const nodes::Func& func) { resolve_func_def(func); },
                     [&](const nodes::Struct& struct_def) {
@@ -238,6 +200,78 @@ private:
             return std::format("did you mean '{}'?", best_match);
         }
         return "";
+    }
+
+    Context* get_module_context(
+        std::span<const std::string_view> module_name, Location location
+    ) {
+        for (const auto& [package_name, using_name] :
+             std::views::zip(ir_package_.name(), module_name)) {
+            if (package_name != using_name) {
+                err_handler_->error(
+                    context_->source(),
+                    location,
+                    "using from other package not supported"
+                );
+                return nullptr;
+            }
+        }
+        auto name = std::span(module_name).subspan(ir_package_.name().size());
+        if (name.size() == 1) {
+            if (auto it = module_contexts_.find(name[0]);
+                it != module_contexts_.end()) {
+                return &it->second;
+            }
+            err_handler_->error(
+                context_->source(),
+                location,
+                std::format(
+                    "module '{}' not found", join_module_name(module_name)
+                )
+            );
+            return nullptr;
+        }
+        err_handler_->error(
+            context_->source(),
+            location,
+            "using from other package not supported"
+        );
+        return nullptr;
+    }
+
+    std::string join_module_name(
+        std::span<const std::string_view> module_name
+    ) {
+        return module_name | std::views::join_with('.') |
+               std::ranges::to<std::string>();
+    }
+
+    void resolve_using(const nodes::Use& use, Location location) {
+        auto module = get_module_context(use.module_name, location);
+        if (!module) {
+            return;
+        }
+        context_->add(use.module_name.back(), {use.module_name.back()});
+    }
+
+    void resolve_using(const nodes::FromUse& use, Location location) {
+        if (auto module = get_module_context(use.module_name, location)) {
+            for (const auto& item : use.items) {
+                if (auto entry = module->find(item.name)) {
+                    context_->add(item.alias.value_or(item.name), *entry);
+                } else {
+                    err_handler_->error(
+                        context_->source(),
+                        item.location,
+                        std::format(
+                            "name '{}' not found in module '{}'",
+                            item.name,
+                            join_module_name(use.module_name)
+                        )
+                    );
+                }
+            }
+        }
     }
 
     void create_struct_def(
@@ -1022,9 +1056,11 @@ private:
 }
 
 ir::Package resolve(
-    std::span<const ModuleInfo> modules, ErrorHandler& err_handler
+    std::vector<std::string_view> package_name,
+    std::span<const ModuleInfo> modules,
+    ErrorHandler& err_handler
 ) {
-    Resolver resolver(modules, err_handler);
+    Resolver resolver(std::move(package_name), modules, err_handler);
     return resolver.resolve();
 }
 }

@@ -226,8 +226,16 @@ struct Comparator {
 
 class Func {
 public:
-    Func(std::string_view name, const Source& source, Location location, bool is_extern = false)
-        : name_(name), source_(&source), location_(location), is_extern_(is_extern) {}
+    Func(
+        std::string_view name,
+        const Source& source,
+        Location location,
+        bool is_extern = false
+    )
+        : name_(name),
+          source_(&source),
+          location_(location),
+          is_extern_(is_extern) {}
     [[nodiscard]] const Source& source() const { return *source_; }
     [[nodiscard]] Location location() const { return location_; }
     [[nodiscard]] std::string_view name() const { return name_; }
@@ -321,9 +329,14 @@ private:
 
 class Package {
 public:
-    Package() = default;
+    Package(std::vector<std::string_view> name) : name_(std::move(name)) {}
+    [[nodiscard]] std::span<const std::string_view> name() const {
+        return name_;
+    }
     Func& func(FuncRef ref) { return funcs_[ref]; }
-    [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const { return funcs_.data(); }
+    [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const {
+        return funcs_.data();
+    }
     [[nodiscard]] const Func& func(FuncRef ref) const { return funcs_[ref]; }
 
     FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }
@@ -334,6 +347,7 @@ public:
     types::TypeId func_type(FuncRef ref);
 
 private:
+    std::vector<std::string_view> name_;
     IndexVector<Func, FuncRef> funcs_;
     types::TypePool types_;
 };
