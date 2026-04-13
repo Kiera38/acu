@@ -340,7 +340,8 @@ Token Lexer::identifier_or_keyword() {
         {"true", TokenType::True},
         {"false", TokenType::False},
         {"using", TokenType::Using},
-        {"from", TokenType::From}
+        {"from", TokenType::From},
+        {"public", TokenType::Public}
     };
 
     auto it = keywords.find(id);

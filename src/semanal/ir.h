@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "../index.h"
@@ -327,12 +329,45 @@ private:
     std::vector<Comparator> comparators_;
 };
 
+class Module {
+public:
+    Module() = default;
+    void add_func(std::string_view name, FuncRef func) {
+        public_funcs_.insert({name, func});
+    }
+    void add_struct(std::string_view name, types::TypeId type) {
+        structs_.insert({name, type});
+    }
+    [[nodiscard]] const std::unordered_map<std::string_view, FuncRef>&
+    public_funcs() const {
+        return public_funcs_;
+    }
+
+    [[nodiscard]] const std::unordered_map<std::string_view, types::TypeId>&
+    structs() const {
+        return structs_;
+    }
+
+private:
+    std::unordered_map<std::string_view, FuncRef> public_funcs_;
+    std::unordered_map<std::string_view, types::TypeId> structs_;
+};
+
 class Package {
 public:
     Package(std::vector<std::string_view> name) : name_(std::move(name)) {}
     [[nodiscard]] std::span<const std::string_view> name() const {
         return name_;
     }
+
+    Module& add_module(std::string_view name) {
+        return modules_.insert({name, Module()}).first->second;
+    }
+    Module& module(std::string_view name) { return modules_.at(name); }
+    [[nodiscard]] const Module& module(std::string_view name) const {
+        return modules_.at(name);
+    }
+
     Func& func(FuncRef ref) { return funcs_[ref]; }
     [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const {
         return funcs_.data();
@@ -348,6 +383,7 @@ public:
 
 private:
     std::vector<std::string_view> name_;
+    std::unordered_map<std::string_view, Module> modules_;
     IndexVector<Func, FuncRef> funcs_;
     types::TypePool types_;
 };

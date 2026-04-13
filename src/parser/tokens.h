@@ -29,6 +29,7 @@ enum class TokenType : std::uint8_t {
     False,
     Using,
     From,
+    Public,
 
     Plus,
     Minus,

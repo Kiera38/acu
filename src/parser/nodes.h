@@ -211,6 +211,7 @@ struct FuncArg {
 };
 
 struct Func {
+    bool is_public = false;
     bool is_extern = false;
     std::string_view name;
     std::vector<FuncArg> args;

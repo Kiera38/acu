@@ -118,17 +118,30 @@ public:
 
     ir::Package resolve() {
         for (const auto& mod : modules_) {
+            auto module_name = [&] {
+                if (auto name_start = mod.source->module_name.find_last_of('.');
+                    name_start != std::string::npos) {
+                    return std::string_view(mod.source->module_name)
+                        .substr(name_start);
+                }
+                return std::string_view(mod.source->module_name);
+            }();
             module_contexts_.insert(
-                {mod.source->module_name, Context(*mod.source)}
+                {module_name, Context(*mod.source)}
             );
-            context_ = &module_contexts_.at(mod.source->module_name);
+            context_ = &module_contexts_.at(module_name);
+            auto& module = ir_package_.add_module(module_name);
             for (const auto& item : mod.module->items) {
                 item.data.visit(
                     [&](const nodes::Func& func) {
-                        create_func_def(func, item.location);
+                        auto func_ref = create_func_def(func, item.location);
+                        if(func.is_public) {
+                            module.add_func(func.name, func_ref);
+                        }
                     },
                     [&](const nodes::Struct& struct_def) {
-                        create_struct_def(struct_def, item.location);
+                        auto struct_type = create_struct_def(struct_def, item.location);
+                        module.add_struct(struct_def.name, struct_type);
                     },
                     [&](const auto&) {}
                 );
@@ -274,7 +287,7 @@ private:
         }
     }
 
-    void create_struct_def(
+    types::TypeId create_struct_def(
         const nodes::Struct& struct_node, Location location
     ) {
         auto type_id = ir_package_.types().add_struct({
@@ -283,6 +296,7 @@ private:
             .location = location,
         });
         context_->add(struct_node.name, {type_id});
+        return type_id;
     }
 
     void resolve_struct_def(const nodes::Struct& struct_node) {
@@ -302,12 +316,13 @@ private:
         }
     }
 
-    void create_func_def(const nodes::Func& func_node, Location location) {
+    ir::FuncRef create_func_def(const nodes::Func& func_node, Location location) {
         ir::Func ir_func(
             func_node.name, context_->source(), location, func_node.is_extern
         );
         auto func_ref = ir_package_.add(std::move(ir_func));
         context_->add(func_node.name, {func_ref});
+        return func_ref;
     }
 
     void resolve_func_def(const nodes::Func& func_node) {

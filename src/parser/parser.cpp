@@ -47,11 +47,14 @@ public:
                 if (match(TokenType::NewLine)) {
                     continue;
                 }
-                if (match(TokenType::Extern)) {
+                if (match(TokenType::Public)) {
+                    expect(TokenType::Func, "Expected 'func' after 'public'");
+                    items.push_back(parse_function(true, false));
+                } else if (match(TokenType::Extern)) {
                     expect(TokenType::Func, "Expected 'func' after 'extern'");
-                    items.push_back(parse_function(true));
+                    items.push_back(parse_function(false, true));
                 } else if (match(TokenType::Func)) {
-                    items.push_back(parse_function(false));
+                    items.push_back(parse_function(false, false));
                 } else if (match(TokenType::Struct)) {
                     items.push_back(parse_struct());
                 } else {
@@ -271,7 +274,7 @@ private:
         };
     }
 
-    nodes::Item parse_function(bool is_extern) {
+    nodes::Item parse_function(bool is_public, bool is_extern) {
         Token name = expect(TokenType::Identifier, "expected function name");
         expect(TokenType::LParen, "Expected '(' after function name");
         std::vector<nodes::FuncArg> args;
@@ -319,6 +322,7 @@ private:
         return {
             .location = name.location,
             .data = nodes::Func {
+                .is_public = is_public,
                 .is_extern = is_extern,
                 .name = name.value.get<std::string_view>(),
                 .args = std::move(args),
