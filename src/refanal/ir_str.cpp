@@ -75,7 +75,7 @@ std::string to_string(
         str += std::format(
             "  %{} = param {}\n",
             i.index,
-            to_string(func.params()[i], analyzed.ir_package.types())
+            to_string(func.params()[i], analyzed.ir_package->types())
         );
     }
 
@@ -88,7 +88,7 @@ std::string to_string(
             std::string ir_str = std::format(
                 "    %{} : {} = ",
                 ref.index,
-                analyzed.ir_package.types().to_string(inst.type)
+                analyzed.ir_package->types().to_string(inst.type)
             );
 
             inst.data.visit(

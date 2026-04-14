@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "errors.h"
+#include "ir.h"
 #include "semanal/ir.h"
 #include "semanal/semanal.h"
 #include "semanal/types.h"
@@ -346,6 +347,10 @@ private:
                     },
                     [&](ir::FuncRef func_ref) {
                         return package_->func_type(func_ref);
+                    },
+                    [&](ir::UsedFuncRef func_ref) {
+                        auto used_func = package_->used_func(func_ref);
+                        return used_func.type;
                     },
                     [&](types::TypeId type_id) { return types::Const; }
                 );
@@ -719,8 +724,8 @@ private:
 };
 }
 
-AnalyzedPackage type_analyze(ir::Package package, ErrorHandler& err_handler) {
-    AnalyzedPackage result(std::move(package));
+AnalyzedPackage type_analyze(ir::Package& package, ErrorHandler& err_handler) {
+    AnalyzedPackage result(&package);
     std::deque<TypeAnalyzer> analyzers;
     for (auto func_ref : package.funcs().indices()) {
         analyzers.emplace_back(result.ir_package, func_ref, err_handler);

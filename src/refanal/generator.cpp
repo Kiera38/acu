@@ -1,5 +1,6 @@
 #include "refanal/generator.h"
 
+#include "ir.h"
 #include "semanal/semanal.h"
 #include "semanal/types.h"
 #include "variant.h"
@@ -33,7 +34,9 @@ public:
         : apackage_(&apackage),
           afunc_(&afunc),
           sfunc_(&sfunc),
-          rfunc_(sfunc.name(), sfunc.source(), sfunc.location(), sfunc.is_extern()) {}
+          rfunc_(
+              sfunc.name(), sfunc.source(), sfunc.location(), sfunc.is_extern()
+          ) {}
 
     ir::Func generate() {
         const auto& sparams = sfunc_->params();
@@ -177,6 +180,9 @@ public:
                     [&](::acu::ir::FuncRef v) -> ir::Inst::Const::Value {
                         return ir::FuncRef {v.index};
                     },
+                    [&](::acu::ir::UsedFuncRef v) -> ir::Inst::Const::Value {
+                        return ir::UsedFuncRef {.index = v.index};
+                    },
                     [&](types::TypeId v) -> ir::Inst::Const::Value {
                         return false;  // TypeId is handled in Call for
                                        // CreateStruct
@@ -318,7 +324,7 @@ public:
                 const types::Type::Func* defined_func = nullptr;
                 if (func_s_type != types::None) {
                     const auto& f_type =
-                        apackage_->ir_package.types().get(func_s_type);
+                        apackage_->ir_package->types().get(func_s_type);
                     defined_func = f_type.data.get_if<types::Type::Func>();
                 }
 
@@ -329,7 +335,7 @@ public:
                     if (const_val.value.is<types::TypeId>()) {
                         auto struct_type = const_val.value.get<types::TypeId>();
                         const auto& struct_def =
-                            apackage_->ir_package.types()
+                            apackage_->ir_package->types()
                                 .get(struct_type)
                                 .data.get<types::Type::Struct>();
 
@@ -482,7 +488,7 @@ public:
                 auto base_type = afunc_->inst_types[inst.value].type;
 
                 const auto& defined_struct =
-                    apackage_->ir_package.types()
+                    apackage_->ir_package->types()
                         .get(base_type)
                         .data.get<types::Type::Struct>();
                 uint32_t field_idx = 0;
@@ -503,7 +509,7 @@ public:
                 auto base_type = afunc_->inst_types[inst.var].type;
 
                 const auto& defined_struct =
-                    apackage_->ir_package.types()
+                    apackage_->ir_package->types()
                         .get(base_type)
                         .data.get<types::Type::Struct>();
                 uint32_t field_idx = 0;
@@ -543,7 +549,7 @@ public:
                 types::TypeId item_type = types::None;
                 if (base_type != types::None) {
                     const auto& defined_type =
-                        apackage_->ir_package.types().get(base_type);
+                        apackage_->ir_package->types().get(base_type);
                     if (auto at =
                             defined_type.data.get_if<types::Type::Array>()) {
                         item_type = at->item.type;
@@ -618,7 +624,7 @@ public:
                 types::TypeId item_type = types::None;
                 if (array_type != types::None) {
                     const auto& defined_type =
-                        apackage_->ir_package.types().get(array_type);
+                        apackage_->ir_package->types().get(array_type);
                     if (auto at =
                             defined_type.data.get_if<types::Type::Array>()) {
                         item_type = at->item.type;
@@ -645,12 +651,23 @@ public:
     }
 };
 
-ir::Module generate(semanal::AnalyzedPackage& analyzed_package) {
-    ir::Module rmod(analyzed_package.ir_package.types());
+ir::Module generate(
+    semanal::AnalyzedPackage& analyzed_package, const GeneratedModules& modules
+) {
+    ir::Module rmod(analyzed_package.ir_package->types());
     for (const auto& afunc : analyzed_package.analyzed_funcs) {
-        const auto& sfunc = analyzed_package.ir_package.func(afunc.ref);
+        const auto& sfunc = analyzed_package.ir_package->func(afunc.ref);
         FuncGenerator fg(analyzed_package, afunc, sfunc);
         rmod.add(fg.generate());
+    }
+    for (const auto& ufunc : analyzed_package.ir_package->used_funcs()) {
+        rmod.add(
+            ir::UsedFunc {
+                .module = &modules.get(*ufunc.package),
+                .func = ir::FuncRef {.index = ufunc.func.index},
+                .type = ufunc.type
+            }
+        );
     }
     return rmod;
 }

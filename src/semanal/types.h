@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -10,6 +11,7 @@
 #include "variant.h"
 
 namespace acu::types {
+class TypePool;
 struct TypeId {
     std::uint32_t index {0};
 
@@ -45,7 +47,8 @@ struct SpecType {
     Specifier specifier = Specifier::None;
 
     bool operator==(const SpecType& other) const {
-        if(specifier == Specifier::None || other.specifier == Specifier::None) {
+        if (specifier == Specifier::None ||
+            other.specifier == Specifier::None) {
             return type == other.type;
         }
         return type == other.type && specifier == other.specifier;
@@ -88,6 +91,16 @@ struct Type {
         Location location;
     };
 
+    struct UsedStruct {
+        const TypePool* pool {};
+        TypeId type;
+
+        [[nodiscard]] std::string_view name() const;
+        [[nodiscard]] std::span<const StructField> fields() const;
+        [[nodiscard]] const Source& source() const;
+        [[nodiscard]] Location location() const;
+    };
+
     struct Const {};
 
     utils::Variant<
@@ -100,6 +113,7 @@ struct Type {
         Array,
         Ptr,
         Struct,
+        UsedStruct,
         Const>
         data;
 };
@@ -112,6 +126,7 @@ public:
     TypeId add_array(SpecType item, std::uint64_t length);
     TypeId add_ptr(SpecType type);
     TypeId add_struct(const Type::Struct& struct_def);
+    TypeId add_used_struct(Type::UsedStruct used_struct);
     void set_struct_fields(TypeId type, std::vector<Type::StructField> fields);
     [[nodiscard]] std::string to_string(TypeId id) const;
     [[nodiscard]] std::string to_string(SpecType type) const;
@@ -205,12 +220,30 @@ private:
         }
     };
 
+    struct UsedStructHash {
+        std::size_t operator()(Type::UsedStruct used_struct) {
+            std::size_t result = 0;
+            hash_combine(result, used_struct.pool);
+            hash_combine(result, TypeIdHash {}(used_struct.type));
+            return result;
+        }
+    };
+
+    struct UsedStructEqual {
+        bool operator()(Type::UsedStruct struct1, Type::UsedStruct struct2) {
+            return struct1.pool == struct2.pool && struct1.type == struct2.type;
+        }
+    };
+
     std::vector<Type> types_;
     std::unordered_map<Type::Int, TypeId, IntHash, IntEqual> ints_;
     std::unordered_map<Type::Func, TypeId, FuncHash, FuncEqual> funcs_;
     std::unordered_map<Type::Array, TypeId, ArrayHash, ArrayEqual> arrays_;
     std::unordered_map<SpecType, TypeId, SpecTypeHash, SpecTypeEqual> ptrs_;
     std::unordered_map<std::string_view, TypeId> structs_;
+    std::
+        unordered_map<Type::UsedStruct, TypeId, UsedStructHash, UsedStructEqual>
+            used_structs_;
 };
 
 }

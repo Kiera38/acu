@@ -3,7 +3,7 @@
 
 #include <filesystem>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 
 #include "errors.h"
 #include "parser/nodes.h"
@@ -14,6 +14,8 @@
 
 namespace acu {
 struct Package {
+    std::string package_name;
+    std::vector<std::string_view> name;
     std::vector<Source> sources;
     std::vector<nodes::Module> modules;
     ir::Package ir_package;
@@ -40,6 +42,6 @@ public:
 
 private:
     ErrorHandler err_handler_;
-    std::unordered_map<std::string, Package> packages_;
+    std::vector<std::unique_ptr<Package>> packages_;
 };
 }

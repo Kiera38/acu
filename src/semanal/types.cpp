@@ -8,6 +8,23 @@
 #include "ir.h"
 
 namespace acu::types {
+
+std::string_view Type::UsedStruct::name() const {
+    return pool->get(type).data.get<Type::Struct>().name;
+}
+
+std::span<const Type::StructField> Type::UsedStruct::fields() const {
+    return pool->get(type).data.get<Type::Struct>().fields;
+}
+
+const Source& Type::UsedStruct::source() const {
+    return *pool->get(type).data.get<Type::Struct>().source;
+}
+
+Location Type::UsedStruct::location() const {
+    return pool->get(type).data.get<Type::Struct>().location;
+}
+
 TypePool::TypePool() {
     types_.push_back({Type::None {}});
     types_.push_back({Type::Nothing {}});
@@ -80,6 +97,16 @@ TypeId TypePool::add_struct(const Type::Struct& struct_def) {
     return it->second;
 }
 
+TypeId TypePool::add_used_struct(Type::UsedStruct used_struct) {
+    if (auto it = used_structs_.find(used_struct); it != used_structs_.end()) {
+        return it->second;
+    }
+    TypeId id {static_cast<std::uint32_t>(types_.size())};
+    types_.push_back({used_struct});
+    auto [it, inserted] = used_structs_.insert({used_struct, id});
+    return it->second;
+}
+
 void TypePool::set_struct_fields(
     TypeId type, std::vector<Type::StructField> fields
 ) {
@@ -121,6 +148,9 @@ std::string TypePool::to_string(TypeId id) const {
         },
         [&](const Type::Struct& data) -> std::string {
             return std::string(data.name);
+        },
+        [&](const Type::UsedStruct data) -> std::string {
+            return data.pool->to_string(data.type);
         },
         [&](Type::Const) -> std::string { return "struct"; }
     );

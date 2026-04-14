@@ -30,6 +30,10 @@ struct ParamRef {
     std::uint32_t index;
 };
 
+struct UsedFuncRef {
+    std::size_t index;
+};
+
 struct InstRefs {
     std::uint32_t start;
     std::uint32_t count;
@@ -43,7 +47,8 @@ struct Inst {
             double,
             char32_t,
             std::string_view,
-            FuncRef>;
+            FuncRef,
+            UsedFuncRef>;
         Value value;
     };
 
@@ -333,6 +338,12 @@ private:
     IndexVector<Block, BlockRef> blocks_;
     std::vector<InstRef> inst_refs_;
 };
+class Module;
+struct UsedFunc {
+    const Module* module;
+    FuncRef func;
+    types::TypeId type;
+};
 
 class Module {
 public:
@@ -345,13 +356,18 @@ public:
     [[nodiscard]] IndexSpan<Func, FuncRef> funcs() { return funcs_.data(); }
     [[nodiscard]] const Func& func(FuncRef ref) const { return funcs_[ref]; }
 
+    [[nodiscard]] IndexSpan<UsedFunc, UsedFuncRef> used_funcs() { return used_funcs_.data(); }
+    [[nodiscard]] const UsedFunc& used_func(UsedFuncRef ref) const { return used_funcs_[ref]; }
+
     FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }
+    UsedFuncRef add(UsedFunc func) { return used_funcs_.push_back(func); }
 
     types::TypePool& types() { return *types_; }
     [[nodiscard]] const types::TypePool& types() const { return *types_; }
 
 private:
     IndexVector<Func, FuncRef> funcs_;
+    IndexVector<UsedFunc, UsedFuncRef> used_funcs_;
     types::TypePool* types_{};
 };
 

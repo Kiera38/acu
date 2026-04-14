@@ -30,6 +30,7 @@ private:
 
 struct Source {
     std::string module_name;
+    std::vector<std::string_view> name;
     std::filesystem::path path;
     std::string content;
     Strings strings;

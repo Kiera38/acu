@@ -66,6 +66,7 @@ message(STATUS "LLVM LIBS: ${llvm_libs}")
 add_executable(acu
     src/main.cpp
     src/source.cpp
+    src/project.cpp
     src/parser/lexer.cpp
     src/parser/parser.cpp
     src/parser/nodes_output.cpp

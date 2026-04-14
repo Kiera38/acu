@@ -4,6 +4,7 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "../index.h"
@@ -21,6 +22,10 @@ struct InstRef {
 };
 
 struct ParamRef {
+    std::uint32_t index;
+};
+
+struct UsedFuncRef {
     std::uint32_t index;
 };
 
@@ -48,6 +53,7 @@ struct Inst {
             char32_t,
             std::string_view,
             FuncRef,
+            UsedFuncRef,
             types::TypeId>;
         Value value;
     };
@@ -329,6 +335,22 @@ private:
     std::vector<Comparator> comparators_;
 };
 
+class Package;
+
+struct UsedFunc {
+    const Package* package;
+    FuncRef func;
+    types::TypeId type;
+
+    [[nodiscard]] inline const Source& source() const;
+    [[nodiscard]] inline Location location() const;
+    [[nodiscard]] inline std::string_view name() const;
+    [[nodiscard]] inline bool is_extern() const;
+    [[nodiscard]] inline Param param(ParamRef ref) const;
+    [[nodiscard]] inline IndexSpan<const Param, ParamRef> params() const;
+    [[nodiscard]] inline types::SpecType return_type() const;
+};
+
 class Module {
 public:
     Module() = default;
@@ -338,15 +360,9 @@ public:
     void add_struct(std::string_view name, types::TypeId type) {
         structs_.insert({name, type});
     }
-    [[nodiscard]] const std::unordered_map<std::string_view, FuncRef>&
-    public_funcs() const {
-        return public_funcs_;
-    }
-
-    [[nodiscard]] const std::unordered_map<std::string_view, types::TypeId>&
-    structs() const {
-        return structs_;
-    }
+    [[nodiscard]] utils::Variant<std::monostate, FuncRef, types::TypeId> find(
+        std::string_view name
+    ) const;
 
 private:
     std::unordered_map<std::string_view, FuncRef> public_funcs_;
@@ -382,12 +398,42 @@ public:
 
     types::TypeId func_type(FuncRef ref);
 
+    UsedFuncRef add(UsedFunc func) { return used_funcs_.push_back(func); }
+    [[nodiscard]] IndexSpan<const UsedFunc, UsedFuncRef> used_funcs() const {
+        return used_funcs_.data();
+    }
+
+    [[nodiscard]] const UsedFunc& used_func(UsedFuncRef ref) const {
+        return used_funcs_[ref];
+    }
+
 private:
     std::vector<std::string_view> name_;
     std::unordered_map<std::string_view, Module> modules_;
     IndexVector<Func, FuncRef> funcs_;
+    IndexVector<UsedFunc, UsedFuncRef> used_funcs_;
     types::TypePool types_;
 };
+
+const Source& UsedFunc::source() const { return package->func(func).source(); }
+
+Location UsedFunc::location() const { return package->func(func).location(); }
+
+std::string_view UsedFunc::name() const { return package->func(func).name(); }
+
+bool UsedFunc::is_extern() const { return package->func(func).is_extern(); }
+
+Param UsedFunc::param(ParamRef ref) const {
+    return package->func(func).param(ref);
+}
+
+IndexSpan<const Param, ParamRef> UsedFunc::params() const {
+    return package->func(func).params();
+}
+
+types::SpecType UsedFunc::return_type() const {
+    return package->func(func).return_type();
+}
 
 std::string to_string(const Func& func);
 std::string to_string(const Package& package);

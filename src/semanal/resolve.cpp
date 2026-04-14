@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "parser/nodes.h"
+#include "semanal.h"
 #include "semanal/ir.h"
 #include "semanal/semanal.h"
 #include "semanal/types.h"
@@ -41,6 +42,11 @@ std::size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
     return v0[s2.size()];
 }
 
+struct UsedModule {
+    const ir::Package* package;
+    const ir::Module* module;
+};
+
 class Context {
 public:
     Context(const Source& source) : source_(&source) { push(); }
@@ -51,7 +57,9 @@ public:
             ir::ParamRef,
             ir::FuncRef,
             types::TypeId,
-            std::string_view>
+            std::string_view,
+            UsedModule,
+            ir::UsedFuncRef>
             data;
     };
 
@@ -85,96 +93,8 @@ public:
         return names;
     }
 
-private:
-    const Source* source_;
-    std::vector<std::unordered_map<std::string_view, ScopeEntry>> scopes_stack_;
-};
-
-std::uint8_t as_uint8(
-    std::string_view str,
-    const Source& source,
-    Location loc,
-    ErrorHandler& err_handler
-) {
-    std::uint8_t result = 0;
-    auto [ptr, err] =
-        std::from_chars(str.data(), str.data() + str.length(), result);
-    if (err != std::errc {}) {
-        err_handler.error(source, loc, "error in number");
-    }
-    return result;
-}
-
-class Resolver {
-public:
-    Resolver(
-        std::vector<std::string_view> package_name,
-        std::span<const nodes::Module> modules,
-        ErrorHandler& err_handler
-    )
-        : ir_package_(std::move(package_name)),
-          modules_(modules),
-          err_handler_(&err_handler) {}
-
-    ir::Package resolve() {
-        for (const auto& mod : modules_) {
-            auto module_name = get_relative_module_name(mod.source->module_name);
-            module_contexts_.insert(
-                {module_name, Context(*mod.source)}
-            );
-            context_ = &module_contexts_.at(module_name);
-            auto& module = ir_package_.add_module(module_name);
-            for (const auto& item : mod.items) {
-                item.data.visit(
-                    [&](const nodes::Func& func) {
-                        auto func_ref = create_func_def(func, item.location);
-                        if(func.is_public) {
-                            module.add_func(func.name, func_ref);
-                        }
-                    },
-                    [&](const nodes::Struct& struct_def) {
-                        auto struct_type = create_struct_def(struct_def, item.location);
-                        module.add_struct(struct_def.name, struct_type);
-                    },
-                    [&](const auto&) {}
-                );
-            }
-        }
-
-        for (const auto& mod : modules_) {
-            context_ = &module_contexts_.at(get_relative_module_name(mod.source->module_name));
-
-            for (const auto& item : mod.items) {
-                item.data.visit(
-                    [&](const nodes::Use& use) {
-                        resolve_using(use, item.location);
-                    },
-                    [&](const nodes::FromUse& use) {
-                        resolve_using(use, item.location);
-                    },
-                    [&](const nodes::Func& func) { resolve_func_def(func); },
-                    [&](const nodes::Struct& struct_def) {
-                        resolve_struct_def(struct_def);
-                    }
-                );
-            }
-        }
-
-        return std::move(ir_package_);
-    }
-
-private:
-    std::string_view get_relative_module_name(std::string_view full_name) {
-        if (auto name_start = full_name.find_last_of('.');
-            name_start != std::string::npos) {
-            return full_name.substr(name_start + 1);
-        }
-        return full_name;
-    }
-
-private:
     std::string suggest_similar_name(std::string_view name) {
-        auto names = context_->get_all_names();
+        auto names = get_all_names();
         static constexpr std::array<std::string_view, 18> builtins = {
             "Int",
             "Int8",
@@ -216,26 +136,139 @@ private:
         }
         return "";
     }
-    Context* get_module_context(
+
+private:
+    const Source* source_;
+    std::vector<std::unordered_map<std::string_view, ScopeEntry>> scopes_stack_;
+};
+
+std::uint8_t as_uint8(
+    std::string_view str,
+    const Source& source,
+    Location loc,
+    ErrorHandler& err_handler
+) {
+    std::uint8_t result = 0;
+    auto [ptr, err] =
+        std::from_chars(str.data(), str.data() + str.length(), result);
+    if (err != std::errc {}) {
+        err_handler.error(source, loc, "error in number");
+    }
+    return result;
+}
+
+std::string_view get_relative_module_name(std::string_view full_name) {
+    if (auto pos = full_name.find_last_of('.'); pos != std::string_view::npos) {
+        return full_name.substr(pos + 1);
+    }
+    return full_name;
+}
+
+class Resolver {
+public:
+    Resolver(
+        std::vector<std::string_view> package_name,
+        std::span<const nodes::Module> modules,
+        const ProjectContext& project_context,
+        ErrorHandler& err_handler
+    )
+        : ir_package_(std::move(package_name)),
+          modules_(modules),
+          project_context_(&project_context),
+          err_handler_(&err_handler) {}
+
+    ir::Package resolve() {
+        for (const auto& mod : modules_) {
+            auto module_name =
+                get_relative_module_name(mod.source->module_name);
+            module_contexts_.insert({module_name, Context(*mod.source)});
+            context_ = &module_contexts_.at(module_name);
+            auto& module = ir_package_.add_module(module_name);
+            for (const auto& item : mod.items) {
+                item.data.visit(
+                    [&](const nodes::Func& func) {
+                        auto func_ref = create_func_def(func, item.location);
+                        if (func.is_public) {
+                            module.add_func(func.name, func_ref);
+                        }
+                    },
+                    [&](const nodes::Struct& struct_def) {
+                        auto struct_type =
+                            create_struct_def(struct_def, item.location);
+                        module.add_struct(struct_def.name, struct_type);
+                    },
+                    [&](const auto&) {}
+                );
+            }
+        }
+
+        for (const auto& mod : modules_) {
+            context_ = &module_contexts_.at(
+                get_relative_module_name(mod.source->module_name)
+            );
+
+            for (const auto& item : mod.items) {
+                item.data.visit(
+                    [&](const nodes::Use& use) {
+                        resolve_using(use, item.location);
+                    },
+                    [&](const nodes::FromUse& use) {
+                        resolve_using(use, item.location);
+                    },
+                    [&](const nodes::Func& func) { resolve_func_def(func); },
+                    [&](const nodes::Struct& struct_def) {
+                        resolve_struct_def(struct_def);
+                    }
+                );
+            }
+        }
+
+        return std::move(ir_package_);
+    }
+
+private:
+    utils::Variant<Context*, UsedModule> get_module_context(
         std::span<const std::string_view> module_name, Location location
     ) {
         if (module_name.size() < ir_package_.name().size()) {
-            err_handler_->error(
-                context_->source(),
-                location,
-                "using from other package not supported"
-            );
-            return nullptr;
+            if (auto package = project_context_->get_package(
+                    module_name.subspan(0, module_name.size() - 1)
+                )) {
+                return UsedModule {
+                    .package = package,
+                    .module = &package->module(module_name.back())
+                };
+            } else {
+                err_handler_->error(
+                    context_->source(),
+                    location,
+                    std::format(
+                        "module {} not found", join_module_name(module_name)
+                    )
+                );
+                return static_cast<Context*>(nullptr);
+            }
         }
         for (const auto& [package_name, using_name] :
              std::views::zip(ir_package_.name(), module_name)) {
             if (package_name != using_name) {
-                err_handler_->error(
-                    context_->source(),
-                    location,
-                    "using from other package not supported"
-                );
-                return nullptr;
+                if (auto package = project_context_->get_package(
+                        module_name.subspan(0, module_name.size() - 1)
+                    )) {
+                    return UsedModule {
+                        .package = package,
+                        .module = &package->module(module_name.back())
+                    };
+                } else {
+                    err_handler_->error(
+                        context_->source(),
+                        location,
+                        std::format(
+                            "module {} not found", join_module_name(module_name)
+                        )
+                    );
+                    return static_cast<Context*>(nullptr);
+                }
             }
         }
         auto name = std::span(module_name).subspan(ir_package_.name().size());
@@ -255,11 +288,9 @@ private:
         err_handler_->error(
             context_->source(),
             location,
-            std::format(
-                "module '{}' not found", join_module_name(module_name)
-            )
+            std::format("module '{}' not found", join_module_name(module_name))
         );
-        return nullptr;
+        return static_cast<Context*>(nullptr);
     }
 
     std::string join_module_name(
@@ -271,30 +302,69 @@ private:
 
     void resolve_using(const nodes::Use& use, Location location) {
         auto module = get_module_context(use.module_name, location);
-        if (!module) {
-            return;
-        }
-        context_->add(use.module_name.back(), {use.module_name.back()});
+        module.visit(
+            [&](Context* module_context) {
+                if (module_context) {
+                    context_->add(
+                        use.module_name.back(), {use.module_name.back()}
+                    );
+                }
+            },
+            [&](UsedModule module) {
+                context_->add(use.module_name.back(), {module});
+            }
+        );
     }
 
     void resolve_using(const nodes::FromUse& use, Location location) {
-        if (auto module = get_module_context(use.module_name, location)) {
-            for (const auto& item : use.items) {
-                if (auto entry = module->find(item.name)) {
-                    context_->add(item.alias.value_or(item.name), *entry);
-                } else {
-                    err_handler_->error(
-                        context_->source(),
-                        item.location,
-                        std::format(
-                            "name '{}' not found in module '{}'",
-                            item.name,
-                            join_module_name(use.module_name)
-                        )
+        auto module = get_module_context(use.module_name, location);
+        module.visit(
+            [&](Context* module_context) {
+                if (module_context) {
+                    for (const auto& item : use.items) {
+                        if (auto entry = module_context->find(item.name)) {
+                            context_->add(
+                                item.alias.value_or(item.name), *entry
+                            );
+                        } else {
+                            err_handler_->error(
+                                context_->source(),
+                                item.location,
+                                std::format(
+                                    "name '{}' not found in module '{}'",
+                                    item.name,
+                                    join_module_name(use.module_name)
+                                )
+                            );
+                        }
+                    }
+                }
+            },
+            [&](UsedModule module) {
+                for (const auto& item : use.items) {
+                    module.module->find(item.name).visit(
+                        [&](std::monostate) {},
+                        [&](ir::FuncRef ref) {
+                            context_->add(
+                                item.alias.value_or(item.name),
+                                {get_used_func(*module.package, ref)}
+                            );
+                        },
+                        [&](types::TypeId type) {
+                            context_->add(
+                                item.alias.value_or(item.name),
+                                {ir_package_.types().add_used_struct(
+                                    types::Type::UsedStruct {
+                                        .pool = &module.package->types(),
+                                        .type = type
+                                    }
+                                )}
+                            );
+                        }
                     );
                 }
             }
-        }
+        );
     }
 
     types::TypeId create_struct_def(
@@ -326,7 +396,9 @@ private:
         }
     }
 
-    ir::FuncRef create_func_def(const nodes::Func& func_node, Location location) {
+    ir::FuncRef create_func_def(
+        const nodes::Func& func_node, Location location
+    ) {
         ir::Func ir_func(
             func_node.name, context_->source(), location, func_node.is_extern
         );
@@ -394,7 +466,17 @@ private:
         }
     }
 
-    const Context::ScopeEntry* find_in_module(
+    ir::UsedFuncRef get_used_func(const ir::Package& package, ir::FuncRef ref) {
+        ir::UsedFunc used_func {.package = &package, .func = ref};
+        if(auto it = used_funcs_.find(used_func); it != used_funcs_.end()) {
+            return it->second;
+        }
+        auto used_func_ref = ir_package_.add(used_func);
+        used_funcs_.insert({used_func, used_func_ref});
+        return used_func_ref;
+    }
+
+    std::optional<Context::ScopeEntry> find_in_module(
         std::string_view module_name, std::string_view item_name
     ) {
         if (auto entry = context_->find(module_name)) {
@@ -403,12 +485,34 @@ private:
                 if (auto it = module_contexts_.find(mod_name);
                     it != module_contexts_.end()) {
                     if (auto item_entry = it->second.find(item_name)) {
-                        return item_entry;
+                        return *item_entry;
                     }
                 }
+            } else if (auto module = entry->data.get_if<UsedModule>()) {
+                return module->module->find(item_name).visit(
+                    [&](std::monostate) -> std::optional<Context::ScopeEntry> {
+                        return std::nullopt;
+                    },
+                    [&](ir::FuncRef ref) -> std::optional<Context::ScopeEntry> {
+                        return Context::ScopeEntry {
+                            get_used_func(*module->package, ref)
+                        };
+                    },
+                    [&](types::TypeId type)
+                        -> std::optional<Context::ScopeEntry> {
+                        return Context::ScopeEntry {
+                            ir_package_.types().add_used_struct(
+                                types::Type::UsedStruct {
+                                    .pool = &module->package->types(),
+                                    .type = type
+                                }
+                            )
+                        };
+                    }
+                );
             }
         }
-        return nullptr;
+        return std::nullopt;
     }
 
     types::SpecType resolve_type(const nodes::Expr& expr) {
@@ -489,7 +593,7 @@ private:
                         context_->source(),
                         expr.location,
                         std::format("name '{}' not found", name.name),
-                        suggest_similar_name(name.name)
+                        context_->suggest_similar_name(name.name)
                     );
                     return {.type = types::None};
                 }
@@ -834,6 +938,12 @@ private:
                                 .location = expr.location
                             };
                         },
+                        [&](ir::UsedFuncRef func_ref) -> ir::Inst {
+                            return {
+                                .data = ir::Inst::Const {.value = func_ref},
+                                .location = expr.location
+                            };
+                        },
                         [&](types::TypeId struct_ref) -> ir::Inst {
                             return {
                                 .data = ir::Inst::Const {.value = struct_ref},
@@ -852,7 +962,7 @@ private:
                         context_->source(),
                         expr.location,
                         std::format("name '{}' not found", node.name),
-                        suggest_similar_name(node.name)
+                        context_->suggest_similar_name(node.name)
                     );
                     return func.add({
                         .data = ir::Inst::Const {false},
@@ -980,6 +1090,12 @@ private:
                                     .location = expr.location
                                 };
                             },
+                            [&](ir::UsedFuncRef func_ref) -> ir::Inst {
+                                return {
+                                    .data = ir::Inst::Const {.value = func_ref},
+                                    .location = expr.location
+                                };
+                            },
                             [&](types::TypeId struct_ref) -> ir::Inst {
                                 return {
                                     .data =
@@ -1076,16 +1192,70 @@ private:
     ErrorHandler* err_handler_;
     ir::Package ir_package_;
     std::unordered_map<std::string_view, Context> module_contexts_;
+
+    template <class T>
+    static void hash_combine(std::size_t& seed, const T& v) {
+        std::hash<T> hasher;
+        seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    }
+
+    struct UsedFuncHash {
+        std::size_t operator()(ir::UsedFunc func) {
+            std::size_t result = 0;
+            hash_combine(result, func.package);
+            hash_combine(result, func.func.index);
+            return result;
+        }
+    };
+
+    struct UsedFuncEqual {
+        bool operator()(ir::UsedFunc func1, ir::UsedFunc func2) {
+            return func1.package == func2.package && func1.func.index == func2.func.index;
+        }
+    };
+
+    std::unordered_map<ir::UsedFunc, ir::UsedFuncRef, UsedFuncHash, UsedFuncEqual> used_funcs_;
     Context* context_ = nullptr;
+    const ProjectContext* project_context_;
 };
 }
 
 ir::Package resolve(
     std::vector<std::string_view> package_name,
     std::span<const nodes::Module> modules,
+    const ProjectContext& context,
     ErrorHandler& err_handler
 ) {
-    Resolver resolver(std::move(package_name), modules, err_handler);
+    Resolver resolver(std::move(package_name), modules, context, err_handler);
     return resolver.resolve();
+}
+
+std::unordered_set<std::span<const std::string_view>, PackageNameHash>
+get_module_usings(const nodes::Module& module) {
+    std::unordered_set<std::span<const std::string_view>, PackageNameHash>
+        usings;
+    for (const auto& item : module.items) {
+        item.data.visit(
+            [&](const nodes::Use& use) { usings.emplace(use.module_name); },
+            [&](const nodes::FromUse& use) { usings.emplace(use.module_name); },
+            [&](const auto&) {}
+        );
+    }
+    return usings;
+}
+
+}
+
+namespace acu::ir {
+utils::Variant<std::monostate, FuncRef, types::TypeId> Module::find(
+    std::string_view name
+) const {
+    if (auto it = public_funcs_.find(name); it != public_funcs_.end()) {
+        return it->second;
+    }
+    if (auto it = structs_.find(name); it != structs_.end()) {
+        return it->second;
+    }
+    return std::monostate {};
 }
 }
