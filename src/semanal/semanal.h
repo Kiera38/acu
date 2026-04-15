@@ -31,7 +31,7 @@ struct PackageNameHash {
 class ProjectContext {
 public:
     ProjectContext() = default;
-    [[nodiscard]] const ir::Package* get_package(
+    [[nodiscard]] ir::Package* get_package(
         std::span<const std::string_view> name
     ) const {
         if (auto it = packages_.find(name); it != packages_.end()) {
@@ -40,7 +40,7 @@ public:
         return nullptr;
     }
     void add_package(
-        std::span<const std::string_view> name, const ir::Package& package
+        std::span<const std::string_view> name, ir::Package& package
     ) {
         packages_.insert({name, &package});
     }
@@ -48,7 +48,7 @@ public:
 private:
     std::unordered_map<
         std::span<const std::string_view>,
-        const ir::Package*,
+        ir::Package*,
         PackageNameHash>
         packages_;
 };

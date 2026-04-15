@@ -138,6 +138,11 @@ public:
     [[nodiscard]] const Type& get(TypeId id) const { return types_[id.index]; }
     [[nodiscard]] size_t type_count() const { return types_.size(); }
 
+    TypeId copy(const TypePool& pool, TypeId id);
+    SpecType copy(const TypePool& pool, SpecType type) {
+        return {.type = copy(pool, type.type), .specifier = type.specifier};
+    }
+
 private:
     template <class T>
     static void hash_combine(std::size_t& seed, const T& v) {

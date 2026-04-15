@@ -8,7 +8,9 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <ranges>
 #include <stdexcept>
+#include <unordered_map>
 
 #include "codegen/generator.h"
 #include "codegen/jit.h"
@@ -161,7 +163,9 @@ void Project::parse(bool show_ast) {
     }
 }
 
+
 void Project::semanal(bool show_semanal) {
+    // todo: sort
     semanal::ProjectContext context;
     for (auto& package : packages_) {
         semanal_package(
@@ -172,9 +176,9 @@ void Project::semanal(bool show_semanal) {
 }
 
 void refanal_package(
-    Package& package, acu::ErrorHandler& err_handler, bool show_refanal
+    Package& package, const acu::refanal::GeneratedModules& modules, acu::ErrorHandler& err_handler, bool show_refanal
 ) {
-    package.refanal_module = acu::refanal::generate(package.analyzed);
+    package.refanal_module = acu::refanal::generate(package.analyzed, modules);
     acu::refanal::optimize(
         package.refanal_module, package.analyzed, err_handler
     );
@@ -194,8 +198,10 @@ void refanal_package(
 }
 
 void Project::refanal(bool show_refanal) {
+    acu::refanal::GeneratedModules modules;
     for (auto& package : packages_) {
-        refanal_package(*package, err_handler_, show_refanal);
+        refanal_package(*package, modules, err_handler_, show_refanal);
+        modules.add_module(package->ir_package, package->refanal_module);
     }
 }
 

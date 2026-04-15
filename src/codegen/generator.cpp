@@ -6,6 +6,8 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/OptimizationLevel.h>
@@ -41,6 +43,22 @@ public:
         functions_.clear();
         functions_.reserve(ir_module_->funcs().size());
         for (const auto& ir_func : ir_module_->funcs()) {
+            std::vector<llvm::Type*> param_types;
+            for (const auto& param : ir_func.params())
+                param_types.push_back(get_rep_type(param.type));
+            llvm::FunctionType* func_type = llvm::FunctionType::get(
+                get_rep_type(ir_func.return_type()), param_types, false
+            );
+            functions_.push_back(
+                llvm::Function::Create(
+                    func_type,
+                    llvm::Function::ExternalLinkage,
+                    ir_func.name(),
+                    *llvm_module_
+                )
+            );
+        }
+        for (const auto& ir_func : ir_module_->used_funcs()) {
             std::vector<llvm::Type*> param_types;
             for (const auto& param : ir_func.params())
                 param_types.push_back(get_rep_type(param.type));
@@ -110,6 +128,18 @@ private:
                 }
                 return llvm::StructType::create(*context_, fields, s.name);
             },
+            [&](const types::Type::UsedStruct& us) -> llvm::Type* {
+                if (auto* st =
+                        llvm::StructType::getTypeByName(*context_, us.name())) {
+                    return st;
+                }
+                std::vector<llvm::Type*> fields;
+                fields.reserve(us.fields().size());
+                for (const auto& f : us.fields()) {
+                    fields.push_back(get_rep_type(f.type));
+                }
+                return llvm::StructType::create(*context_, fields, us.name());
+            },
             [&](const auto&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(*context_);
             }
@@ -142,6 +172,7 @@ private:
     const llvm::DataLayout* layout_;
     std::unique_ptr<llvm::Module> llvm_module_;
     IndexVector<llvm::Function*, refanal::ir::FuncRef> functions_;
+    IndexVector<llvm::Function*, refanal::ir::UsedFuncRef> used_funcs_;
 
     friend class FuncGenerator;
 };
@@ -230,6 +261,9 @@ private:
                     },
                     [&](refanal::ir::FuncRef f) -> llvm::Value* {
                         return generator->functions_[f];
+                    },
+                    [&](refanal::ir::UsedFuncRef f) -> llvm::Value* {
+                        return generator->used_funcs_[f];
                     }
                 );
             },

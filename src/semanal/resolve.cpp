@@ -43,7 +43,7 @@ std::size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
 }
 
 struct UsedModule {
-    const ir::Package* package;
+    ir::Package* package;
     const ir::Module* module;
 };
 
@@ -466,11 +466,13 @@ private:
         }
     }
 
-    ir::UsedFuncRef get_used_func(const ir::Package& package, ir::FuncRef ref) {
+    ir::UsedFuncRef get_used_func(ir::Package& package, ir::FuncRef ref) {
         ir::UsedFunc used_func {.package = &package, .func = ref};
-        if(auto it = used_funcs_.find(used_func); it != used_funcs_.end()) {
+        if (auto it = used_funcs_.find(used_func); it != used_funcs_.end()) {
             return it->second;
         }
+        used_func.type =
+            ir_package_.types().copy(package.types(), package.func_type(ref));
         auto used_func_ref = ir_package_.add(used_func);
         used_funcs_.insert({used_func, used_func_ref});
         return used_func_ref;
@@ -1210,11 +1212,17 @@ private:
 
     struct UsedFuncEqual {
         bool operator()(ir::UsedFunc func1, ir::UsedFunc func2) {
-            return func1.package == func2.package && func1.func.index == func2.func.index;
+            return func1.package == func2.package &&
+                   func1.func.index == func2.func.index;
         }
     };
 
-    std::unordered_map<ir::UsedFunc, ir::UsedFuncRef, UsedFuncHash, UsedFuncEqual> used_funcs_;
+    std::unordered_map<
+        ir::UsedFunc,
+        ir::UsedFuncRef,
+        UsedFuncHash,
+        UsedFuncEqual>
+        used_funcs_;
     Context* context_ = nullptr;
     const ProjectContext* project_context_;
 };

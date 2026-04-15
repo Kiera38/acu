@@ -77,15 +77,25 @@ void infer_specifiers(
                 },
                 [&](ir::Inst::GetField& gf) -> bool {
                     auto& type = module.types().get(insts[gf.value].type.type);
-                    auto& struct_type = type.data.get<types::Type::Struct>();
-                    return struct_type.fields[gf.index].type.specifier !=
-                           Specifier::Let;
+                    if (auto struct_type =
+                            type.data.get_if<types::Type::Struct>()) {
+                        return struct_type->fields[gf.index].type.specifier !=
+                               Specifier::Let;
+                    } else if (auto used_struct =
+                                   type.data
+                                       .get_if<types::Type::UsedStruct>()) {
+                        return used_struct->fields()[gf.index].type.specifier !=
+                               Specifier::Let;
+                    }
+                    return false;
                 },
                 [&](ir::Inst::GetItem& gi) -> bool {
-                    auto& type =  module.types().get(insts[gi.value].type.type);
-                    if(const auto& arr_type = type.data.get_if<types::Type::Array>()) {
+                    auto& type = module.types().get(insts[gi.value].type.type);
+                    if (const auto& arr_type =
+                            type.data.get_if<types::Type::Array>()) {
                         return arr_type->item.specifier != Specifier::Let;
-                    } else if(const auto& ptr_type = type.data.get_if<types::Type::Ptr>()) {
+                    } else if (const auto& ptr_type =
+                                   type.data.get_if<types::Type::Ptr>()) {
                         return ptr_type->type.specifier != Specifier::Let;
                     }
                     return false;
@@ -138,7 +148,7 @@ void infer_specifiers(
             auto& inst = insts[i];
             inst.data.visit(
                 [&](ir::Inst::Store& s) {
-                    if(insts[s.var].type.specifier == Specifier::Var) {
+                    if (insts[s.var].type.specifier == Specifier::Var) {
                         make_var(s.value, inst.location, "assignment");
                     }
                 },

@@ -175,6 +175,38 @@ std::string TypePool::to_string(SpecType type) const {
     );
 }
 
+TypeId TypePool::copy(const TypePool& pool, TypeId type) {
+    if (type.index <= Const.index) {
+        return type;
+    }
+    return pool.get(type).data.visit(
+        [&](const Type::Func& func) {
+            std::vector<SpecType> params;
+            params.reserve(func.params.size());
+            for (auto param : func.params) {
+                params.push_back(copy(pool, param));
+            }
+            return add_func({
+                .params = std::move(params),
+                .return_type = copy(pool, func.return_type),
+            });
+        },
+        [&](const Type::Array& array) {
+            return add_array(copy(pool, array.item), array.length);
+        },
+        [&](const Type::Ptr& ptr) {
+            return add_ptr(copy(pool, ptr.type));
+        },
+        [&](const Type::Struct&) {
+            return add_used_struct({.pool = &pool, .type = type});
+        },
+        [&](const Type::UsedStruct& used_struct) {
+            return add_used_struct(used_struct);
+        },
+        [&](const auto&) { return type; }
+    );
+}
+
 }
 
 namespace acu::ir {
