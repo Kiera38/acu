@@ -3,7 +3,6 @@
 #include <unordered_map>
 #include "refanal/ir.h"
 #include "semanal/ir.h"
-#include "semanal/semanal.h"
 
 namespace acu::refanal {
 
@@ -20,6 +19,6 @@ private:
     std::unordered_map<const acu::ir::Package*, const ir::Module*> modules_;
 };
 
-ir::Module generate(semanal::AnalyzedPackage& analyzed_package, const GeneratedModules& modules);
+ir::Module generate(acu::ir::AnalyzedPackage& analyzed_package, const GeneratedModules& modules);
 
 }

@@ -10,7 +10,7 @@
 #include <memory>
 #include <ranges>
 #include <stdexcept>
-#include <unordered_map>
+#include <string_view>
 
 #include "codegen/generator.h"
 #include "codegen/jit.h"
@@ -18,6 +18,7 @@
 #include "refanal/generator.h"
 #include "refanal/ir_str.h"
 #include "refanal/optimizer.h"
+#include "semanal/ir.h"
 #include "semanal/semanal.h"
 
 namespace acu {
@@ -60,9 +61,7 @@ acu::nodes::Module parse_module(
     return module;
 }
 
-std::vector<std::string_view> split_name(
-    const std::string& package_name
-) {
+std::vector<std::string_view> split_name(const std::string& package_name) {
     if (package_name.empty()) {
         return {};
     }
@@ -76,7 +75,7 @@ std::vector<std::string_view> split_name(
 void semanal_package(
     const std::string& package_name,
     Package& package,
-    const semanal::ProjectContext& context,
+    const Packages& context,
     acu::ErrorHandler& err_handler,
     bool show_semanal
 ) {
@@ -103,21 +102,21 @@ void semanal_package(
 void create_package(
     const std::filesystem::path& path,
     std::string package_name,
-    std::vector<std::unique_ptr<Package>>& packages
+    IndexVector<Package, PackageRef>& packages,
+    IndexVector<Module, ModuleRef>& modules
 ) {
-    std::vector<acu::Source> sources;
+    std::vector<ModuleRef> module_refs;
     for (const auto& entry : std::filesystem::directory_iterator(path)) {
         if (entry.is_directory()) {
             std::string sub_package_name;
-            if(package_name.empty()) {
+            if (package_name.empty()) {
                 sub_package_name = entry.path().stem().string();
             } else {
-                sub_package_name = package_name + '.' + entry.path().stem().string();
+                sub_package_name =
+                    package_name + '.' + entry.path().stem().string();
             }
             create_package(
-                entry.path(),
-                std::move(sub_package_name),
-                packages
+                entry.path(), std::move(sub_package_name), packages, modules
             );
             continue;
         } else if (!entry.is_regular_file()) {
@@ -130,14 +129,18 @@ void create_package(
         if (path.stem().string() == "package" && package_name.empty()) {
             continue;
         }
-        sources.push_back(read_file(path, package_name));
-        sources.back().name = split_name(sources.back().module_name);
+        module_refs.push_back(
+            modules.push_back(Module {.source = read_file(path, package_name)})
+        );
+        modules.back().source.name =
+            split_name(modules.back().source.module_name);
     }
-    if (sources.empty()) return;
-    auto package = std::make_unique<Package>(Package {
-        .package_name = std::move(package_name), .sources = std::move(sources)
-    });
-    package->name = split_name(package->package_name);
+    if (module_refs.empty()) return;
+    auto package = Package {
+        .package_name = std::move(package_name),
+        .modules = std::move(module_refs)
+    };
+    package.name = split_name(package.package_name);
     packages.push_back(std::move(package));
 }
 
@@ -150,33 +153,35 @@ Project::Project(const std::filesystem::path& input_path) {
             return {input_path.parent_path(), ""};
         }
     }();
-    create_package(package_path, package_name, packages_);
+    create_package(package_path, package_name, packages_, modules_);
 }
 
 void Project::parse(bool show_ast) {
     for (auto& package : packages_) {
-        package->modules.reserve(package->sources.size());
-        for (auto& source : package->sources) {
-            auto module = parse_module(source, err_handler_, show_ast);
-            package->modules.push_back(std::move(module));
+        for (auto ref : package.modules) {
+            auto& module = modules_[ref];
+            module.module = parse_module(module.source, err_handler_, show_ast);
         }
     }
 }
 
-
 void Project::semanal(bool show_semanal) {
     // todo: sort
-    semanal::ProjectContext context;
-    for (auto& package : packages_) {
+    Packages context(*this);
+    sorted_packages_ = context.sort();
+    for (auto ref : sorted_packages_) {
+        auto& package = packages_[ref];
         semanal_package(
-            package->package_name, *package, context, err_handler_, show_semanal
+            package.package_name, package, context, err_handler_, show_semanal
         );
-        context.add_package(package->name, package->ir_package);
     }
 }
 
 void refanal_package(
-    Package& package, const acu::refanal::GeneratedModules& modules, acu::ErrorHandler& err_handler, bool show_refanal
+    Package& package,
+    const acu::refanal::GeneratedModules& modules,
+    acu::ErrorHandler& err_handler,
+    bool show_refanal
 ) {
     package.refanal_module = acu::refanal::generate(package.analyzed, modules);
     acu::refanal::optimize(
@@ -199,9 +204,10 @@ void refanal_package(
 
 void Project::refanal(bool show_refanal) {
     acu::refanal::GeneratedModules modules;
-    for (auto& package : packages_) {
-        refanal_package(*package, modules, err_handler_, show_refanal);
-        modules.add_module(package->ir_package, package->refanal_module);
+    for (auto ref : sorted_packages_) {
+        auto& package = packages_[ref];
+        refanal_package(package, modules, err_handler_, show_refanal);
+        modules.add_module(package.ir_package, package.refanal_module);
     }
 }
 
@@ -252,13 +258,14 @@ void Project::codegen(
     llvm::OptimizationLevel opt,
     const std::filesystem::path& output_path
 ) {
-    for (const auto& package : packages_) {
+    for (auto ref : sorted_packages_) {
+        const auto& package = packages_[ref];
         codegen_package(
-            *package,
+            package,
             show_llvm_ir,
             show_opt_llvm_ir,
             opt,
-            output_path / std::format("{}.o", package->package_name)
+            output_path / std::format("{}.o", package.package_name)
         );
     }
 }
@@ -272,11 +279,12 @@ void Project::run_jit(
         std::cerr << "Failed to create JIT\n";
         throw std::runtime_error("");
     }
-    for (const auto& package : packages_) {
+    for (auto ref : sorted_packages_) {
+        const auto& package = packages_[ref];
         auto context = std::make_unique<llvm::LLVMContext>();
         auto llvm_module = generate_llvm(
             *context,
-            package->refanal_module,
+            package.refanal_module,
             opt,
             jit->get_data_layout(),
             show_llvm_ir,
@@ -297,6 +305,57 @@ void Project::run_jit(
     } else {
         std::cerr << "Failed to find main function in JIT\n";
         throw std::runtime_error("");
+    }
+}
+
+const nodes::Module& Packages::module(ModuleRef ref) const {
+    return project_->modules_[ref].module;
+}
+
+const ir::Package& Packages::package(
+    std::span<const std::string_view> name
+) const {
+    return project_->packages_[packages_.at(name)].ir_package;
+}
+
+std::span<const std::string_view> get_package_name(const Module& module) {
+    if (module.source.path.filename().string() == "package.acu") {
+        return module.source.name;
+    }
+    return std::span(module.source.name)
+        .subspan(0, module.source.name.size() - 1);
+}
+
+std::pair<ir::Package*, ir::Module*> Packages::module_package(
+    std::span<const std::string_view> module_name
+) const {
+    auto& module = project_->modules_[modules_.at(module_name)];
+    auto package_name = get_package_name(module);
+    auto& package = project_->packages_[packages_.at(package_name)];
+    auto& ir_module = package.ir_package.module(module_name.back());
+    return {&package.ir_package, &ir_module};
+}
+
+Packages::Packages(Project& project) : project_(&project) {
+    for (auto ref : project.modules_.indices()) {
+        modules_.insert({project.modules_[ref].source.name, ref});
+    }
+    for (auto ref : project.packages_.indices()) {
+        packages_.insert({project.packages_[ref].name, ref});
+    }
+    for (auto ref : project.packages_.indices()) {
+        std::unordered_set<PackageRef, hash<PackageRef>> usings;
+        for (auto module_ref : project.packages_[ref].modules) {
+            auto module_usings =
+                semanal::get_module_usings(project.modules_[module_ref].module);
+            for (auto module_name : module_usings) {
+                // todo: check module name
+                auto package_name =
+                    get_package_name(project.modules_[modules_[module_name]]);
+                usings.emplace(packages_[package_name]);
+            }
+        }
+        package_usings_.push_back(std::move(usings));
     }
 }
 

@@ -11,6 +11,20 @@ concept Index = requires(T i) {
     { i.index } -> std::convertible_to<std::size_t>;
 };
 
+template<Index I>
+struct hash {
+    std::size_t operator()(I i) {
+        return std::hash<std::size_t>{}(i.index);
+    }
+};
+
+template<Index I>
+struct equal_to {
+    bool operator()(I i1, I i2) {
+        return i1.index == i2.index;
+    }
+};
+
 template <Index I>
 class IndexIterator {
 public:
@@ -148,6 +162,8 @@ public:
 
     auto begin() const { return vec.begin(); }
     auto end() const { return vec.end(); }
+    auto begin() { return vec.begin(); }
+    auto end() { return vec.end(); }
 
     using index_iterator = IndexIterator<I>;
     using index_range = IndexRange<I>;

@@ -338,8 +338,8 @@ private:
 class Package;
 
 struct UsedFunc {
-    const Package* package;
-    FuncRef func;
+    const Package* package{};
+    FuncRef func{};
     types::TypeId type;
 
     [[nodiscard]] inline const Source& source() const;
@@ -413,6 +413,16 @@ private:
     IndexVector<Func, FuncRef> funcs_;
     IndexVector<UsedFunc, UsedFuncRef> used_funcs_;
     types::TypePool types_;
+};
+
+struct AnalyzedFunc {
+    FuncRef ref {};
+    IndexVector<types::SpecType, InstRef> inst_types;
+};
+
+struct AnalyzedPackage {
+    Package* ir_package;
+    std::vector<AnalyzedFunc> analyzed_funcs;
 };
 
 const Source& UsedFunc::source() const { return package->func(func).source(); }

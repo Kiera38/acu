@@ -169,7 +169,7 @@ public:
     Resolver(
         std::vector<std::string_view> package_name,
         std::span<const nodes::Module> modules,
-        const ProjectContext& project_context,
+        const Packages& project_context,
         ErrorHandler& err_handler
     )
         : ir_package_(std::move(package_name)),
@@ -231,44 +231,16 @@ private:
         std::span<const std::string_view> module_name, Location location
     ) {
         if (module_name.size() < ir_package_.name().size()) {
-            if (auto package = project_context_->get_package(
-                    module_name.subspan(0, module_name.size() - 1)
-                )) {
-                return UsedModule {
-                    .package = package,
-                    .module = &package->module(module_name.back())
-                };
-            } else {
-                err_handler_->error(
-                    context_->source(),
-                    location,
-                    std::format(
-                        "module {} not found", join_module_name(module_name)
-                    )
-                );
-                return static_cast<Context*>(nullptr);
-            }
+            auto used = project_context_->module_package(module_name);
+            return UsedModule {.package = used.first, .module = used.second};
         }
         for (const auto& [package_name, using_name] :
              std::views::zip(ir_package_.name(), module_name)) {
             if (package_name != using_name) {
-                if (auto package = project_context_->get_package(
-                        module_name.subspan(0, module_name.size() - 1)
-                    )) {
-                    return UsedModule {
-                        .package = package,
-                        .module = &package->module(module_name.back())
-                    };
-                } else {
-                    err_handler_->error(
-                        context_->source(),
-                        location,
-                        std::format(
-                            "module {} not found", join_module_name(module_name)
-                        )
-                    );
-                    return static_cast<Context*>(nullptr);
-                }
+                auto used = project_context_->module_package(module_name);
+                return UsedModule {
+                    .package = used.first, .module = used.second
+                };
             }
         }
         auto name = std::span(module_name).subspan(ir_package_.name().size());
@@ -1224,28 +1196,32 @@ private:
         UsedFuncEqual>
         used_funcs_;
     Context* context_ = nullptr;
-    const ProjectContext* project_context_;
+    const Packages* project_context_;
 };
 }
 
 ir::Package resolve(
     std::vector<std::string_view> package_name,
     std::span<const nodes::Module> modules,
-    const ProjectContext& context,
+    const Packages& context,
     ErrorHandler& err_handler
 ) {
     Resolver resolver(std::move(package_name), modules, context, err_handler);
     return resolver.resolve();
 }
 
-std::unordered_set<std::span<const std::string_view>, PackageNameHash>
-get_module_usings(const nodes::Module& module) {
-    std::unordered_set<std::span<const std::string_view>, PackageNameHash>
-        usings;
+std::vector<std::span<const std::string_view>> get_module_usings(
+    const nodes::Module& module
+) {
+    std::vector<std::span<const std::string_view>> usings;
     for (const auto& item : module.items) {
         item.data.visit(
-            [&](const nodes::Use& use) { usings.emplace(use.module_name); },
-            [&](const nodes::FromUse& use) { usings.emplace(use.module_name); },
+            [&](const nodes::Use& use) {
+                usings.emplace_back(use.module_name);
+            },
+            [&](const nodes::FromUse& use) {
+                usings.emplace_back(use.module_name);
+            },
             [&](const auto&) {}
         );
     }
