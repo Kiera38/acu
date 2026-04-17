@@ -27,6 +27,10 @@
 
 namespace acu::codegen {
 namespace {
+std::string join_module_name(std::span<const std::string_view> module_name) {
+    return module_name | std::views::join_with('.') |
+           std::ranges::to<std::string>();
+}
 class Generator {
 public:
     Generator(
@@ -37,7 +41,7 @@ public:
         : context_(&context), ir_module_(&module), layout_(&layout) {}
 
     std::unique_ptr<llvm::Module> generate() {
-        llvm_module_ = std::make_unique<llvm::Module>("acu_module", *context_);
+        llvm_module_ = std::make_unique<llvm::Module>(join_module_name(ir_module_->name()), *context_);
         llvm_module_->setDataLayout(*layout_);
 
         functions_.clear();
@@ -53,7 +57,7 @@ public:
                 llvm::Function::Create(
                     func_type,
                     llvm::Function::ExternalLinkage,
-                    ir_func.name(),
+                    ir_func.mangle_name(),
                     *llvm_module_
                 )
             );
@@ -69,7 +73,7 @@ public:
                 llvm::Function::Create(
                     func_type,
                     llvm::Function::ExternalLinkage,
-                    ir_func.name(),
+                    ir_func.mangle_name(),
                     *llvm_module_
                 )
             );

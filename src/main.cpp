@@ -113,7 +113,7 @@ std::optional<Config> parse_args(std::span<char*> argv) {
     }
 
     if (config.mode == RunMode::Compile && config.output_path.empty()) {
-        config.output_path = config.input_path.stem().string() + ".o";
+        config.output_path = std::filesystem::path(config.input_path).replace_extension(".o");
     }
     return config;
 }

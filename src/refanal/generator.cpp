@@ -654,7 +654,7 @@ public:
 ir::Module generate(
     acu::ir::AnalyzedPackage& analyzed_package, const GeneratedModules& modules
 ) {
-    ir::Module rmod(analyzed_package.ir_package->types());
+    ir::Module rmod(analyzed_package.ir_package->name(), analyzed_package.ir_package->types());
     for (const auto& afunc : analyzed_package.analyzed_funcs) {
         const auto& sfunc = analyzed_package.ir_package->func(afunc.ref);
         FuncGenerator fg(analyzed_package, afunc, sfunc);

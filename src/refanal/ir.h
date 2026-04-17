@@ -227,12 +227,26 @@ struct Param {
 
 class Func {
 public:
-    Func(std::string_view name, const Source& source, Location location, bool is_extern = false)
-        : name_(name), source_(&source), location_(location), is_extern_(is_extern) {}
+    Func(
+        std::string_view name,
+        const Source& source,
+        Location location,
+        bool is_extern = false
+    )
+        : name_(name),
+          source_(&source),
+          location_(location),
+          is_extern_(is_extern) {}
 
     [[nodiscard]] std::string_view name() const { return name_; }
-    [[nodiscard]] const Source& source() const {return *source_;}
-    [[nodiscard]] Location location() const {return location_;}
+    [[nodiscard]] const Source& source() const { return *source_; }
+    [[nodiscard]] std::string mangle_name() const {
+        if (is_extern_ || source_->module_name.empty()) {
+            return std::string(name_);
+        }
+        return source_->module_name + '.' + std::string(name_);
+    }
+    [[nodiscard]] Location location() const { return location_; }
     [[nodiscard]] bool is_extern() const { return is_extern_; }
     [[nodiscard]] Param param(ParamRef ref) const { return params_[ref]; }
     [[nodiscard]] IndexSpan<const Param, ParamRef> params() const {
@@ -340,12 +354,13 @@ private:
 };
 class Module;
 struct UsedFunc {
-    const Module* module{};
-    FuncRef func{};
+    const Module* module {};
+    FuncRef func {};
     types::TypeId type;
 
     [[nodiscard]] inline std::string_view name() const;
     [[nodiscard]] inline const Source& source() const;
+    [[nodiscard]] inline std::string mangle_name() const;
     [[nodiscard]] inline Location location() const;
     [[nodiscard]] inline bool is_extern() const;
     [[nodiscard]] inline Param param(ParamRef ref) const;
@@ -356,7 +371,9 @@ struct UsedFunc {
 class Module {
 public:
     Module() = default;
-    Module(types::TypePool& types): types_(&types) {}
+    Module(std::span<const std::string_view> name, types::TypePool& types)
+        : name_(name), types_(&types) {}
+    [[nodiscard]] std::span<const std::string_view> name() const { return name_; }
     Func& func(FuncRef ref) { return funcs_[ref]; }
     [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const {
         return funcs_.data();
@@ -364,9 +381,15 @@ public:
     [[nodiscard]] IndexSpan<Func, FuncRef> funcs() { return funcs_.data(); }
     [[nodiscard]] const Func& func(FuncRef ref) const { return funcs_[ref]; }
 
-    [[nodiscard]] IndexSpan<UsedFunc, UsedFuncRef> used_funcs() { return used_funcs_.data(); }
-    [[nodiscard]] IndexSpan<const UsedFunc, UsedFuncRef> used_funcs() const { return used_funcs_.data(); }
-    [[nodiscard]] const UsedFunc& used_func(UsedFuncRef ref) const { return used_funcs_[ref]; }
+    [[nodiscard]] IndexSpan<UsedFunc, UsedFuncRef> used_funcs() {
+        return used_funcs_.data();
+    }
+    [[nodiscard]] IndexSpan<const UsedFunc, UsedFuncRef> used_funcs() const {
+        return used_funcs_.data();
+    }
+    [[nodiscard]] const UsedFunc& used_func(UsedFuncRef ref) const {
+        return used_funcs_[ref];
+    }
 
     FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }
     UsedFuncRef add(UsedFunc func) { return used_funcs_.push_back(func); }
@@ -375,23 +398,19 @@ public:
     [[nodiscard]] const types::TypePool& types() const { return *types_; }
 
 private:
+    std::span<const std::string_view> name_;
     IndexVector<Func, FuncRef> funcs_;
     IndexVector<UsedFunc, UsedFuncRef> used_funcs_;
-    types::TypePool* types_{};
+    types::TypePool* types_ {};
 };
 
-std::string_view UsedFunc::name() const {
-    return module->func(func).name();
+std::string_view UsedFunc::name() const { return module->func(func).name(); }
+const Source& UsedFunc::source() const { return module->func(func).source(); }
+std::string UsedFunc::mangle_name() const {
+    return module->func(func).mangle_name();
 }
-const Source& UsedFunc::source() const {
-    return module->func(func).source();
-}
-Location UsedFunc::location() const {
-    return module->func(func).location();
-}
-bool UsedFunc::is_extern() const {
-    return module->func(func).is_extern();
-}
+Location UsedFunc::location() const { return module->func(func).location(); }
+bool UsedFunc::is_extern() const { return module->func(func).is_extern(); }
 Param UsedFunc::param(ParamRef ref) const {
     return module->func(func).param(ref);
 }

@@ -126,9 +126,6 @@ void create_package(
         if (path.extension().string() != ".acu") {
             continue;
         }
-        if (path.stem().string() == "package" && package_name.empty()) {
-            continue;
-        }
         Module module {.source = read_file(path, package_name)};
         module_refs.push_back(
             modules.emplace_back(read_file(path, package_name), nullptr)
@@ -268,6 +265,9 @@ void Project::codegen(
     llvm::OptimizationLevel opt,
     const std::filesystem::path& output_path
 ) {
+    if(!std::filesystem::exists(output_path)) {
+        std::filesystem::create_directories(output_path);
+    }
     for (auto ref : sorted_packages_) {
         const auto& package = packages_[ref];
         codegen_package(

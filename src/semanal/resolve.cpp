@@ -265,11 +265,8 @@ private:
         }
         auto name = std::span(module_name).subspan(ir_package_.name().size());
         if (name.empty()) {
-            if (!ir_package_.name().empty()) {
-                if (auto it = module_contexts_.find(ir_package_.name().back());
-                    it != module_contexts_.end()) {
-                    return &it->second;
-                }
+            if(root_context_.has_value()) {
+                return &*root_context_;
             }
         } else if (name.size() == 1) {
             if (auto it = module_contexts_.find(name[0]);
@@ -277,12 +274,10 @@ private:
                 return &it->second;
             }
         }
-        err_handler_->error(
-            context_->source(),
-            location,
-            std::format("module '{}' not found", join_module_name(module_name))
-        );
-        return static_cast<Context*>(nullptr);
+        auto used = project_context_->module_package(module_name);
+        return UsedModule {
+            .package = used.first, .module = used.second
+        };
     }
 
     std::string join_module_name(
