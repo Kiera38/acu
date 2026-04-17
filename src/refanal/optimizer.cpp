@@ -218,7 +218,7 @@ struct Optimizer {
 
 void optimize(
     ir::Module& module,
-    semanal::AnalyzedPackage& analyzed,
+    acu::ir::AnalyzedPackage& analyzed,
     ErrorHandler& err_handler
 ) {
     infer_specifiers(module, err_handler);

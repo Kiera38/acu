@@ -724,11 +724,11 @@ private:
 };
 }
 
-AnalyzedPackage type_analyze(ir::Package& package, ErrorHandler& err_handler) {
-    AnalyzedPackage result(&package);
+ir::AnalyzedPackage type_analyze(ir::Package& package, ErrorHandler& err_handler) {
+    ir::AnalyzedPackage result(&package);
     std::deque<TypeAnalyzer> analyzers;
     for (auto func_ref : package.funcs().indices()) {
-        analyzers.emplace_back(result.ir_package, func_ref, err_handler);
+        analyzers.emplace_back(package, func_ref, err_handler);
     }
     while (!analyzers.empty()) {
         auto analyzer = std::move(analyzers.front());

@@ -19,6 +19,7 @@ std::string to_string(const Inst::Const::Value& value) {
         [&](char32_t v) { return std::to_string(v); },
         [&](std::string_view v) { return std::string(v); },
         [&](FuncRef func) { return std::format("func {}", func.index); },
+        [&](UsedFuncRef func) { return std::format("used func {}", func.index); },
         [&](types::TypeId type) { return std::format("type {}", type.index); }
     );
 }

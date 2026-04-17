@@ -11,12 +11,12 @@
 
 namespace acu::semanal {
 
-std::vector<std::span<const std::string_view>>
+std::vector<std::pair<std::span<const std::string_view>, Location>>
 get_module_usings(const nodes::Module& module);
 
 ir::Package resolve(
     std::vector<std::string_view> package_name,
-    std::span<ModuleRef> modules,
+    std::span<const ModuleRef> modules,
     const Packages& context,
     ErrorHandler& err_handler
 );

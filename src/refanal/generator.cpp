@@ -1,7 +1,7 @@
 #include "refanal/generator.h"
 
 #include "ir.h"
-#include "semanal/semanal.h"
+#include "semanal/ir.h"
 #include "semanal/types.h"
 #include "variant.h"
 
@@ -11,8 +11,8 @@ using SemInstRef = acu::ir::InstRef;
 using SemInst = acu::ir::Inst;
 
 class FuncGenerator {
-    const semanal::AnalyzedPackage* apackage_;
-    const semanal::AnalyzedFunc* afunc_;
+    const acu::ir::AnalyzedPackage* apackage_;
+    const acu::ir::AnalyzedFunc* afunc_;
     const ::acu::ir::Func* sfunc_;
     ir::Func rfunc_;
 
@@ -27,8 +27,8 @@ class FuncGenerator {
 
 public:
     FuncGenerator(
-        const semanal::AnalyzedPackage& apackage,
-        const semanal::AnalyzedFunc& afunc,
+        const acu::ir::AnalyzedPackage& apackage,
+        const acu::ir::AnalyzedFunc& afunc,
         const ::acu::ir::Func& sfunc
     )
         : apackage_(&apackage),
@@ -652,7 +652,7 @@ public:
 };
 
 ir::Module generate(
-    semanal::AnalyzedPackage& analyzed_package, const GeneratedModules& modules
+    acu::ir::AnalyzedPackage& analyzed_package, const GeneratedModules& modules
 ) {
     ir::Module rmod(analyzed_package.ir_package->types());
     for (const auto& afunc : analyzed_package.analyzed_funcs) {

@@ -13,14 +13,14 @@ concept Index = requires(T i) {
 
 template<Index I>
 struct hash {
-    std::size_t operator()(I i) {
+    std::size_t operator()(I i) const {
         return std::hash<std::size_t>{}(i.index);
     }
 };
 
 template<Index I>
 struct equal_to {
-    bool operator()(I i1, I i2) {
+    bool operator()(I i1, I i2) const {
         return i1.index == i2.index;
     }
 };
@@ -131,6 +131,7 @@ public:
 
     IndexVector() = default;
     IndexVector(std::size_t size, T items) : vec(size, items) {}
+    IndexVector(std::size_t size) : vec(size) {}
 
     I push_back(const T& val) {
         auto index = static_cast<decltype(I::index)>(vec.size());

@@ -68,10 +68,7 @@ public:
                 synchronize_items();
             }
         }
-        return nodes::Module {
-            .source = source_,
-            .items = std::move(items)
-        };
+        return nodes::Module {.source = source_, .items = std::move(items)};
     }
 
 private:
@@ -277,7 +274,9 @@ private:
         };
     }
 
-    nodes::Item parse_function(bool is_public, bool is_extern) {
+    nodes::Item parse_function(
+        bool is_public, bool is_extern
+    ) {
         Token name = expect(TokenType::Identifier, "expected function name");
         expect(TokenType::LParen, "Expected '(' after function name");
         std::vector<nodes::FuncArg> args;
@@ -312,7 +311,10 @@ private:
         if (is_extern) {
             if (!match(TokenType::NewLine)) {
                 return_type = parse_type();
-                expect(TokenType::NewLine, "Expected newline after extern function declaration");
+                expect(
+                    TokenType::NewLine,
+                    "Expected newline after extern function declaration"
+                );
             }
         } else {
             if (!match(TokenType::Colon)) {
@@ -763,7 +765,9 @@ private:
                 );
             }
             default:
-                err_handler_->error(*source_, token.location, "expected expression");
+                err_handler_->error(
+                    *source_, token.location, "expected expression"
+                );
                 throw ParseError("expected expression");
         }
     }

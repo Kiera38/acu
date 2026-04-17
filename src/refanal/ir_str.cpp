@@ -2,7 +2,6 @@
 
 #include <format>
 #include <string>
-#include "semanal/semanal.h"
 
 namespace acu::refanal {
 
@@ -19,7 +18,8 @@ std::string to_string(const ir::Inst::Const::Value& value) {
         [&](double v) { return std::to_string(v); },
         [&](char32_t v) { return std::to_string(v); },
         [&](std::string_view v) { return std::string(v); },
-        [&](ir::FuncRef func) { return std::format("func {}", func.index); }
+        [&](ir::FuncRef func) { return std::format("func {}", func.index); },
+        [&](ir::UsedFuncRef func) { return std::format("used func {}", func.index); }
     );
 }
 
@@ -66,7 +66,7 @@ std::string comparison_op_to_string(ir::Inst::ComparisonOp op) {
 }  // namespace
 
 std::string to_string(
-    const ir::Func& func, const semanal::AnalyzedPackage& analyzed
+    const ir::Func& func, const acu::ir::AnalyzedPackage& analyzed
 ) {
     std::string str;
     str += std::format("Func {}\n", func.name());
@@ -223,7 +223,7 @@ std::string to_string(
 }
 
 std::string to_string(
-    const ir::Module& module, const semanal::AnalyzedPackage& analyzed
+    const ir::Module& module, const acu::ir::AnalyzedPackage& analyzed
 ) {
     std::string str;
     for (const auto& func : module.funcs()) {

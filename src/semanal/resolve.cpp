@@ -13,11 +13,12 @@
 #include <vector>
 
 #include "parser/nodes.h"
-#include "semanal.h"
+#include "project.h"
 #include "semanal/ir.h"
 #include "semanal/semanal.h"
 #include "semanal/types.h"
 #include "source.h"
+#include "variant.h"
 
 namespace acu::semanal {
 namespace {
@@ -168,7 +169,7 @@ class Resolver {
 public:
     Resolver(
         std::vector<std::string_view> package_name,
-        std::span<const nodes::Module> modules,
+        std::span<const ModuleRef> modules,
         const Packages& project_context,
         ErrorHandler& err_handler
     )
@@ -178,12 +179,25 @@ public:
           err_handler_(&err_handler) {}
 
     ir::Package resolve() {
-        for (const auto& mod : modules_) {
-            auto module_name =
-                get_relative_module_name(mod.source->module_name);
-            module_contexts_.insert({module_name, Context(*mod.source)});
-            context_ = &module_contexts_.at(module_name);
-            auto& module = ir_package_.add_module(module_name);
+        for (auto ref : modules_) {
+            const auto& mod = project_context_->module(ref);
+
+            auto& module = [&] -> ir::Module& {
+                if (ir_package_.name().size() == mod.source->name.size()) {
+                    root_context_ = Context(*mod.source);
+                    return ir_package_.root_module();
+                } else {
+                    auto module_name =
+                        get_relative_module_name(mod.source->name.back());
+                    module_contexts_.insert(
+                        {module_name, Context(*mod.source)}
+                    );
+                    return ir_package_.add_module(module_name);
+                }
+            }();
+            set_context(mod.source->name);
+
+
             for (const auto& item : mod.items) {
                 item.data.visit(
                     [&](const nodes::Func& func) {
@@ -202,10 +216,9 @@ public:
             }
         }
 
-        for (const auto& mod : modules_) {
-            context_ = &module_contexts_.at(
-                get_relative_module_name(mod.source->module_name)
-            );
+        for (auto ref : modules_) {
+            const auto& mod = project_context_->module(ref);
+            set_context(mod.source->name);
 
             for (const auto& item : mod.items) {
                 item.data.visit(
@@ -227,6 +240,13 @@ public:
     }
 
 private:
+    void set_context(std::span<const std::string_view> module_name) {
+        if(module_name.size() == ir_package_.name().size()) {
+            context_ = &*root_context_;
+        } else {
+            context_ = &module_contexts_.at(module_name.back());
+        }
+    }
     utils::Variant<Context*, UsedModule> get_module_context(
         std::span<const std::string_view> module_name, Location location
     ) {
@@ -272,18 +292,117 @@ private:
                std::ranges::to<std::string>();
     }
 
+    bool flatten_module_path(
+        const nodes::Expr& expr, std::vector<std::string_view>& path
+    ) {
+        if (auto* name_node = expr.value.get_if<nodes::Expr::Name>()) {
+            path.push_back(name_node->name);
+            return true;
+        }
+        if (auto* node = expr.value.get_if<nodes::Expr::GetAttr>()) {
+            if (!flatten_module_path(*node->value, path)) {
+                return false;
+            }
+            path.push_back(node->name);
+            return true;
+        }
+        return false;
+    }
+
+    std::optional<Context::ScopeEntry> find_in_module_item(
+        const utils::Variant<Context*, UsedModule>& module,
+        std::string_view item_name
+    ) {
+        return module.visit(
+            [&](Context* module_context) -> std::optional<Context::ScopeEntry> {
+                if (auto entry = module_context->find(item_name)) {
+                    return *entry;
+                }
+                return std::nullopt;
+            },
+            [&](UsedModule module) -> std::optional<Context::ScopeEntry> {
+                return module.module->find(item_name).visit(
+                    [&](std::monostate) -> std::optional<Context::ScopeEntry> {
+                        return std::nullopt;
+                    },
+                    [&](ir::FuncRef ref) -> std::optional<Context::ScopeEntry> {
+                        return Context::ScopeEntry {
+                            get_used_func(*module.package, ref)
+                        };
+                    },
+                    [&](types::TypeId type)
+                        -> std::optional<Context::ScopeEntry> {
+                        return Context::ScopeEntry {
+                            ir_package_.types().add_used_struct(
+                                types::Type::UsedStruct {
+                                    .pool = &module.package->types(),
+                                    .type = type
+                                }
+                            )
+                        };
+                    }
+                );
+            }
+        );
+    }
+
+    std::optional<Context::ScopeEntry> find_in_imported_module_chain(
+        const std::vector<std::string_view>& path
+    ) {
+        std::optional<Context::ScopeEntry> result;
+        size_t best_match = 0;
+
+        for (const auto& imported : imported_modules_) {
+            if (imported.path.size() >= path.size()) {
+                continue;
+            }
+            if (!std::equal(
+                    imported.path.begin(), imported.path.end(), path.begin()
+                )) {
+                continue;
+            }
+
+            auto remaining = std::span(path).subspan(imported.path.size());
+            if (remaining.empty()) {
+                continue;
+            }
+            if (imported.path.size() < best_match) {
+                continue;
+            }
+
+            if (auto entry =
+                    find_in_module_item(imported.module, remaining[0])) {
+                if (remaining.size() == 1) {
+                    result = *entry;
+                    best_match = imported.path.size();
+                }
+            }
+        }
+
+        return result;
+    }
+
+    struct ImportedModule {
+        std::span<const std::string_view> path;
+        utils::Variant<Context*, UsedModule> module;
+    };
+
     void resolve_using(const nodes::Use& use, Location location) {
         auto module = get_module_context(use.module_name, location);
         module.visit(
             [&](Context* module_context) {
                 if (module_context) {
-                    context_->add(
-                        use.module_name.back(), {use.module_name.back()}
+                    imported_modules_.push_back(
+                        ImportedModule {
+                            .path = use.module_name, .module = module_context
+                        }
                     );
                 }
             },
             [&](UsedModule module) {
-                context_->add(use.module_name.back(), {module});
+                imported_modules_.push_back(
+                    ImportedModule {.path = use.module_name, .module = module}
+                );
             }
         );
     }
@@ -450,45 +569,6 @@ private:
         return used_func_ref;
     }
 
-    std::optional<Context::ScopeEntry> find_in_module(
-        std::string_view module_name, std::string_view item_name
-    ) {
-        if (auto entry = context_->find(module_name)) {
-            if (auto* mod_name_ptr = entry->data.get_if<std::string_view>()) {
-                auto mod_name = *mod_name_ptr;
-                if (auto it = module_contexts_.find(mod_name);
-                    it != module_contexts_.end()) {
-                    if (auto item_entry = it->second.find(item_name)) {
-                        return *item_entry;
-                    }
-                }
-            } else if (auto module = entry->data.get_if<UsedModule>()) {
-                return module->module->find(item_name).visit(
-                    [&](std::monostate) -> std::optional<Context::ScopeEntry> {
-                        return std::nullopt;
-                    },
-                    [&](ir::FuncRef ref) -> std::optional<Context::ScopeEntry> {
-                        return Context::ScopeEntry {
-                            get_used_func(*module->package, ref)
-                        };
-                    },
-                    [&](types::TypeId type)
-                        -> std::optional<Context::ScopeEntry> {
-                        return Context::ScopeEntry {
-                            ir_package_.types().add_used_struct(
-                                types::Type::UsedStruct {
-                                    .pool = &module->package->types(),
-                                    .type = type
-                                }
-                            )
-                        };
-                    }
-                );
-            }
-        }
-        return std::nullopt;
-    }
-
     types::SpecType resolve_type(const nodes::Expr& expr) {
         return expr.value.visit(
             [&](const nodes::Expr::Name& name) -> types::SpecType {
@@ -628,10 +708,9 @@ private:
                 };
             },
             [&](const nodes::Expr::GetAttr& node) -> types::SpecType {
-                if (auto* name_node =
-                        node.value->value.get_if<nodes::Expr::Name>()) {
-                    if (auto item_entry =
-                            find_in_module(name_node->name, node.name)) {
+                std::vector<std::string_view> path;
+                if (flatten_module_path(expr, path)) {
+                    if (auto item_entry = find_in_imported_module_chain(path)) {
                         if (auto* type_id_ptr =
                                 item_entry->data.get_if<types::TypeId>()) {
                             return {.type = *type_id_ptr};
@@ -1053,10 +1132,9 @@ private:
                 });
             },
             [&](const nodes::Expr::GetAttr& node) {
-                if (auto* name_node =
-                        node.value->value.get_if<nodes::Expr::Name>()) {
-                    if (auto item_entry =
-                            find_in_module(name_node->name, node.name)) {
+                std::vector<std::string_view> path;
+                if (flatten_module_path(expr, path)) {
+                    if (auto item_entry = find_in_imported_module_chain(path)) {
                         return func.add(item_entry->data.visit(
                             [&](ir::FuncRef func_ref) -> ir::Inst {
                                 return {
@@ -1162,10 +1240,12 @@ private:
         );
     }
 
-    std::span<const nodes::Module> modules_;
+    std::span<const ModuleRef> modules_;
     ErrorHandler* err_handler_;
     ir::Package ir_package_;
+    std::optional<Context> root_context_;
     std::unordered_map<std::string_view, Context> module_contexts_;
+    std::vector<ImportedModule> imported_modules_;
 
     template <class T>
     static void hash_combine(std::size_t& seed, const T& v) {
@@ -1174,7 +1254,7 @@ private:
     }
 
     struct UsedFuncHash {
-        std::size_t operator()(ir::UsedFunc func) {
+        std::size_t operator()(ir::UsedFunc func) const {
             std::size_t result = 0;
             hash_combine(result, func.package);
             hash_combine(result, func.func.index);
@@ -1183,7 +1263,7 @@ private:
     };
 
     struct UsedFuncEqual {
-        bool operator()(ir::UsedFunc func1, ir::UsedFunc func2) {
+        bool operator()(ir::UsedFunc func1, ir::UsedFunc func2) const {
             return func1.package == func2.package &&
                    func1.func.index == func2.func.index;
         }
@@ -1202,7 +1282,7 @@ private:
 
 ir::Package resolve(
     std::vector<std::string_view> package_name,
-    std::span<const nodes::Module> modules,
+    std::span<const ModuleRef> modules,
     const Packages& context,
     ErrorHandler& err_handler
 ) {
@@ -1210,17 +1290,16 @@ ir::Package resolve(
     return resolver.resolve();
 }
 
-std::vector<std::span<const std::string_view>> get_module_usings(
-    const nodes::Module& module
-) {
-    std::vector<std::span<const std::string_view>> usings;
+std::vector<std::pair<std::span<const std::string_view>, Location>>
+get_module_usings(const nodes::Module& module) {
+    std::vector<std::pair<std::span<const std::string_view>, Location>> usings;
     for (const auto& item : module.items) {
         item.data.visit(
             [&](const nodes::Use& use) {
-                usings.emplace_back(use.module_name);
+                usings.emplace_back(use.module_name, item.location);
             },
             [&](const nodes::FromUse& use) {
-                usings.emplace_back(use.module_name);
+                usings.emplace_back(use.module_name, item.location);
             },
             [&](const auto&) {}
         );

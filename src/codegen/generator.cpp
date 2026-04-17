@@ -65,7 +65,7 @@ public:
             llvm::FunctionType* func_type = llvm::FunctionType::get(
                 get_rep_type(ir_func.return_type()), param_types, false
             );
-            functions_.push_back(
+            used_funcs_.push_back(
                 llvm::Function::Create(
                     func_type,
                     llvm::Function::ExternalLinkage,

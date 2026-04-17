@@ -338,8 +338,8 @@ private:
 class Package;
 
 struct UsedFunc {
-    const Package* package{};
-    FuncRef func{};
+    const Package* package {};
+    FuncRef func {};
     types::TypeId type;
 
     [[nodiscard]] inline const Source& source() const;
@@ -376,6 +376,8 @@ public:
     [[nodiscard]] std::span<const std::string_view> name() const {
         return name_;
     }
+    Module& root_module() { return root_module_; }
+    [[nodiscard]] const Module& root_module() const { return root_module_; }
 
     Module& add_module(std::string_view name) {
         return modules_.insert({name, Module()}).first->second;
@@ -409,6 +411,7 @@ public:
 
 private:
     std::vector<std::string_view> name_;
+    Module root_module_;
     std::unordered_map<std::string_view, Module> modules_;
     IndexVector<Func, FuncRef> funcs_;
     IndexVector<UsedFunc, UsedFuncRef> used_funcs_;

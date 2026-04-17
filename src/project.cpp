@@ -129,18 +129,16 @@ void create_package(
         if (path.stem().string() == "package" && package_name.empty()) {
             continue;
         }
+        Module module {.source = read_file(path, package_name)};
         module_refs.push_back(
-            modules.push_back(Module {.source = read_file(path, package_name)})
+            modules.emplace_back(read_file(path, package_name), nullptr)
         );
-        modules.back().source.name =
-            split_name(modules.back().source.module_name);
     }
     if (module_refs.empty()) return;
     auto package = Package {
         .package_name = std::move(package_name),
         .modules = std::move(module_refs)
     };
-    package.name = split_name(package.package_name);
     packages.push_back(std::move(package));
 }
 
@@ -148,26 +146,37 @@ Project::Project(const std::filesystem::path& input_path) {
     auto [package_path, package_name] =
         [&] -> std::pair<std::filesystem::path, std::string> {
         if (std::filesystem::is_directory(input_path)) {
-            return {input_path, input_path.stem().string()};
+            return {input_path, ""};
         } else {
             return {input_path.parent_path(), ""};
         }
     }();
     create_package(package_path, package_name, packages_, modules_);
+    for (auto& module : modules_) {
+        module.source.name = split_name(module.source.module_name);
+    }
+    for (auto& package : packages_) {
+        package.name = split_name(package.package_name);
+    }
 }
 
 void Project::parse(bool show_ast) {
     for (auto& package : packages_) {
         for (auto ref : package.modules) {
             auto& module = modules_[ref];
-            module.module = parse_module(module.source, err_handler_, show_ast);
+            module.module = std::make_unique<nodes::Module>(
+                parse_module(module.source, err_handler_, show_ast)
+            );
         }
     }
 }
 
 void Project::semanal(bool show_semanal) {
-    // todo: sort
     Packages context(*this);
+    if (err_handler_.has_errors()) {
+        err_handler_.emit_all();
+        throw std::runtime_error("");
+    }
     sorted_packages_ = context.sort();
     for (auto ref : sorted_packages_) {
         auto& package = packages_[ref];
@@ -213,15 +222,16 @@ void Project::refanal(bool show_refanal) {
 
 std::unique_ptr<llvm::Module> generate_llvm(
     llvm::LLVMContext& context,
-    const acu::refanal::ir::Module& module,
+    const Package& package,
     llvm::OptimizationLevel opt_level,
     const std::optional<llvm::DataLayout>& layout,
     bool show_llvm,
     bool show_opt_llvm
 ) {
-    auto llvm_module = acu::codegen::generate(context, module, layout);
+    auto llvm_module = acu::codegen::generate(context, package.refanal_module, layout);
     if (show_llvm) {
         std::cout << "\nLLVM IR\n";
+        std::cout << package.package_name << '\n';
         llvm_module->print(llvm::outs(), nullptr);
     }
 
@@ -243,7 +253,7 @@ void codegen_package(
     auto context = std::make_unique<llvm::LLVMContext>();
     auto llvm_module = generate_llvm(
         *context,
-        package.refanal_module,
+        package,
         opt,
         std::nullopt,
         show_llvm_ir,
@@ -284,7 +294,7 @@ void Project::run_jit(
         auto context = std::make_unique<llvm::LLVMContext>();
         auto llvm_module = generate_llvm(
             *context,
-            package.refanal_module,
+            package,
             opt,
             jit->get_data_layout(),
             show_llvm_ir,
@@ -308,16 +318,6 @@ void Project::run_jit(
     }
 }
 
-const nodes::Module& Packages::module(ModuleRef ref) const {
-    return project_->modules_[ref].module;
-}
-
-const ir::Package& Packages::package(
-    std::span<const std::string_view> name
-) const {
-    return project_->packages_[packages_.at(name)].ir_package;
-}
-
 std::span<const std::string_view> get_package_name(const Module& module) {
     if (module.source.path.filename().string() == "package.acu") {
         return module.source.name;
@@ -326,14 +326,29 @@ std::span<const std::string_view> get_package_name(const Module& module) {
         .subspan(0, module.source.name.size() - 1);
 }
 
+std::span<const std::string_view> Packages::package_name(
+    std::span<const std::string_view> module_name
+) const {
+    return get_package_name(project_->modules_[modules_.at(module_name)]);
+}
+
 std::pair<ir::Package*, ir::Module*> Packages::module_package(
     std::span<const std::string_view> module_name
 ) const {
     auto& module = project_->modules_[modules_.at(module_name)];
     auto package_name = get_package_name(module);
     auto& package = project_->packages_[packages_.at(package_name)];
+    if(package_name.size() == module_name.size()) {
+        auto& ir_module = package.ir_package.root_module();
+        return {&package.ir_package, &ir_module};
+    }
     auto& ir_module = package.ir_package.module(module_name.back());
     return {&package.ir_package, &ir_module};
+}
+
+std::string join_module_name(std::span<const std::string_view> module_name) {
+    return module_name | std::views::join_with('.') |
+           std::ranges::to<std::string>();
 }
 
 Packages::Packages(Project& project) : project_(&project) {
@@ -344,19 +359,77 @@ Packages::Packages(Project& project) : project_(&project) {
         packages_.insert({project.packages_[ref].name, ref});
     }
     for (auto ref : project.packages_.indices()) {
-        std::unordered_set<PackageRef, hash<PackageRef>> usings;
+        const auto& package = project.packages_[ref];
+        std::unordered_set<PackageRef, hash<PackageRef>, equal_to<PackageRef>>
+            usings;
         for (auto module_ref : project.packages_[ref].modules) {
-            auto module_usings =
-                semanal::get_module_usings(project.modules_[module_ref].module);
+            const auto& module = project.modules_[module_ref];
+            auto module_usings = semanal::get_module_usings(*module.module);
             for (auto module_name : module_usings) {
-                // todo: check module name
-                auto package_name =
-                    get_package_name(project.modules_[modules_[module_name]]);
-                usings.emplace(packages_[package_name]);
+                auto it = modules_.find(module_name.first);
+                if (it != modules_.end()) {
+                    auto package_name =
+                        get_package_name(project.modules_[it->second]);
+                    if (!PackageNameEqual {}(package_name, package.name)) {
+                        usings.emplace(packages_[package_name]);
+                    }
+                } else {
+                    project.err_handler_.error(
+                        module.source,
+                        module_name.second,
+                        std::format(
+                            "module '{}' not found",
+                            join_module_name(module_name.first)
+                        )
+                    );
+                }
             }
         }
         package_usings_.push_back(std::move(usings));
     }
+}
+
+std::vector<PackageRef> Packages::sort() {
+    IndexVector<std::vector<PackageRef>, PackageRef> dependents(
+        project_->packages_.size()
+    );
+    IndexVector<std::size_t, PackageRef> indegree(project_->packages_.size());
+
+    for (auto package_ref : project_->packages_.indices()) {
+        for (auto dependency : package_usings_[package_ref]) {
+            dependents[dependency].push_back(package_ref);
+            ++indegree[package_ref];
+        }
+    }
+
+    std::vector<PackageRef> order;
+    order.reserve(project_->packages_.size());
+    std::vector<PackageRef> queue;
+    queue.reserve(project_->packages_.size());
+
+    for (auto package_ref : project_->packages_.indices()) {
+        if (indegree[package_ref] == 0) {
+            queue.push_back(package_ref);
+        }
+    }
+
+    for (std::size_t i = 0; i < queue.size(); ++i) {
+        auto package_ref = queue[i];
+        order.push_back(package_ref);
+        for (auto dependent : dependents[package_ref]) {
+            auto& count = indegree[dependent];
+            --count;
+            if (count == 0) {
+                queue.push_back(dependent);
+            }
+        }
+    }
+
+    if (order.size() != project_->packages_.size()) {
+        throw std::runtime_error("circular package dependency detected");
+    }
+
+    return order;
 }
 
 }

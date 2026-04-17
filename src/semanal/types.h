@@ -226,7 +226,7 @@ private:
     };
 
     struct UsedStructHash {
-        std::size_t operator()(Type::UsedStruct used_struct) {
+        std::size_t operator()(Type::UsedStruct used_struct) const {
             std::size_t result = 0;
             hash_combine(result, used_struct.pool);
             hash_combine(result, TypeIdHash {}(used_struct.type));
@@ -235,7 +235,7 @@ private:
     };
 
     struct UsedStructEqual {
-        bool operator()(Type::UsedStruct struct1, Type::UsedStruct struct2) {
+        bool operator()(Type::UsedStruct struct1, Type::UsedStruct struct2) const {
             return struct1.pool == struct2.pool && struct1.type == struct2.type;
         }
     };
