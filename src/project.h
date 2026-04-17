@@ -39,6 +39,18 @@ class Project {
 public:
     Project(const std::filesystem::path& input_path);
 
+    [[nodiscard]] const ir::Package& package(ir::PackageRef ref) const {
+        return packages_[PackageRef {ref.index}].ir_package;
+    }
+    [[nodiscard]] ir::Package& package(ir::PackageRef ref) {
+        return packages_[PackageRef {ref.index}].ir_package;
+    }
+    [[nodiscard]] const refanal::ir::Module& module(
+        refanal::ir::ModuleRef ref
+    ) const {
+        return packages_[PackageRef {ref.index}].refanal_module;
+    }
+
     void parse(bool show_ast);
     void semanal(bool show_semanal);
     void refanal(bool show_refanal);
@@ -95,11 +107,18 @@ public:
     [[nodiscard]] const nodes::Module& module(ModuleRef ref) const {
         return *project_->modules_[ref].module;
     }
-    std::span<const std::string_view> package_name(std::span<const std::string_view> module_name) const;
-    [[nodiscard]] const ir::Package& package(std::span<const std::string_view> name) const {
+    [[nodiscard]] std::span<const std::string_view> package_name(
+        std::span<const std::string_view> module_name
+    ) const;
+    [[nodiscard]] const ir::Package& package(
+        std::span<const std::string_view> name
+    ) const {
         return project_->packages_[packages_.at(name)].ir_package;
     }
-    [[nodiscard]] std::pair<ir::Package*, ir::Module*> module_package(
+    [[nodiscard]] ir::Package& package(ir::PackageRef ref) const {
+        return project_->package(ref);
+    }
+    [[nodiscard]] std::pair<ir::PackageRef, ir::Module*> module_package(
         std::span<const std::string_view> module_name
     ) const;
 

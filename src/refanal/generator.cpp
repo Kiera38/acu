@@ -652,7 +652,7 @@ public:
 };
 
 ir::Module generate(
-    acu::ir::AnalyzedPackage& analyzed_package, const GeneratedModules& modules
+    acu::ir::AnalyzedPackage& analyzed_package
 ) {
     ir::Module rmod(analyzed_package.ir_package->name(), analyzed_package.ir_package->types());
     for (const auto& afunc : analyzed_package.analyzed_funcs) {
@@ -663,7 +663,7 @@ ir::Module generate(
     for (const auto& ufunc : analyzed_package.ir_package->used_funcs()) {
         rmod.add(
             ir::UsedFunc {
-                .module = &modules.get(*ufunc.package),
+                .module = ir::ModuleRef{ufunc.package.index},
                 .func = ir::FuncRef {.index = ufunc.func.index},
                 .type = ufunc.type
             }

@@ -12,6 +12,10 @@
 #include "types.h"
 #include "variant.h"
 
+namespace acu {
+class Project;
+}
+
 namespace acu::ir {
 struct FuncRef {
     std::uint32_t index;
@@ -336,19 +340,22 @@ private:
 };
 
 class Package;
+struct PackageRef {
+    std::uint32_t index;
+};
 
 struct UsedFunc {
-    const Package* package {};
+    PackageRef package {};
     FuncRef func {};
     types::TypeId type;
 
-    [[nodiscard]] inline const Source& source() const;
-    [[nodiscard]] inline Location location() const;
-    [[nodiscard]] inline std::string_view name() const;
-    [[nodiscard]] inline bool is_extern() const;
-    [[nodiscard]] inline Param param(ParamRef ref) const;
-    [[nodiscard]] inline IndexSpan<const Param, ParamRef> params() const;
-    [[nodiscard]] inline types::SpecType return_type() const;
+    [[nodiscard]] const Source& source(const Project& project) const;
+    [[nodiscard]] Location location(const Project& project) const;
+    [[nodiscard]] std::string_view name(const Project& project) const;
+    [[nodiscard]] bool is_extern(const Project& project) const;
+    [[nodiscard]] Param param(const Project& project, ParamRef ref) const;
+    [[nodiscard]] IndexSpan<const Param, ParamRef> params(const Project& project) const;
+    [[nodiscard]] types::SpecType return_type(const Project& project) const;
 };
 
 class Module {
@@ -427,26 +434,6 @@ struct AnalyzedPackage {
     Package* ir_package;
     std::vector<AnalyzedFunc> analyzed_funcs;
 };
-
-const Source& UsedFunc::source() const { return package->func(func).source(); }
-
-Location UsedFunc::location() const { return package->func(func).location(); }
-
-std::string_view UsedFunc::name() const { return package->func(func).name(); }
-
-bool UsedFunc::is_extern() const { return package->func(func).is_extern(); }
-
-Param UsedFunc::param(ParamRef ref) const {
-    return package->func(func).param(ref);
-}
-
-IndexSpan<const Param, ParamRef> UsedFunc::params() const {
-    return package->func(func).params();
-}
-
-types::SpecType UsedFunc::return_type() const {
-    return package->func(func).return_type();
-}
 
 std::string to_string(const Func& func);
 std::string to_string(const Package& package);

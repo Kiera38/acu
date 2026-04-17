@@ -22,6 +22,7 @@
 
 #include "index.h"
 #include "llvm/IR/Constants.h"
+#include "project.h"
 #include "refanal/ir.h"
 #include "semanal/types.h"
 
@@ -36,9 +37,10 @@ public:
     Generator(
         llvm::LLVMContext& context,
         const refanal::ir::Module& module,
+        const Project& project,
         const llvm::DataLayout& layout
     )
-        : context_(&context), ir_module_(&module), layout_(&layout) {}
+        : context_(&context), ir_module_(&module), project_(&project), layout_(&layout) {}
 
     std::unique_ptr<llvm::Module> generate() {
         llvm_module_ = std::make_unique<llvm::Module>(join_module_name(ir_module_->name()), *context_);
@@ -64,16 +66,16 @@ public:
         }
         for (const auto& ir_func : ir_module_->used_funcs()) {
             std::vector<llvm::Type*> param_types;
-            for (const auto& param : ir_func.params())
+            for (const auto& param : ir_func.params(*project_))
                 param_types.push_back(get_rep_type(param.type));
             llvm::FunctionType* func_type = llvm::FunctionType::get(
-                get_rep_type(ir_func.return_type()), param_types, false
+                get_rep_type(ir_func.return_type(*project_)), param_types, false
             );
             used_funcs_.push_back(
                 llvm::Function::Create(
                     func_type,
                     llvm::Function::ExternalLinkage,
-                    ir_func.mangle_name(),
+                    ir_func.mangle_name(*project_),
                     *llvm_module_
                 )
             );
@@ -173,6 +175,7 @@ private:
 
     llvm::LLVMContext* context_;
     const refanal::ir::Module* ir_module_;
+    const Project* project_;
     const llvm::DataLayout* layout_;
     std::unique_ptr<llvm::Module> llvm_module_;
     IndexVector<llvm::Function*, refanal::ir::FuncRef> functions_;
@@ -762,10 +765,11 @@ void Generator::generate_func(
 std::unique_ptr<llvm::Module> generate(
     llvm::LLVMContext& context,
     const refanal::ir::Module& module,
+    const Project& project,
     std::optional<llvm::DataLayout> layout
 ) {
     if (layout) {
-        Generator generator(context, module, *layout);
+        Generator generator(context, module, project, *layout);
         return generator.generate();
     }
 
@@ -787,7 +791,7 @@ std::unique_ptr<llvm::Module> generate(
         ));
     auto dl = machine->createDataLayout();
 
-    Generator generator(context, module, dl);
+    Generator generator(context, module, project, dl);
     return generator.generate();
 }
 

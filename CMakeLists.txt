@@ -76,11 +76,13 @@ add_executable(acu
     src/semanal/resolve.cpp
     src/semanal/type_analyze.cpp
     src/semanal/ir_str.cpp
+    src/semanal/ir.cpp
 
     src/refanal/generator.cpp
     src/refanal/ir_str.cpp
     src/refanal/optimizer.cpp
     src/refanal/specifiers.cpp
+    src/refanal/ir.cpp
 
     src/codegen/generator.cpp
     src/codegen/jit.cpp

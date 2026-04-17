@@ -14,6 +14,7 @@ namespace acu::codegen {
 std::unique_ptr<llvm::Module> generate(
     llvm::LLVMContext& context,
     const refanal::ir::Module& module,
+    const Project& project,
     std::optional<llvm::DataLayout> layout = std::nullopt
 );
 

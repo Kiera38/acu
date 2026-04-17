@@ -9,6 +9,10 @@
 #include "source.h"
 #include "variant.h"
 
+namespace acu {
+class Project;
+}
+
 namespace acu::refanal::ir {
 
 struct FuncRef {
@@ -353,19 +357,24 @@ private:
     std::vector<InstRef> inst_refs_;
 };
 class Module;
+
+struct ModuleRef {
+    std::uint32_t index;
+};
+
 struct UsedFunc {
-    const Module* module {};
+    ModuleRef module {};
     FuncRef func {};
     types::TypeId type;
 
-    [[nodiscard]] inline std::string_view name() const;
-    [[nodiscard]] inline const Source& source() const;
-    [[nodiscard]] inline std::string mangle_name() const;
-    [[nodiscard]] inline Location location() const;
-    [[nodiscard]] inline bool is_extern() const;
-    [[nodiscard]] inline Param param(ParamRef ref) const;
-    [[nodiscard]] inline IndexSpan<const Param, ParamRef> params() const;
-    [[nodiscard]] inline types::SpecType return_type() const;
+    [[nodiscard]] std::string_view name(const Project& project) const;
+    [[nodiscard]] const Source& source(const Project& project) const;
+    [[nodiscard]] std::string mangle_name(const Project& project) const;
+    [[nodiscard]] Location location(const Project& project) const;
+    [[nodiscard]] bool is_extern(const Project& project) const;
+    [[nodiscard]] Param param(const Project& project, ParamRef ref) const;
+    [[nodiscard]] IndexSpan<const Param, ParamRef> params(const Project& project) const;
+    [[nodiscard]] types::SpecType return_type(const Project& project) const;
 };
 
 class Module {
@@ -403,22 +412,5 @@ private:
     IndexVector<UsedFunc, UsedFuncRef> used_funcs_;
     types::TypePool* types_ {};
 };
-
-std::string_view UsedFunc::name() const { return module->func(func).name(); }
-const Source& UsedFunc::source() const { return module->func(func).source(); }
-std::string UsedFunc::mangle_name() const {
-    return module->func(func).mangle_name();
-}
-Location UsedFunc::location() const { return module->func(func).location(); }
-bool UsedFunc::is_extern() const { return module->func(func).is_extern(); }
-Param UsedFunc::param(ParamRef ref) const {
-    return module->func(func).param(ref);
-}
-IndexSpan<const Param, ParamRef> UsedFunc::params() const {
-    return module->func(func).params();
-}
-types::SpecType UsedFunc::return_type() const {
-    return module->func(func).return_type();
-}
 
 }

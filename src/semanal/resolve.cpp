@@ -44,7 +44,7 @@ std::size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
 }
 
 struct UsedModule {
-    ir::Package* package;
+    ir::PackageRef package;
     const ir::Module* module;
 };
 
@@ -197,7 +197,6 @@ public:
             }();
             set_context(mod.source->name);
 
-
             for (const auto& item : mod.items) {
                 item.data.visit(
                     [&](const nodes::Func& func) {
@@ -241,7 +240,7 @@ public:
 
 private:
     void set_context(std::span<const std::string_view> module_name) {
-        if(module_name.size() == ir_package_.name().size()) {
+        if (module_name.size() == ir_package_.name().size()) {
             context_ = &*root_context_;
         } else {
             context_ = &module_contexts_.at(module_name.back());
@@ -265,7 +264,7 @@ private:
         }
         auto name = std::span(module_name).subspan(ir_package_.name().size());
         if (name.empty()) {
-            if(root_context_.has_value()) {
+            if (root_context_.has_value()) {
                 return &*root_context_;
             }
         } else if (name.size() == 1) {
@@ -275,9 +274,7 @@ private:
             }
         }
         auto used = project_context_->module_package(module_name);
-        return UsedModule {
-            .package = used.first, .module = used.second
-        };
+        return UsedModule {.package = used.first, .module = used.second};
     }
 
     std::string join_module_name(
@@ -322,7 +319,7 @@ private:
                     },
                     [&](ir::FuncRef ref) -> std::optional<Context::ScopeEntry> {
                         return Context::ScopeEntry {
-                            get_used_func(*module.package, ref)
+                            get_used_func(module.package, ref)
                         };
                     },
                     [&](types::TypeId type)
@@ -330,7 +327,9 @@ private:
                         return Context::ScopeEntry {
                             ir_package_.types().add_used_struct(
                                 types::Type::UsedStruct {
-                                    .pool = &module.package->types(),
+                                    .pool = &project_context_
+                                                 ->package(module.package)
+                                                 .types(),
                                     .type = type
                                 }
                             )
@@ -433,7 +432,7 @@ private:
                         [&](ir::FuncRef ref) {
                             context_->add(
                                 item.alias.value_or(item.name),
-                                {get_used_func(*module.package, ref)}
+                                {get_used_func(module.package, ref)}
                             );
                         },
                         [&](types::TypeId type) {
@@ -441,7 +440,9 @@ private:
                                 item.alias.value_or(item.name),
                                 {ir_package_.types().add_used_struct(
                                     types::Type::UsedStruct {
-                                        .pool = &module.package->types(),
+                                        .pool = &project_context_
+                                                     ->package(module.package)
+                                                     .types(),
                                         .type = type
                                     }
                                 )}
@@ -552,11 +553,12 @@ private:
         }
     }
 
-    ir::UsedFuncRef get_used_func(ir::Package& package, ir::FuncRef ref) {
-        ir::UsedFunc used_func {.package = &package, .func = ref};
+    ir::UsedFuncRef get_used_func(ir::PackageRef package_ref, ir::FuncRef ref) {
+        ir::UsedFunc used_func {.package = package_ref, .func = ref};
         if (auto it = used_funcs_.find(used_func); it != used_funcs_.end()) {
             return it->second;
         }
+        auto& package = project_context_->package(package_ref);
         used_func.type =
             ir_package_.types().copy(package.types(), package.func_type(ref));
         auto used_func_ref = ir_package_.add(used_func);
@@ -1251,7 +1253,7 @@ private:
     struct UsedFuncHash {
         std::size_t operator()(ir::UsedFunc func) const {
             std::size_t result = 0;
-            hash_combine(result, func.package);
+            hash_combine(result, func.package.index);
             hash_combine(result, func.func.index);
             return result;
         }
@@ -1259,7 +1261,7 @@ private:
 
     struct UsedFuncEqual {
         bool operator()(ir::UsedFunc func1, ir::UsedFunc func2) const {
-            return func1.package == func2.package &&
+            return func1.package.index == func2.package.index &&
                    func1.func.index == func2.func.index;
         }
     };

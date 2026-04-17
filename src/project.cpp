@@ -184,12 +184,9 @@ void Project::semanal(bool show_semanal) {
 }
 
 void refanal_package(
-    Package& package,
-    const acu::refanal::GeneratedModules& modules,
-    acu::ErrorHandler& err_handler,
-    bool show_refanal
+    Package& package, acu::ErrorHandler& err_handler, bool show_refanal
 ) {
-    package.refanal_module = acu::refanal::generate(package.analyzed, modules);
+    package.refanal_module = acu::refanal::generate(package.analyzed);
     acu::refanal::optimize(
         package.refanal_module, package.analyzed, err_handler
     );
@@ -209,23 +206,23 @@ void refanal_package(
 }
 
 void Project::refanal(bool show_refanal) {
-    acu::refanal::GeneratedModules modules;
     for (auto ref : sorted_packages_) {
         auto& package = packages_[ref];
-        refanal_package(package, modules, err_handler_, show_refanal);
-        modules.add_module(package.ir_package, package.refanal_module);
+        refanal_package(package, err_handler_, show_refanal);
     }
 }
 
 std::unique_ptr<llvm::Module> generate_llvm(
     llvm::LLVMContext& context,
     const Package& package,
+    const Project& project,
     llvm::OptimizationLevel opt_level,
     const std::optional<llvm::DataLayout>& layout,
     bool show_llvm,
     bool show_opt_llvm
 ) {
-    auto llvm_module = acu::codegen::generate(context, package.refanal_module, layout);
+    auto llvm_module =
+        acu::codegen::generate(context, package.refanal_module, project, layout);
     if (show_llvm) {
         std::cout << "\nLLVM IR\n";
         std::cout << package.package_name << '\n';
@@ -242,6 +239,7 @@ std::unique_ptr<llvm::Module> generate_llvm(
 
 void codegen_package(
     const Package& package,
+    const Project& project,
     bool show_llvm_ir,
     bool show_opt_llvm_ir,
     llvm::OptimizationLevel opt,
@@ -249,12 +247,7 @@ void codegen_package(
 ) {
     auto context = std::make_unique<llvm::LLVMContext>();
     auto llvm_module = generate_llvm(
-        *context,
-        package,
-        opt,
-        std::nullopt,
-        show_llvm_ir,
-        show_opt_llvm_ir
+        *context, package, project, opt, std::nullopt, show_llvm_ir, show_opt_llvm_ir
     );
     acu::codegen::emit_object_file(*llvm_module, output_path.string());
 }
@@ -265,13 +258,14 @@ void Project::codegen(
     llvm::OptimizationLevel opt,
     const std::filesystem::path& output_path
 ) {
-    if(!std::filesystem::exists(output_path)) {
+    if (!std::filesystem::exists(output_path)) {
         std::filesystem::create_directories(output_path);
     }
     for (auto ref : sorted_packages_) {
         const auto& package = packages_[ref];
         codegen_package(
             package,
+            *this,
             show_llvm_ir,
             show_opt_llvm_ir,
             opt,
@@ -295,6 +289,7 @@ void Project::run_jit(
         auto llvm_module = generate_llvm(
             *context,
             package,
+            *this,
             opt,
             jit->get_data_layout(),
             show_llvm_ir,
@@ -332,18 +327,19 @@ std::span<const std::string_view> Packages::package_name(
     return get_package_name(project_->modules_[modules_.at(module_name)]);
 }
 
-std::pair<ir::Package*, ir::Module*> Packages::module_package(
+std::pair<ir::PackageRef, ir::Module*> Packages::module_package(
     std::span<const std::string_view> module_name
 ) const {
     auto& module = project_->modules_[modules_.at(module_name)];
     auto package_name = get_package_name(module);
-    auto& package = project_->packages_[packages_.at(package_name)];
-    if(package_name.size() == module_name.size()) {
+    auto package_ref = packages_.at(package_name);
+    auto& package = project_->packages_[package_ref];
+    if (package_name.size() == module_name.size()) {
         auto& ir_module = package.ir_package.root_module();
-        return {&package.ir_package, &ir_module};
+        return {ir::PackageRef {package_ref.index}, &ir_module};
     }
     auto& ir_module = package.ir_package.module(module_name.back());
-    return {&package.ir_package, &ir_module};
+    return {ir::PackageRef {package_ref.index}, &ir_module};
 }
 
 std::string join_module_name(std::span<const std::string_view> module_name) {
