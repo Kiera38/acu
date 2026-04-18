@@ -110,7 +110,7 @@ TypeId TypePool::add_used_struct(Type::UsedStruct used_struct) {
 void TypePool::set_struct_fields(
     TypeId type, std::vector<Type::StructField> fields
 ) {
-    types_[type.index].data.get<Type::Struct>().fields = std::move(fields);
+    types_[type].data.get<Type::Struct>().fields = std::move(fields);
 }
 
 std::string TypePool::to_string(TypeId id) const {

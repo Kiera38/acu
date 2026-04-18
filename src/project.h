@@ -19,9 +19,7 @@ struct Module {
     std::unique_ptr<nodes::Module> module;
 };
 
-struct ModuleRef {
-    std::uint32_t index;
-};
+using ModuleRef = Ref<Module>;
 struct Package {
     std::string package_name;
     std::vector<std::string_view> name;
@@ -31,9 +29,7 @@ struct Package {
     refanal::ir::Module refanal_module;
 };
 
-struct PackageRef {
-    std::uint32_t index;
-};
+using PackageRef = Ref<Package>;
 
 class Project {
 public:

@@ -425,9 +425,9 @@ private:
                 if (!func_type_info) return nullptr;
 
                 std::vector<llvm::Value*> args;
-                args.reserve(c.args.count);
+                args.reserve(c.args.size);
                 auto arg_refs = ir_func->inst_refs(c.args);
-                for (size_t i = 0; i < c.args.count; i++) {
+                for (size_t i = 0; i < c.args.size; i++) {
                     args.push_back(get_value(
                         arg_refs[i], func_type_info->params[i].specifier
                     ));

@@ -7,16 +7,14 @@
 #include <unordered_map>
 #include <vector>
 
+#include "index.h"
 #include "source.h"
 #include "variant.h"
 
 namespace acu::types {
 class TypePool;
-struct TypeId {
-    std::uint32_t index {0};
-
-    bool operator==(TypeId other) const { return index == other.index; }
-};
+struct Type;
+using TypeId = Ref<Type>;
 
 constexpr TypeId None {0};
 constexpr TypeId Nothing {1};
@@ -132,10 +130,10 @@ public:
     [[nodiscard]] std::string to_string(SpecType type) const;
 
     [[nodiscard]] bool is_int(TypeId type) const {
-        return types_[type.index].data.is<Type::Int>();
+        return types_[type].data.is<Type::Int>();
     }
 
-    [[nodiscard]] const Type& get(TypeId id) const { return types_[id.index]; }
+    [[nodiscard]] const Type& get(TypeId id) const { return types_[id]; }
     [[nodiscard]] size_t type_count() const { return types_.size(); }
 
     TypeId copy(const TypePool& pool, TypeId id);
@@ -240,7 +238,7 @@ private:
         }
     };
 
-    std::vector<Type> types_;
+    IndexVector<Type> types_;
     std::unordered_map<Type::Int, TypeId, IntHash, IntEqual> ints_;
     std::unordered_map<Type::Func, TypeId, FuncHash, FuncEqual> funcs_;
     std::unordered_map<Type::Array, TypeId, ArrayHash, ArrayEqual> arrays_;

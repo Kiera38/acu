@@ -17,36 +17,27 @@ class Project;
 }
 
 namespace acu::ir {
-struct FuncRef {
-    std::uint32_t index;
-};
+class Func;
+using FuncRef = Ref<Func>;
 
-struct InstRef {
-    std::uint32_t index;
-};
+struct Inst;
+using InstRef = Ref<Inst>;
 
-struct ParamRef {
-    std::uint32_t index;
-};
+struct Param;
+using ParamRef = Ref<Param>;
 
-struct UsedFuncRef {
-    std::uint32_t index;
-};
+struct UsedFunc;
+using UsedFuncRef = Ref<UsedFunc>;
 
 struct Block {
     InstRef start;
     InstRef end;
 };
 
-struct Comparators {
-    std::uint32_t start;
-    std::uint32_t count;
-};
+struct Comparator;
+using Comparators = RefRange<Comparator>;
 
-struct InstRefs {
-    std::uint32_t start;
-    std::uint32_t count;
-};
+using InstRefs = RefRange<InstRef>;
 
 struct Inst {
     struct Const {
@@ -272,19 +263,17 @@ public:
         );
     }
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
-        return std::span(inst_refs_).subspan(refs.start, refs.count);
+        return inst_refs_.range(refs);
     }
 
     [[nodiscard]] std::span<const Comparator> comparators(
         Comparators comparators
     ) const {
-        return std::span(comparators_)
-            .subspan(comparators.start, comparators.count);
+        return comparators_.range(comparators);
     }
 
     [[nodiscard]] std::span<Comparator> comparators(Comparators comparators) {
-        return std::span(comparators_)
-            .subspan(comparators.start, comparators.count);
+        return comparators_.range(comparators);
     }
 
     InstRef add(const Inst& inst) { return insts_.push_back(inst); }
@@ -308,22 +297,13 @@ public:
     }
 
     InstRefs add(std::span<const InstRef> refs) {
-        InstRefs inst_refs {
-            .start = static_cast<std::uint32_t>(inst_refs_.size()),
-            .count = static_cast<std::uint32_t>(refs.size())
-        };
-        inst_refs_.append_range(refs);
-        return inst_refs;
+        return inst_refs_.append_range(refs);
     }
 
     void set_comparators(
         InstRef comparison, std::span<const Comparator> comparators
     ) {
-        Comparators comp {
-            .start = static_cast<std::uint32_t>(comparators_.size()),
-            .count = static_cast<std::uint32_t>(comparators.size())
-        };
-        comparators_.append_range(comparators);
+        auto comp = comparators_.append_range(comparators);
         insts_[comparison].data.get<Inst::Comparison>().comparators = comp;
     }
 
@@ -335,18 +315,16 @@ private:
     IndexVector<Param, ParamRef> params_;
     types::SpecType return_type_;
     IndexVector<Inst, InstRef> insts_;
-    std::vector<InstRef> inst_refs_;
-    std::vector<Comparator> comparators_;
+    IndexVector<InstRef> inst_refs_;
+    IndexVector<Comparator> comparators_;
 };
 
 class Package;
-struct PackageRef {
-    std::uint32_t index;
-};
+using PackageRef = Ref<Package>;
 
 struct UsedFunc {
-    PackageRef package {};
-    FuncRef func {};
+    PackageRef package;
+    FuncRef func;
     types::TypeId type;
 
     [[nodiscard]] const Source& source(const Project& project) const;
@@ -354,7 +332,9 @@ struct UsedFunc {
     [[nodiscard]] std::string_view name(const Project& project) const;
     [[nodiscard]] bool is_extern(const Project& project) const;
     [[nodiscard]] Param param(const Project& project, ParamRef ref) const;
-    [[nodiscard]] IndexSpan<const Param, ParamRef> params(const Project& project) const;
+    [[nodiscard]] IndexSpan<const Param, ParamRef> params(
+        const Project& project
+    ) const;
     [[nodiscard]] types::SpecType return_type(const Project& project) const;
 };
 

@@ -14,34 +14,22 @@ class Project;
 }
 
 namespace acu::refanal::ir {
+class Func;
+using FuncRef = Ref<Func>;
 
-struct FuncRef {
-    std::uint32_t index;
-};
+struct Inst;
+using InstRef = Ref<Inst>;
 
-struct InstRef {
-    std::uint32_t index;
-    auto operator<=>(const InstRef& other) const = default;
-};
+struct Block;
+using BlockRef = Ref<Block>;
 
-struct BlockRef {
-    std::uint32_t index;
+struct Param;
+using ParamRef = Ref<Param>;
 
-    auto operator<=>(const BlockRef& other) const = default;
-};
+struct UsedFunc;
+using UsedFuncRef = Ref<UsedFunc>;
 
-struct ParamRef {
-    std::uint32_t index;
-};
-
-struct UsedFuncRef {
-    std::size_t index;
-};
-
-struct InstRefs {
-    std::uint32_t start;
-    std::uint32_t count;
-};
+using InstRefs = RefRange<InstRef>;
 
 struct Inst {
     struct Const {
@@ -284,10 +272,10 @@ public:
     [[nodiscard]] IndexSpan<Block, BlockRef> blocks() { return blocks_.data(); }
 
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
-        return std::span(inst_refs_).subspan(refs.start, refs.count);
+        return inst_refs_.range(refs);
     }
     [[nodiscard]] std::span<InstRef> inst_refs(InstRefs refs) {
-        return std::span(inst_refs_).subspan(refs.start, refs.count);
+        return inst_refs_.range(refs);
     }
 
     InstRef add(const Inst& inst) { return insts_.push_back(inst); }
@@ -308,12 +296,7 @@ public:
     }
 
     InstRefs add(std::span<const InstRef> refs) {
-        InstRefs inst_refs {
-            .start = static_cast<std::uint32_t>(inst_refs_.size()),
-            .count = static_cast<std::uint32_t>(refs.size())
-        };
-        inst_refs_.append_range(refs);
-        return inst_refs;
+        return inst_refs_.append_range(refs);
     }
 
     void rebuild_cfg() {
@@ -354,7 +337,7 @@ private:
     types::SpecType return_type_;
     IndexVector<Inst, InstRef> insts_;
     IndexVector<Block, BlockRef> blocks_;
-    std::vector<InstRef> inst_refs_;
+    IndexVector<InstRef> inst_refs_;
 };
 class Module;
 
@@ -363,8 +346,8 @@ struct ModuleRef {
 };
 
 struct UsedFunc {
-    ModuleRef module {};
-    FuncRef func {};
+    ModuleRef module;
+    FuncRef func;
     types::TypeId type;
 
     [[nodiscard]] std::string_view name(const Project& project) const;
