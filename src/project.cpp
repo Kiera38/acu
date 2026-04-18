@@ -221,8 +221,9 @@ std::unique_ptr<llvm::Module> generate_llvm(
     bool show_llvm,
     bool show_opt_llvm
 ) {
-    auto llvm_module =
-        acu::codegen::generate(context, package.refanal_module, project, layout);
+    auto llvm_module = acu::codegen::generate(
+        context, package.refanal_module, project, layout
+    );
     if (show_llvm) {
         std::cout << "\nLLVM IR\n";
         std::cout << package.package_name << '\n';
@@ -247,7 +248,13 @@ void codegen_package(
 ) {
     auto context = std::make_unique<llvm::LLVMContext>();
     auto llvm_module = generate_llvm(
-        *context, package, project, opt, std::nullopt, show_llvm_ir, show_opt_llvm_ir
+        *context,
+        package,
+        project,
+        opt,
+        std::nullopt,
+        show_llvm_ir,
+        show_opt_llvm_ir
     );
     acu::codegen::emit_object_file(*llvm_module, output_path.string());
 }
@@ -263,13 +270,16 @@ void Project::codegen(
     }
     for (auto ref : sorted_packages_) {
         const auto& package = packages_[ref];
+        std::string file_name = package.package_name.empty()
+                                    ? "package.o"
+                                    : std::format("{}.o", package.package_name);
         codegen_package(
             package,
             *this,
             show_llvm_ir,
             show_opt_llvm_ir,
             opt,
-            output_path / std::format("{}.o", package.package_name)
+            output_path / file_name
         );
     }
 }

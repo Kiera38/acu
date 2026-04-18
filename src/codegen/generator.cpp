@@ -32,6 +32,12 @@ std::string join_module_name(std::span<const std::string_view> module_name) {
     return module_name | std::views::join_with('.') |
            std::ranges::to<std::string>();
 }
+std::string module_name(std::span<const std::string_view> module_name) {
+    if(module_name.empty()) {
+        return "package";
+    }
+    return join_module_name(module_name);
+}
 class Generator {
 public:
     Generator(
@@ -43,7 +49,7 @@ public:
         : context_(&context), ir_module_(&module), project_(&project), layout_(&layout) {}
 
     std::unique_ptr<llvm::Module> generate() {
-        llvm_module_ = std::make_unique<llvm::Module>(join_module_name(ir_module_->name()), *context_);
+        llvm_module_ = std::make_unique<llvm::Module>(module_name(ir_module_->name()), *context_);
         llvm_module_->setDataLayout(*layout_);
 
         functions_.clear();
