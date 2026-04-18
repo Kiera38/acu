@@ -74,6 +74,8 @@ add_executable(acu
     src/errors.cpp
     src/semanal/types.cpp
     src/semanal/resolve.cpp
+    src/semanal/resolver.cpp
+    src/semanal/resolve_inst.cpp
     src/semanal/type_analyze.cpp
     src/semanal/ir_str.cpp
     src/semanal/ir.cpp

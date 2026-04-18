@@ -206,7 +206,7 @@ private:
 
     nodes::Item parse_use_stmt() {
         Location location = peek(-1).location;
-        std::vector<std::string_view> module_name = parse_module_name();
+        PackageName module_name = parse_module_name();
         expect(TokenType::NewLine, "Expected newline after import statement");
 
         return {
@@ -214,8 +214,8 @@ private:
         };
     }
 
-    std::vector<std::string_view> parse_module_name() {
-        std::vector<std::string_view> name;
+    PackageName parse_module_name() {
+        PackageName name;
         Token module_token =
             expect(TokenType::Identifier, "Expected module name after 'using'");
         name.push_back(module_token.value.get<std::string_view>());
@@ -231,7 +231,7 @@ private:
 
     nodes::Item parse_from_use_stmt() {
         Location location = peek(-1).location;
-        std::vector<std::string_view> module_name = parse_module_name();
+        PackageName module_name = parse_module_name();
         expect(TokenType::Using, "Expected 'using' after module name");
 
         std::vector<nodes::UseItem> items;

@@ -5,6 +5,7 @@
 #include <string_view>
 #include <filesystem>
 #include <unordered_set>
+#include "package_name.h"
 
 namespace acu {
 class Strings {
@@ -30,7 +31,7 @@ private:
 
 struct Source {
     std::string module_name;
-    std::vector<std::string_view> name;
+    PackageName name;
     std::filesystem::path path;
     std::string content;
     Strings strings;

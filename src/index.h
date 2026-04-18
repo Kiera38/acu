@@ -4,6 +4,7 @@
 #include <ranges>
 #include <span>
 #include <vector>
+#include "hash.h"
 
 namespace acu {
 template <typename T>
@@ -12,7 +13,7 @@ concept Index = requires(T i) {
 };
 
 template <Index I>
-struct hash {
+struct hash<I> {
     std::size_t operator()(I i) const {
         return std::hash<std::size_t> {}(i.index);
     }

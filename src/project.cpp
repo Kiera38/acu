@@ -14,6 +14,7 @@
 
 #include "codegen/generator.h"
 #include "codegen/jit.h"
+#include "package_name.h"
 #include "parser/parser.h"
 #include "refanal/generator.h"
 #include "refanal/ir_str.h"
@@ -61,11 +62,11 @@ acu::nodes::Module parse_module(
     return module;
 }
 
-std::vector<std::string_view> split_name(const std::string& package_name) {
+PackageName split_name(const std::string& package_name) {
     if (package_name.empty()) {
         return {};
     }
-    std::vector<std::string_view> name;
+    PackageName name;
     for (auto name_part : package_name | std::views::split('.')) {
         name.emplace_back(name_part);
     }
@@ -323,22 +324,20 @@ void Project::run_jit(
     }
 }
 
-std::span<const std::string_view> get_package_name(const Module& module) {
+PackageNameRef get_package_name(const Module& module) {
     if (module.source.path.filename().string() == "package.acu") {
         return module.source.name;
     }
-    return std::span(module.source.name)
+    return PackageNameRef(module.source.name)
         .subspan(0, module.source.name.size() - 1);
 }
 
-std::span<const std::string_view> Packages::package_name(
-    std::span<const std::string_view> module_name
-) const {
+PackageNameRef Packages::package_name(PackageNameRef module_name) const {
     return get_package_name(project_->modules_[modules_.at(module_name)]);
 }
 
 std::pair<ir::PackageRef, ir::Module*> Packages::module_package(
-    std::span<const std::string_view> module_name
+    PackageNameRef module_name
 ) const {
     auto& module = project_->modules_[modules_.at(module_name)];
     auto package_name = get_package_name(module);
@@ -376,7 +375,7 @@ Packages::Packages(Project& project) : project_(&project) {
                 if (it != modules_.end()) {
                     auto package_name =
                         get_package_name(project.modules_[it->second]);
-                    if (!PackageNameEqual {}(package_name, package.name)) {
+                    if (package_name != package.name) {
                         usings.emplace(packages_[package_name]);
                     }
                 } else {

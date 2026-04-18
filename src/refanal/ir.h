@@ -363,9 +363,9 @@ struct UsedFunc {
 class Module {
 public:
     Module() = default;
-    Module(std::span<const std::string_view> name, types::TypePool& types)
+    Module(PackageNameRef name, types::TypePool& types)
         : name_(name), types_(&types) {}
-    [[nodiscard]] std::span<const std::string_view> name() const { return name_; }
+    [[nodiscard]] PackageNameRef name() const { return name_; }
     Func& func(FuncRef ref) { return funcs_[ref]; }
     [[nodiscard]] IndexSpan<const Func, FuncRef> funcs() const {
         return funcs_.data();
@@ -390,7 +390,7 @@ public:
     [[nodiscard]] const types::TypePool& types() const { return *types_; }
 
 private:
-    std::span<const std::string_view> name_;
+    PackageNameRef name_;
     IndexVector<Func, FuncRef> funcs_;
     IndexVector<UsedFunc, UsedFuncRef> used_funcs_;
     types::TypePool* types_ {};

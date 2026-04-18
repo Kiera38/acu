@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../index.h"
+#include "package_name.h"
 #include "source.h"
 #include "types.h"
 #include "variant.h"
@@ -359,7 +360,7 @@ private:
 class Package {
 public:
     Package() = default;
-    Package(std::vector<std::string_view> name) : name_(std::move(name)) {}
+    Package(PackageName name) : name_(std::move(name)) {}
     [[nodiscard]] std::span<const std::string_view> name() const {
         return name_;
     }
@@ -397,7 +398,7 @@ public:
     }
 
 private:
-    std::vector<std::string_view> name_;
+    PackageName name_;
     Module root_module_;
     std::unordered_map<std::string_view, Module> modules_;
     IndexVector<Func, FuncRef> funcs_;

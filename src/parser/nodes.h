@@ -190,7 +190,7 @@ struct Stmt {
 };
 
 struct Use {
-    std::vector<std::string_view> module_name;
+    PackageName module_name;
 };
 
 struct UseItem {
@@ -200,7 +200,7 @@ struct UseItem {
 };
 
 struct FromUse {
-    std::vector<std::string_view> module_name;
+    PackageName module_name;
     std::vector<UseItem> items;
 };
 
