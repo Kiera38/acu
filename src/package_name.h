@@ -30,7 +30,7 @@ struct PackageName : std::vector<std::string_view> {
     }
 };
 
-bool operator==(const PackageName& name1, const PackageName& name2) {
+inline bool operator==(const PackageName& name1, const PackageName& name2) {
     if (name1.size() != name2.size()) {
         return false;
     }
@@ -42,7 +42,19 @@ bool operator==(const PackageName& name1, const PackageName& name2) {
     return true;
 }
 
-bool operator==(const PackageName& name1, PackageNameRef name2) {
+inline bool operator==(const PackageName& name1, PackageNameRef name2) {
+    if (name1.size() != name2.size()) {
+        return false;
+    }
+    for (const auto& [i1, i2] : std::views::zip(name1, name2)) {
+        if (i1 != i2) {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline bool operator==(PackageNameRef name1, PackageNameRef name2) {
     if (name1.size() != name2.size()) {
         return false;
     }
@@ -57,7 +69,7 @@ bool operator==(const PackageName& name1, PackageNameRef name2) {
 template <>
 struct hash<PackageNameRef> {
     using is_transparent = void;
-    std::size_t operator()(PackageNameRef name) {
+    std::size_t operator()(PackageNameRef name) const {
         std::size_t result = 0;
         for (auto i : name) {
             hash_combine(result, i);
