@@ -31,8 +31,7 @@ struct UsedFunc;
 using UsedFuncRef = Ref<UsedFunc>;
 
 struct Block {
-    InstRef start;
-    InstRef end;
+    ir::InstRef end;
 };
 
 struct Comparator;
@@ -268,16 +267,16 @@ public:
         max_pos_args_ = max_pos_args;
         return_type_ = return_type;
     }
-    [[nodiscard]] std::uint32_t min_pos_args() const {return min_pos_args_;}
-    [[nodiscard]] std::uint32_t max_pos_args() const {return max_pos_args_;}
+    [[nodiscard]] std::uint32_t min_pos_args() const { return min_pos_args_; }
+    [[nodiscard]] std::uint32_t max_pos_args() const { return max_pos_args_; }
     [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref]; }
     [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const {
         return insts_.data();
     }
-    [[nodiscard]] IndexSpan<const Inst, InstRef> block(Block block) const {
-        return insts_.data().subspan(
-            block.start, block.end.index - block.start.index + 1
-        );
+    [[nodiscard]] IndexSpan<const Inst, InstRef> block(
+        InstRef start, Block block
+    ) const {
+        return insts_.data().subspan(start, block.end.index - start.index);
     }
     [[nodiscard]] std::span<const InstRef> inst_refs(InstRefs refs) const {
         return inst_refs_.range(refs);
@@ -388,9 +387,7 @@ class Package {
 public:
     Package() = default;
     Package(PackageName name) : name_(std::move(name)) {}
-    [[nodiscard]] std::span<const std::string_view> name() const {
-        return name_;
-    }
+    [[nodiscard]] PackageNameRef name() const { return name_; }
     Module& root_module() { return root_module_; }
     [[nodiscard]] const Module& root_module() const { return root_module_; }
 

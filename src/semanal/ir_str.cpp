@@ -97,7 +97,7 @@ std::string to_string(
 ) {
     std::string block_str;
     for (size_t i = 0; i < block.size(); i++) {
-        size_t idx = offset + i;
+        std::uint32_t idx = offset + i;
         block[i].data.visit(
             [&](const Inst::Const& inst) {
                 block_str +=
@@ -140,10 +140,10 @@ std::string to_string(
                 block_str += indent_string(
                     to_string(
                         all.subspan(
-                            InstRef{inst.right.start.index},
-                            inst.right.end.index - inst.right.start.index + 1
+                            InstRef{idx},
+                            inst.right.end.index - idx+1
                         ),
-                        inst.right.start.index,
+                        idx+1,
                         func
                     ),
                     1
@@ -165,26 +165,28 @@ std::string to_string(
                     std::format("%{} = comparison %{}\n", idx, inst.left.index);
                 auto comps = func.comparators(inst.comparators);
                 auto all = func.insts();
+                auto current_start = static_cast<std::uint32_t>(i)+1;
                 for (size_t k = 0; k < comps.size(); ++k) {
                     auto& comp = comps[k];
                     block_str += std::format(
                         "    {} block[{},{}]\n",
                         comparison_op_to_string(comp.op),
-                        comp.value.start.index,
+                        current_start,
                         comp.value.end.index
                     );
                     block_str += indent_string(
                         to_string(
                             all.subspan(
-                                InstRef{comp.value.start.index},
-                                comp.value.end.index - comp.value.start.index +
+                                InstRef{current_start},
+                                comp.value.end.index - current_start +
                                     1
                             ),
-                            comp.value.start.index,
+                            current_start,
                             func
                         ),
                         2
                     );
+                    current_start = comp.value.end.index+1;
                 }
             },
             [&](const Inst::Call& inst) {
@@ -203,10 +205,10 @@ std::string to_string(
                 block_str += indent_string(
                     to_string(
                         all.subspan(
-                            InstRef{inst.block.start.index},
-                            inst.block.end.index - inst.block.start.index + 1
+                            InstRef{idx+1},
+                            inst.block.end.index - idx + 1
                         ),
-                        inst.block.start.index,
+                        idx,
                         func
                     ),
                     1
@@ -222,11 +224,11 @@ std::string to_string(
                 block_str += indent_string(
                     to_string(
                         all.subspan(
-                            InstRef{inst.then_block.start.index},
+                            InstRef{idx+1},
                             inst.then_block.end.index -
-                                inst.then_block.start.index + 1
+                                idx + 1
                         ),
-                        inst.then_block.start.index,
+                        idx+1,
                         func
                     ),
                     1
@@ -239,10 +241,10 @@ std::string to_string(
                     block_str += indent_string(
                         to_string(
                             all.subspan(
-                                InstRef{eb.start.index},
-                                eb.end.index - eb.start.index + 1
+                                InstRef{inst.then_block.end.index+1},
+                                eb.end.index - inst.then_block.end.index + 1
                             ),
-                            eb.start.index,
+                            inst.then_block.end.index,
                             func
                         ),
                         1

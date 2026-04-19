@@ -309,7 +309,7 @@ public:
         changed_ = false;
         current_inst_ = 0;
         propagate_range(
-            ir::Block {.start = ir::InstRef {0}, .end = func_->last_inst()}
+            ir::Block {.end = func_->last_inst()}
         );
         return changed_;
     }
@@ -319,10 +319,7 @@ private:
         return type_pool_->get(func_type_id_).data.get<types::Type::Func>();
     }
 
-    void propagate_range(ir::Block range) {
-        if (range.end.index < range.start.index) {
-            return;
-        }
+    void propagate_range(ir::Block range) {;
         while (current_inst_ <= range.end.index) {
             propagate_inst({current_inst_++});
         }
@@ -421,18 +418,16 @@ private:
                         )
                     );
                 }
-                if (data.right.end.index >= data.right.start.index) {
-                    auto right_tp = type_vars_[data.right.end].type;
-                    if (right_tp && !can_convert(right_tp->type, types::Bool)) {
-                        err_handler_->error(
-                            *source_,
-                            inst.location,
-                            std::format(
-                                "Type mismatch: cannot convert '{}' to Bool",
-                                type_pool_->to_string(*right_tp)
-                            )
-                        );
-                    }
+                auto right_tp = type_vars_[data.right.end].type;
+                if (right_tp && !can_convert(right_tp->type, types::Bool)) {
+                    err_handler_->error(
+                        *source_,
+                        inst.location,
+                        std::format(
+                            "Type mismatch: cannot convert '{}' to Bool",
+                            type_pool_->to_string(*right_tp)
+                        )
+                    );
                 }
                 add_type(ref, types::Bool, inst.location);
             },
@@ -461,22 +456,17 @@ private:
 
                 for (auto& comparator : comparators) {
                     propagate_range(comparator.value);
-
-                    if (comparator.value.end.index >=
-                        comparator.value.start.index) {
-                        ir::InstRef operand_ref = comparator.value.end;
-                        auto left_tv = type_vars_[current_left];
-                        auto right_tv = type_vars_[operand_ref];
-                        if (left_tv.defined() && right_tv.defined()) {
-                            auto unified =
-                                unify(left_tv.get().type, right_tv.get().type);
-                            if (unified) {
-                                comparator.type = *unified;
-                            }
+                    ir::InstRef operand_ref = comparator.value.end;
+                    auto& left_tv = type_vars_[current_left];
+                    auto& right_tv = type_vars_[operand_ref];
+                    if (left_tv.defined() && right_tv.defined()) {
+                        auto unified =
+                            unify(left_tv.get().type, right_tv.get().type);
+                        if (unified) {
+                            comparator.type = *unified;
                         }
-
-                        current_left = operand_ref;
                     }
+                    current_left = operand_ref;
                 }
             },
             [&](const ir::Inst::Call& data) {

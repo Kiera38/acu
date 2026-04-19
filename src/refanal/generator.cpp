@@ -26,6 +26,7 @@ class FuncGenerator {
     };
     std::vector<LoopTargets> loops_;
     IndexVector<ir::InstRef, SemInstRef> inst_map_;
+    std::uint32_t current_inst_ = 0;
 
 public:
     FuncGenerator(
@@ -56,9 +57,7 @@ public:
         current_block_ = rfunc_.add_block(ir::Block {});
 
         if (!sfunc_->insts().empty()) {
-            ::acu::ir::Block main_block {
-                .start = SemInstRef {0}, .end = sfunc_->last_inst()
-            };
+            ::acu::ir::Block main_block {.end = sfunc_->last_inst()};
             visit_block(main_block);
         }
 
@@ -76,12 +75,8 @@ public:
     }
 
     void visit_block(acu::ir::Block sblock) {
-        if (sblock.end.index < sblock.start.index) return;
-
-        auto current = sblock.start;
-        while (current.index <= sblock.end.index) {
-            current = visit_inst(current);
-            current = SemInstRef {current.index + 1};
+        while (current_inst_ <= sblock.end.index) {
+            visit_inst(SemInstRef{current_inst_++});
         }
     }
 
@@ -154,7 +149,7 @@ public:
         return rref;
     }
 
-    SemInstRef visit_inst(SemInstRef sref) {
+    void visit_inst(SemInstRef sref) {
         const auto& sinst = sfunc_->inst(sref);
         const auto& type = afunc_->inst_types[sref];
 
@@ -169,8 +164,8 @@ public:
             return ref;
         };
 
-        return sinst.data.visit(
-            [&](const SemInst::Const& inst) -> SemInstRef {
+        sinst.data.visit(
+            [&](const SemInst::Const& inst) {
                 auto v = inst.value.visit(
                     [&](bool v) -> ir::Inst::Const::Value { return v; },
                     [&](std::int64_t v) -> ir::Inst::Const::Value { return v; },
@@ -191,21 +186,17 @@ public:
                     }
                 );
                 emit(ir::Inst::Const {v});
-                return sref;
             },
-            [&](const SemInst::VarDecl& inst) -> SemInstRef {
+            [&](const SemInst::VarDecl& inst) {
                 emit(ir::Inst::VarDecl {inst.name});
-                return sref;
             },
-            [&](const SemInst::LoadVar& inst) -> SemInstRef {
+            [&](const SemInst::LoadVar& inst) {
                 emit(ir::Inst::LoadVar {get_mapped(inst.var)});
-                return sref;
             },
-            [&](const SemInst::LoadParam& inst) -> SemInstRef {
+            [&](const SemInst::LoadParam& inst) {
                 emit(ir::Inst::LoadParam {ir::ParamRef {inst.param.index}});
-                return sref;
             },
-            [&](const SemInst::Store& inst) -> SemInstRef {
+            [&](const SemInst::Store& inst) {
                 auto var_type = afunc_->inst_types[inst.var];
                 emit(
                     ir::Inst::Store {
@@ -213,9 +204,8 @@ public:
                         .value = get_cast(inst.value, var_type, sinst.location)
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::Binary& inst) -> SemInstRef {
+            [&](const SemInst::Binary& inst) {
                 emit(
                     ir::Inst::Binary {
                         .left = get_cast(inst.left, type, sinst.location),
@@ -223,9 +213,8 @@ public:
                         .op = static_cast<ir::Inst::BinaryOp>(inst.op)
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::Unary& inst) -> SemInstRef {
+            [&](const SemInst::Unary& inst) {
                 ir::InstRef val = get_mapped(inst.value);
                 if (inst.op == SemInst::UnaryOp::Not) {
                     val = get_cast(inst.value, types::Bool, sinst.location);
@@ -236,14 +225,12 @@ public:
                         .op = static_cast<ir::Inst::UnaryOp>(inst.op)
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::Comparison& inst) -> SemInstRef {
+            [&](const SemInst::Comparison& inst) {
                 auto comparators = sfunc_->comparators(inst.comparators);
-                if (comparators.empty()) return sref;
+                if (comparators.empty()) return;
 
                 auto current_left_sref = inst.left;
-                auto skip_idx = sref;
 
                 ir::BlockRef merge_block {~0u};
                 if (comparators.size() > 1) {
@@ -281,12 +268,6 @@ public:
                         inst_map_[sref] = comp_ref;
                     }
 
-                    if (comp.value.start.index == skip_idx.index + 1) {
-                        skip_idx = comp.value.end.index > skip_idx.index
-                                       ? comp.value.end
-                                       : skip_idx;
-                    }
-
                     if (i < comparators.size() - 1) {
                         auto right_block = rfunc_.add_block(ir::Block {});
 
@@ -318,10 +299,8 @@ public:
                     jump_to(merge_block, sinst.location);
                     current_block_ = merge_block;
                 }
-
-                return skip_idx;
             },
-            [&](const SemInst::Call& inst) -> SemInstRef {
+            [&](const SemInst::Call& inst) {
                 auto func_s_type = afunc_->inst_types[inst.value].type;
                 const types::Type::Func* defined_func = nullptr;
                 if (func_s_type != types::None) {
@@ -361,7 +340,6 @@ public:
                                 .struct_type = struct_type, .args = refs
                             }
                         );
-                        return sref;
                     }
                 }
 
@@ -393,9 +371,8 @@ public:
                         .value = get_mapped(inst.value), .args = refs
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::If& inst) -> SemInstRef {
+            [&](const SemInst::If& inst) {
                 auto true_block = rfunc_.add_block(ir::Block {});
                 ir::BlockRef false_block {~0u};
                 if (inst.else_block) {
@@ -425,28 +402,15 @@ public:
                 visit_block(inst.then_block);
                 jump_to(merge_block, sinst.location);
 
-                SemInstRef skip_idx = sref;
-                if (inst.then_block.start.index == sref.index + 1) {
-                    skip_idx = inst.then_block.end.index > skip_idx.index
-                                   ? inst.then_block.end
-                                   : skip_idx;
-                }
-
                 if (inst.else_block) {
                     current_block_ = false_block;
                     visit_block(*inst.else_block);
                     jump_to(merge_block, sinst.location);
-                    if (inst.else_block->start.index == skip_idx.index + 1) {
-                        skip_idx = inst.else_block->end.index > skip_idx.index
-                                       ? inst.else_block->end
-                                       : skip_idx;
-                    }
                 }
 
                 current_block_ = merge_block;
-                return skip_idx;
             },
-            [&](const SemInst::Loop& inst) -> SemInstRef {
+            [&](const SemInst::Loop& inst) {
                 auto loop_body = rfunc_.add_block(ir::Block {});
                 auto loop_merge = rfunc_.add_block(ir::Block {});
 
@@ -464,14 +428,8 @@ public:
 
                 current_block_ = loop_merge;
                 auto skip_idx = sref;
-                if (inst.block.start.index == sref.index + 1) {
-                    skip_idx = inst.block.end.index > skip_idx.index
-                                   ? inst.block.end
-                                   : skip_idx;
-                }
-                return skip_idx;
             },
-            [&](const SemInst::Return& inst) -> SemInstRef {
+            [&](const SemInst::Return& inst) {
                 std::optional<ir::InstRef> val;
                 if (inst.value) {
                     val = get_cast(
@@ -479,21 +437,18 @@ public:
                     );
                 }
                 emit(ir::Inst::Return {val});
-                return sref;
             },
-            [&](const SemInst::Break& inst) -> SemInstRef {
+            [&](const SemInst::Break& inst) {
                 if (!loops_.empty()) {
                     jump_to(loops_.back().break_target, sinst.location);
                 }
-                return sref;
             },
-            [&](const SemInst::Continue& inst) -> SemInstRef {
+            [&](const SemInst::Continue& inst) {
                 if (!loops_.empty()) {
                     jump_to(loops_.back().continue_target, sinst.location);
                 }
-                return sref;
             },
-            [&](const SemInst::GetAttr& inst) -> SemInstRef {
+            [&](const SemInst::GetAttr& inst) {
                 auto base_ref = get_mapped(inst.value);
                 auto base_type = afunc_->inst_types[inst.value].type;
 
@@ -512,9 +467,8 @@ public:
                 emit(
                     ir::Inst::GetField {.value = base_ref, .index = field_idx}
                 );
-                return sref;
             },
-            [&](const SemInst::SetAttr& inst) -> SemInstRef {
+            [&](const SemInst::SetAttr& inst) {
                 auto base_ref = get_mapped(inst.var);
                 auto base_type = afunc_->inst_types[inst.var].type;
 
@@ -543,18 +497,16 @@ public:
                         .value = value_mapped
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::GetItem& inst) -> SemInstRef {
+            [&](const SemInst::GetItem& inst) {
                 emit(
                     ir::Inst::GetItem {
                         .value = get_mapped(inst.value),
                         .index = get_mapped(inst.index)
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::SetItem& inst) -> SemInstRef {
+            [&](const SemInst::SetItem& inst) {
                 auto base_type = afunc_->inst_types[inst.var].type;
                 types::TypeId item_type = types::None;
                 if (base_type != types::None) {
@@ -581,17 +533,15 @@ public:
                         .value = value_mapped
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::As& inst) -> SemInstRef {
+            [&](const SemInst::As& inst) {
                 emit(
                     ir::Inst::Cast {
                         .value = get_mapped(inst.value),
                     }
                 );
-                return sref;
             },
-            [&](const SemInst::Logical& inst) -> SemInstRef {
+            [&](const SemInst::Logical& inst) {
                 auto right_block = rfunc_.add_block(ir::Block {});
                 auto merge_block = rfunc_.add_block(ir::Block {});
 
@@ -620,15 +570,8 @@ public:
                 jump_to(merge_block, sinst.location);
 
                 current_block_ = merge_block;
-                ::acu::ir::InstRef skip_idx = sref;
-                if (inst.right.start.index == sref.index + 1) {
-                    skip_idx = inst.right.end.index > skip_idx.index
-                                   ? inst.right.end
-                                   : skip_idx;
-                }
-                return skip_idx;
             },
-            [&](const SemInst::Array& inst) -> SemInstRef {
+            [&](const SemInst::Array& inst) {
                 auto s_args = sfunc_->inst_refs(inst.items);
                 auto array_type = afunc_->inst_types[sref].type;
                 types::TypeId item_type = types::None;
@@ -647,15 +590,12 @@ public:
                 }
                 ir::InstRefs refs = rfunc_.add(r_args);
                 emit(ir::Inst::Array {refs});
-                return sref;
             },
-            [&](const SemInst::AddressOf& inst) -> SemInstRef {
+            [&](const SemInst::AddressOf& inst) {
                 emit(ir::Inst::AddressOf {get_mapped(inst.value)});
-                return sref;
             },
-            [&](const SemInst::Deref& inst) -> SemInstRef {
+            [&](const SemInst::Deref& inst) {
                 emit(ir::Inst::Deref {get_mapped(inst.value)});
-                return sref;
             }
         );
     }

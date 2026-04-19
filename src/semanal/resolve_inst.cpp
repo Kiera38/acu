@@ -252,7 +252,7 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
                 func.set_if_blocks(
                     if_ref,
                     then_block,
-                    ir::Block {.start = break_ref, .end = break_ref}
+                    ir::Block {.end = break_ref}
                 );
             });
             func.set_loop_block(loop_ref, loop_block);
@@ -327,9 +327,8 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
 ir::Block Resolver::resolve_block(
     ir::Func& func, std::invocable auto&& resolve
 ) {
-    auto start_inst = func.last_inst();
     std::invoke(resolve);
-    return {.start = {start_inst.index + 1}, .end = func.last_inst()};
+    return {.end = func.last_inst()};
 }
 
 ir::Block Resolver::resolve_block(const nodes::Stmt& stmt, ir::Func& func) {
