@@ -69,6 +69,8 @@ struct Type {
     };
     struct Func {
         std::vector<FuncParam> params;
+        std::uint32_t min_pos_args;
+        std::uint32_t max_pos_args;
         SpecType return_type;
     };
 
@@ -198,6 +200,8 @@ private:
                 hash_combine(result, param.name);
                 hash_combine(result, SpecTypeHash {}(param.type));
             }
+            hash_combine(result, func.min_pos_args);
+            hash_combine(result, func.max_pos_args);
             hash_combine(result, SpecTypeHash {}(func.return_type));
             return result;
         }
@@ -216,7 +220,9 @@ private:
                     return false;
                 }
             }
-            return func1.return_type == func2.return_type;
+            return func1.min_pos_args == func2.min_pos_args &&
+                   func1.max_pos_args == func2.max_pos_args &&
+                   func1.return_type == func2.return_type;
         }
     };
 

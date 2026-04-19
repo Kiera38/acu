@@ -196,7 +196,7 @@ void infer_specifiers(
                     auto args = func.inst_refs(call.args);
                     for (const auto& [param_type, arg_ref] :
                          std::views::zip(func_type.params, args)) {
-                        if (param_type.specifier == Specifier::Var) {
+                        if (param_type.type.specifier == Specifier::Var) {
                             make_var(
                                 arg_ref, inst.location, "function call argument"
                             );

@@ -278,19 +278,45 @@ private:
         Token name = expect(TokenType::Identifier, "expected function name");
         expect(TokenType::LParen, "Expected '(' after function name");
         std::vector<nodes::FuncArg> args;
+        std::optional<std::uint32_t> min_pos_args;
+        std::optional<std::uint32_t> max_pos_args;
         while (!match(TokenType::RParen)) {
             try {
-                Token param =
-                    expect(TokenType::Identifier, "Expected parameter name");
-                expect(TokenType::Colon, "Expected ':' after parameter name");
-                std::unique_ptr<nodes::Expr> type = parse_type();
-                args.emplace_back(
-                    nodes::FuncArg {
-                        .location = param.location,
-                        .name = std::get<std::string_view>(param.value.value),
-                        .type = std::move(type)
+                if (match(TokenType::Slash)) {
+                    if (min_pos_args.has_value()) {
+                        err_handler_->error(
+                            *source_,
+                            peek(-1).location,
+                            "разедлитель позиционных параметров уже указан"
+                        );
                     }
-                );
+                    min_pos_args = static_cast<std::uint32_t>(args.size());
+                } else if (match(TokenType::Star)) {
+                    if (max_pos_args.has_value()) {
+                        err_handler_->error(
+                            *source_,
+                            peek(-1).location,
+                            "разедлитель параметров со значением уже указан"
+                        );
+                    }
+                    max_pos_args = static_cast<std::uint32_t>(args.size());
+                } else {
+                    Token param = expect(
+                        TokenType::Identifier, "Expected parameter name"
+                    );
+                    expect(
+                        TokenType::Colon, "Expected ':' after parameter name"
+                    );
+                    std::unique_ptr<nodes::Expr> type = parse_type();
+                    args.emplace_back(
+                        nodes::FuncArg {
+                            .location = param.location,
+                            .name =
+                                std::get<std::string_view>(param.value.value),
+                            .type = std::move(type)
+                        }
+                    );
+                }
             } catch (const ParseError& e) {
                 if (synchronize_func_arg()) {
                     expect(TokenType::RParen, "Expected ')' after parameters");
@@ -321,7 +347,7 @@ private:
             }
             body = parse_body();
         }
-
+        std::uint32_t args_size = args.size();
         return {
             .location = name.location,
             .data = nodes::Func {
@@ -329,6 +355,8 @@ private:
                 .is_extern = is_extern,
                 .name = name.value.get<std::string_view>(),
                 .args = std::move(args),
+                .min_pos_args = min_pos_args.value_or(0),
+                .max_pos_args = max_pos_args.value_or(args_size),
                 .return_type = std::move(return_type),
                 .body = std::move(body)
             }

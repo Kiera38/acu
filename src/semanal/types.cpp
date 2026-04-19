@@ -194,6 +194,8 @@ TypeId TypePool::copy(const TypePool& pool, TypeId type) {
             }
             return add_func({
                 .params = std::move(params),
+                .min_pos_args = func.min_pos_args,
+                .max_pos_args = func.max_pos_args,
                 .return_type = copy(pool, func.return_type),
             });
         },
@@ -223,7 +225,10 @@ types::TypeId Package::func_type(FuncRef ref) {
         }) |
         std::ranges::to<std::vector<types::Type::FuncParam>>();
     types::Type::Func type {
-        .params = std::move(params), .return_type = func.return_type()
+        .params = std::move(params),
+        .min_pos_args = func.min_pos_args(),
+        .max_pos_args = func.max_pos_args(),
+        .return_type = func.return_type()
     };
     return types_.add_func(type);
 }

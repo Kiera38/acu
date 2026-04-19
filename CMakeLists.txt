@@ -89,7 +89,7 @@ add_executable(acu
     src/codegen/generator.cpp
     src/codegen/jit.cpp
 )
-set_property(TARGET acu PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# set_property(TARGET acu PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Set include directories
 target_include_directories(acu SYSTEM PRIVATE

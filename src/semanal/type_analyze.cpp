@@ -659,7 +659,9 @@ private:
         );
     }
 
-    void check_func(ir::InstRef ref, const ir::Inst& inst, const types::Type::Func& ft) {
+    void check_func(
+        ir::InstRef ref, const ir::Inst& inst, const types::Type::Func& ft
+    ) {
         const auto& data = inst.data.get<ir::Inst::Call>();
         add_type(ref, ft.return_type.type, inst.location);
         if (data.args.size + data.named_args.size > ft.params.size()) {
@@ -671,6 +673,30 @@ private:
                     "parameters but call arguments {}",
                     ft.params.size(),
                     data.args.size + data.named_args.size
+                )
+            );
+        }
+        if (data.args.size < ft.min_pos_args) {
+            err_handler_->error(
+                *source_,
+                inst.location,
+                std::format(
+                    "функция ожидает не меньше {} позиционных аргументов, но "
+                    "передано {}",
+                    ft.min_pos_args,
+                    data.args.size
+                )
+            );
+        }
+        if (data.args.size > ft.max_pos_args) {
+            err_handler_->error(
+                *source_,
+                inst.location,
+                std::format(
+                    "функция ожидает не больше {} позиционных аргументов, но "
+                    "передано {}",
+                    ft.min_pos_args,
+                    data.args.size
                 )
             );
         }
@@ -786,7 +812,7 @@ private:
     ir::Package* package_;
     const Source* source_;
     types::TypePool* type_pool_;
-    types::TypeId func_type_id_{};
+    types::TypeId func_type_id_ {};
     ir::FuncRef func_ref_;
     ir::Func* func_;
     TypeVarMap type_vars_;

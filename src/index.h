@@ -4,7 +4,9 @@
 #include <ranges>
 #include <span>
 #include <vector>
+
 #include "hash.h"
+
 
 namespace acu {
 template <typename T>
@@ -235,11 +237,9 @@ public:
 
     template <std::ranges::range R>
     RefRange<T, I> append_range(R&& range) {
-        auto start = last_index();
+        auto start = static_cast<std::uint32_t>(vec.size());
         vec.append_range(std::forward<R>(range));
-        return RefRange<T, I> {
-            .start = start.index, .size = last_index().index - start.index
-        };
+        return RefRange<T, I> {.start = start, .size = static_cast<std::uint32_t>(vec.size() - start)};
     }
 
     IndexSpan<T, I> data() { return IndexSpan<T, I>(vec); }

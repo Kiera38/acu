@@ -256,11 +256,20 @@ public:
         return params_.data();
     }
     [[nodiscard]] types::SpecType return_type() const { return return_type_; }
-    void set_type(std::span<const Param> params, types::SpecType return_type) {
+    void set_type(
+        std::span<const Param> params,
+        std::uint32_t min_pos_args,
+        std::uint32_t max_pos_args,
+        types::SpecType return_type
+    ) {
         params_.clear();
         params_.append_range(params);
+        min_pos_args_ = min_pos_args;
+        max_pos_args_ = max_pos_args;
         return_type_ = return_type;
     }
+    [[nodiscard]] std::uint32_t min_pos_args() const {return min_pos_args_;}
+    [[nodiscard]] std::uint32_t max_pos_args() const {return max_pos_args_;}
     [[nodiscard]] Inst inst(InstRef ref) const { return insts_[ref]; }
     [[nodiscard]] IndexSpan<const Inst, InstRef> insts() const {
         return insts_.data();
@@ -329,6 +338,8 @@ private:
     std::string_view name_;
     bool is_extern_ = false;
     IndexVector<Param, ParamRef> params_;
+    std::uint32_t min_pos_args_ = 0;
+    std::uint32_t max_pos_args_ = 0;
     types::SpecType return_type_;
     IndexVector<Inst, InstRef> insts_;
     IndexVector<InstRef> inst_refs_;

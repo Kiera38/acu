@@ -1,5 +1,7 @@
 #include "resolver.h"
+
 #include "package_name.h"
+
 
 namespace acu::semanal {
 namespace {
@@ -193,9 +195,7 @@ utils::Variant<Context*, UsedModule> Resolver::get_module_context(
     return UsedModule {.package = used.first, .module = used.second};
 }
 
-bool Resolver::flatten_module_path(
-    const nodes::Expr& expr, PackageName& path
-) {
+bool Resolver::flatten_module_path(const nodes::Expr& expr, PackageName& path) {
     if (auto* name_node = expr.value.get_if<nodes::Expr::Name>()) {
         path.push_back(name_node->name);
         return true;
@@ -436,7 +436,12 @@ void Resolver::resolve_func_def(const nodes::Func& func_node) {
                 return_type.specifier = types::Specifier::Val;
             }
         }
-        ir_func.set_type(ir_params, return_type);
+        ir_func.set_type(
+            ir_params,
+            func_node.min_pos_args,
+            func_node.max_pos_args,
+            return_type
+        );
 
         if (!func_node.is_extern && func_node.body) {
             context_->push();

@@ -220,6 +220,8 @@ struct Func {
     bool is_extern = false;
     std::string_view name;
     std::vector<FuncArg> args;
+    std::uint32_t min_pos_args = 0;
+    std::uint32_t max_pos_args = 0;
     std::unique_ptr<Expr> return_type;
     std::unique_ptr<Stmt> body;
 };

@@ -23,7 +23,10 @@ struct PackageNameRef : std::span<const std::string_view> {
     }
 };
 struct PackageName : std::vector<std::string_view> {
-    operator PackageNameRef() const { return {*this}; }
+    operator PackageNameRef() const {
+        auto name = std::span(*this);
+        return {name}; 
+    }
 
     [[nodiscard]] std::string join() const {
         return PackageNameRef(*this).join();
