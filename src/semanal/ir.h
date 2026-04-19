@@ -40,6 +40,12 @@ using Comparators = RefRange<Comparator>;
 
 using InstRefs = RefRange<InstRef>;
 
+struct CallArg {
+    std::string_view name;
+    InstRef value;
+};
+using CallArgs = RefRange<CallArg>;
+
 struct Inst {
     struct Const {
         using Value = utils::Variant<
@@ -121,6 +127,7 @@ struct Inst {
     struct Call {
         InstRef value;
         InstRefs args;
+        CallArgs named_args;
     };
 
     struct Loop {
@@ -308,6 +315,14 @@ public:
         insts_[comparison].data.get<Inst::Comparison>().comparators = comp;
     }
 
+    CallArgs add_call_args(std::span<const CallArg> args) {
+        return call_args_.append_range(args);
+    }
+
+    [[nodiscard]] std::span<const CallArg> call_args(CallArgs args) const {
+        return call_args_.range(args);
+    }
+
 private:
     const Source* source_;
     Location location_;
@@ -318,6 +333,7 @@ private:
     IndexVector<Inst, InstRef> insts_;
     IndexVector<InstRef> inst_refs_;
     IndexVector<Comparator> comparators_;
+    IndexVector<CallArg> call_args_;
 };
 
 class Package;

@@ -1,5 +1,7 @@
 #include "refanal/generator.h"
 
+#include <algorithm>
+
 #include "ir.h"
 #include "semanal/ir.h"
 #include "semanal/types.h"
@@ -364,16 +366,24 @@ public:
                 }
 
                 auto s_args = sfunc_->inst_refs(inst.args);
+                auto nargs = sfunc_->call_args(inst.named_args);
                 std::vector<ir::InstRef> r_args;
+                r_args.reserve(s_args.size() + nargs.size());
                 for (size_t i = 0; i < s_args.size(); ++i) {
-                    if (defined_func && i < defined_func->params.size()) {
-                        r_args.push_back(get_cast(
-                            s_args[i],
-                            defined_func->params[i].type,
-                            sinst.location
-                        ));
-                    } else {
-                        r_args.push_back(get_mapped(s_args[i]));
+                    r_args.push_back(get_cast(
+                        s_args[i], defined_func->params[i].type, sinst.location
+                    ));
+                }
+                for (const auto& param :
+                     std::span(defined_func->params).subspan(s_args.size())) {
+                    auto result =
+                        std::ranges::find_if(nargs, [&](const auto& arg) {
+                            return arg.name == param.name;
+                        });
+                    if (result != nargs.end()) {
+                        r_args.push_back(
+                            get_cast(result->value, param.type, sinst.location)
+                        );
                     }
                 }
                 ir::InstRefs refs = rfunc_.add(r_args);
@@ -651,10 +661,11 @@ public:
     }
 };
 
-ir::Module generate(
-    acu::ir::AnalyzedPackage& analyzed_package
-) {
-    ir::Module rmod(analyzed_package.ir_package->name(), analyzed_package.ir_package->types());
+ir::Module generate(acu::ir::AnalyzedPackage& analyzed_package) {
+    ir::Module rmod(
+        analyzed_package.ir_package->name(),
+        analyzed_package.ir_package->types()
+    );
     for (const auto& afunc : analyzed_package.analyzed_funcs) {
         const auto& sfunc = analyzed_package.ir_package->func(afunc.ref);
         FuncGenerator fg(analyzed_package, afunc, sfunc);
@@ -663,7 +674,7 @@ ir::Module generate(
     for (const auto& ufunc : analyzed_package.ir_package->used_funcs()) {
         rmod.add(
             ir::UsedFunc {
-                .module = ir::ModuleRef{ufunc.package.index},
+                .module = ir::ModuleRef {ufunc.package.index},
                 .func = ir::FuncRef {.index = ufunc.func.index},
                 .type = ufunc.type
             }

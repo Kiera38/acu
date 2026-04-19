@@ -419,14 +419,14 @@ private:
                 auto arg_refs = ir_func->inst_refs(c.args);
                 for (size_t i = 0; i < c.args.size; i++) {
                     args.push_back(get_value(
-                        arg_refs[i], func_type_info->params[i].specifier
+                        arg_refs[i], func_type_info->params[i].type.specifier
                     ));
                 }
 
                 std::vector<llvm::Type*> param_types;
                 param_types.reserve(func_type_info->params.size());
                 for (const auto& p : func_type_info->params) {
-                    param_types.push_back(get_rep_type(p));
+                    param_types.push_back(get_rep_type(p.type));
                 }
                 llvm::FunctionType* llvm_func_type = llvm::FunctionType::get(
                     get_rep_type(func_type_info->return_type),

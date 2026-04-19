@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <deque>
 #include <format>
 #include <optional>
@@ -368,7 +369,7 @@ private:
             },
             [&](const ir::Inst::LoadParam& data) {
                 auto param_type = get_func_type().params[data.param.index];
-                lock_type(ref, param_type, inst.location);
+                lock_type(ref, param_type.type, inst.location);
             },
             [&](const ir::Inst::Store& data) {
                 copy_type(data.value, data.var, inst.location);
@@ -483,28 +484,11 @@ private:
                 if (func_tp.has_value()) {
                     const auto& type = type_pool_->get(func_tp->type);
                     if (auto ft = type.data.get_if<types::Type::Func>()) {
-                        add_type(ref, ft->return_type.type, inst.location);
-                        auto args = func_->inst_refs(data.args);
-                        for (size_t i = 0;
-                             i < args.size() && i < ft->params.size();
-                             ++i) {
-                            auto arg_tp = type_vars_[args[i]].type;
-                            if (arg_tp && !can_convert(
-                                              arg_tp->type, ft->params[i].type
-                                          )) {
-                                err_handler_->error(
-                                    *source_,
-                                    inst.location,
-                                    std::format(
-                                        "Type mismatch: cannot convert "
-                                        "argument {} from {} to {}",
-                                        i,
-                                        type_pool_->to_string(*arg_tp),
-                                        type_pool_->to_string(ft->params[i])
-                                    )
-                                );
-                            }
-                        }
+                        check_func(ref, inst, *ft);
+                    } else {
+                        err_handler_->error(
+                            *source_, inst.location, "is not function"
+                        );
                     }
                 }
             },
@@ -675,6 +659,94 @@ private:
         );
     }
 
+    void check_func(ir::InstRef ref, const ir::Inst& inst, const types::Type::Func& ft) {
+        const auto& data = inst.data.get<ir::Inst::Call>();
+        add_type(ref, ft.return_type.type, inst.location);
+        if (data.args.size + data.named_args.size > ft.params.size()) {
+            err_handler_->error(
+                *source_,
+                inst.location,
+                std::format(
+                    "argument count mismatch: function has {} "
+                    "parameters but call arguments {}",
+                    ft.params.size(),
+                    data.args.size + data.named_args.size
+                )
+            );
+        }
+        auto args = func_->inst_refs(data.args);
+        for (size_t i = 0; i < args.size(); ++i) {
+            auto arg_tp = type_vars_[args[i]].type;
+            if (arg_tp && !can_convert(arg_tp->type, ft.params[i].type.type)) {
+                err_handler_->error(
+                    *source_,
+                    inst.location,
+                    std::format(
+                        "Type mismatch: cannot convert "
+                        "argument {} from {} to {}",
+                        i,
+                        type_pool_->to_string(*arg_tp),
+                        type_pool_->to_string(ft.params[i].type)
+                    )
+                );
+            }
+        }
+        auto named_args = func_->call_args(data.named_args);
+        for (const auto& named_arg : named_args) {
+            auto param = [&] -> std::optional<types::Type::FuncParam> {
+                auto search_params = std::span(ft.params).subspan(args.size());
+                auto result =
+                    std::ranges::find_if(search_params, [&](const auto& param) {
+                        return param.name == named_arg.name;
+                    });
+                if (result != search_params.end()) {
+                    return *result;
+                }
+                search_params = std::span(ft.params).subspan(0, args.size());
+                result =
+                    std::ranges::find_if(search_params, [&](const auto& param) {
+                        return param.name == named_arg.name;
+                    });
+                if (result != search_params.end()) {
+                    err_handler_->error(
+                        *source_,
+                        inst.location,
+                        std::format(
+                            "argument with name {} already "
+                            "passed as {} argument",
+                            named_arg.name,
+                            result - search_params.begin()
+                        )
+                    );
+                    return std::nullopt;
+                }
+                err_handler_->error(
+                    *source_,
+                    inst.location,
+                    std::format(
+                        "argument with name {} not found", named_arg.name
+                    )
+                );
+                return std::nullopt;
+            }();
+            auto arg_tp = type_vars_[named_arg.value].type;
+            if (param && arg_tp &&
+                !can_convert(arg_tp->type, param->type.type)) {
+                err_handler_->error(
+                    *source_,
+                    inst.location,
+                    std::format(
+                        "Type mismatch: cannot convert "
+                        "argument {} from {} to {}",
+                        named_arg.name,
+                        type_pool_->to_string(*arg_tp),
+                        type_pool_->to_string(param->type)
+                    )
+                );
+            }
+        }
+    }
+
     void add_type(ir::InstRef inst, types::TypeId type, Location loc) {
         auto& tv = type_vars_[inst];
         bool previously_defined = tv.defined();
@@ -714,7 +786,7 @@ private:
     ir::Package* package_;
     const Source* source_;
     types::TypePool* type_pool_;
-    types::TypeId func_type_id_;
+    types::TypeId func_type_id_{};
     ir::FuncRef func_ref_;
     ir::Func* func_;
     TypeVarMap type_vars_;
@@ -724,7 +796,9 @@ private:
 };
 }
 
-ir::AnalyzedPackage type_analyze(ir::Package& package, ErrorHandler& err_handler) {
+ir::AnalyzedPackage type_analyze(
+    ir::Package& package, ErrorHandler& err_handler
+) {
     ir::AnalyzedPackage result(&package);
     std::deque<TypeAnalyzer> analyzers;
     for (auto func_ref : package.funcs().indices()) {

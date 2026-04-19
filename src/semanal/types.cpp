@@ -113,6 +113,10 @@ void TypePool::set_struct_fields(
     types_[type].data.get<Type::Struct>().fields = std::move(fields);
 }
 
+std::string TypePool::to_string(const Type::FuncParam& param) const {
+    return std::format("{}: {}", param.name, to_string(param.type));
+}
+
 std::string TypePool::to_string(TypeId id) const {
     const auto& type = get(id);
     return type.data.visit(
@@ -181,10 +185,12 @@ TypeId TypePool::copy(const TypePool& pool, TypeId type) {
     }
     return pool.get(type).data.visit(
         [&](const Type::Func& func) {
-            std::vector<SpecType> params;
+            std::vector<Type::FuncParam> params;
             params.reserve(func.params.size());
             for (auto param : func.params) {
-                params.push_back(copy(pool, param));
+                params.push_back(
+                    {.name = param.name, .type = copy(pool, param.type)}
+                );
             }
             return add_func({
                 .params = std::move(params),
@@ -194,9 +200,7 @@ TypeId TypePool::copy(const TypePool& pool, TypeId type) {
         [&](const Type::Array& array) {
             return add_array(copy(pool, array.item), array.length);
         },
-        [&](const Type::Ptr& ptr) {
-            return add_ptr(copy(pool, ptr.type));
-        },
+        [&](const Type::Ptr& ptr) { return add_ptr(copy(pool, ptr.type)); },
         [&](const Type::Struct&) {
             return add_used_struct({.pool = &pool, .type = type});
         },
@@ -214,8 +218,10 @@ types::TypeId Package::func_type(FuncRef ref) {
     const auto& func = funcs_[ref];
     auto params =
         func.params() |
-        std::views::transform([](const Param& param) { return param.type; }) |
-        std::ranges::to<std::vector<types::SpecType>>();
+        std::views::transform([](const Param& param) -> types::Type::FuncParam {
+            return {.name = param.name, .type = param.type};
+        }) |
+        std::ranges::to<std::vector<types::Type::FuncParam>>();
     types::Type::Func type {
         .params = std::move(params), .return_type = func.return_type()
     };

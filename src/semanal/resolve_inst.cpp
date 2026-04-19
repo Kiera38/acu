@@ -1,3 +1,4 @@
+#include "ir.h"
 #include "resolver.h"
 
 namespace acu::semanal {
@@ -545,13 +546,34 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
             auto callee_ref = resolve_expr(*node.value, func);
 
             std::vector<ir::InstRef> arg_refs;
+            std::vector<ir::CallArg> named_args;
             arg_refs.reserve(node.args.size());
             for (const auto& arg : node.args) {
-                arg_refs.push_back(resolve_expr(*arg, func));
+                if (arg.name.has_value()) {
+                    named_args.push_back(
+                        {.name = *arg.name,
+                         .value = resolve_expr(*arg.value, func)}
+                    );
+                } else {
+                    if (!named_args.empty()) {
+                        err_handler_->error(
+                            context_->source(),
+                            arg.value->location,
+                            "psitional args must be before named args"
+                        );
+                    }
+                    arg_refs.push_back(resolve_expr(*arg.value, func));
+                }
             }
             auto inst_refs = func.add(arg_refs);
+            auto call_args = func.add_call_args(named_args);
             return func.add({
-                .data = ir::Inst::Call {.value = callee_ref, .args = inst_refs},
+                .data =
+                    ir::Inst::Call {
+                        .value = callee_ref,
+                        .args = inst_refs,
+                        .named_args = call_args
+                    },
                 .location = expr.location,
             });
         },

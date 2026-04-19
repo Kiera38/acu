@@ -63,8 +63,12 @@ struct Type {
     };
     enum class Float : std::uint8_t { F32 = 32, F64 = 64 };
 
+    struct FuncParam {
+        std::string_view name;
+        SpecType type;
+    };
     struct Func {
-        std::vector<SpecType> params;
+        std::vector<FuncParam> params;
         SpecType return_type;
     };
 
@@ -128,6 +132,7 @@ public:
     void set_struct_fields(TypeId type, std::vector<Type::StructField> fields);
     [[nodiscard]] std::string to_string(TypeId id) const;
     [[nodiscard]] std::string to_string(SpecType type) const;
+    [[nodiscard]] std::string to_string(const Type::FuncParam& param) const;
 
     [[nodiscard]] bool is_int(TypeId type) const {
         return types_[type].data.is<Type::Int>();
@@ -190,7 +195,8 @@ private:
         std::size_t operator()(const Type::Func& func) const {
             std::size_t result = 0;
             for (const auto& param : func.params) {
-                hash_combine(result, SpecTypeHash {}(param));
+                hash_combine(result, param.name);
+                hash_combine(result, SpecTypeHash {}(param.type));
             }
             hash_combine(result, SpecTypeHash {}(func.return_type));
             return result;
@@ -201,8 +207,16 @@ private:
         bool operator()(
             const Type::Func& func1, const Type::Func& func2
         ) const {
-            return func1.params == func2.params &&
-                   func1.return_type == func2.return_type;
+            if (func1.params.size() != func2.params.size()) {
+                return false;
+            }
+            for (const auto& [param1, param2] :
+                 std::views::zip(func1.params, func2.params)) {
+                if (param1.name != param2.name || param1.type != param2.type) {
+                    return false;
+                }
+            }
+            return func1.return_type == func2.return_type;
         }
     };
 
@@ -233,7 +247,9 @@ private:
     };
 
     struct UsedStructEqual {
-        bool operator()(Type::UsedStruct struct1, Type::UsedStruct struct2) const {
+        bool operator()(
+            Type::UsedStruct struct1, Type::UsedStruct struct2
+        ) const {
             return struct1.pool == struct2.pool && struct1.type == struct2.type;
         }
     };

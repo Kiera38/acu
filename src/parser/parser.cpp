@@ -274,9 +274,7 @@ private:
         };
     }
 
-    nodes::Item parse_function(
-        bool is_public, bool is_extern
-    ) {
+    nodes::Item parse_function(bool is_public, bool is_extern) {
         Token name = expect(TokenType::Identifier, "expected function name");
         expect(TokenType::LParen, "Expected '(' after function name");
         std::vector<nodes::FuncArg> args;
@@ -875,9 +873,18 @@ private:
     std::unique_ptr<nodes::Expr> parse_call(
         std::unique_ptr<nodes::Expr> expr, Location location
     ) {
-        std::vector<std::unique_ptr<nodes::Expr>> args;
+        std::vector<nodes::Expr::CallArg> args;
         while (!match(TokenType::RParen)) {
-            args.push_back(parse_expr());
+            if (peek().type == TokenType::Identifier &&
+                peek(1).type == TokenType::Equal) {
+                args.push_back({
+                    .name = next().value.get<std::string_view>(),
+                    .value = parse_expr(),
+                });
+            } else {
+                args.push_back({.value = parse_expr()});
+            }
+
             if (!match(TokenType::Comma)) {
                 expect(TokenType::RParen, "expected ')' after arguments");
                 break;

@@ -162,10 +162,17 @@ std::string to_string(const Expr::Unary& unary, acu::Location location = {}) {
     );
 }
 
+std::string to_string(const Expr::CallArg& arg) {
+    if(arg.name.has_value()) {
+        return std::format("CallArg(\n  {},\n  {}\n)", arg.name.value(), to_string(*arg.value));
+    }
+    return std::format("CallArg({})", to_string(*arg.value));
+}
+
 std::string to_string(const Expr::Call& call, acu::Location location = {}) {
     std::string value_str = indent_string(to_string(*call.value), 2);
     std::string args_str = join_vector(call.args, ",\n", [](const auto& arg) {
-        return indent_string(to_string(*arg), 2);
+        return indent_string(to_string(arg), 2);
     });
     if (!args_str.empty()) {
         args_str = "\n" + args_str;

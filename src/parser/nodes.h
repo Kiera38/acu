@@ -69,9 +69,14 @@ struct Expr {
         UnaryOp op;
     };
 
+    struct CallArg {
+        std::optional<std::string_view> name;
+        std::unique_ptr<Expr> value;
+    };
+
     struct Call {
         std::unique_ptr<Expr> value;
-        std::vector<std::unique_ptr<Expr>> args;
+        std::vector<CallArg> args;
     };
 
     struct GetItem {
