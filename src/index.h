@@ -179,6 +179,8 @@ public:
     IndexVector() = default;
     IndexVector(std::size_t size, T items) : vec(size, items) {}
     IndexVector(std::size_t size) : vec(size) {}
+    template <std::input_iterator InputIt>
+    IndexVector(InputIt first, InputIt last) : vec(first, last) {}
 
     I push_back(const T& val) {
         auto index = static_cast<decltype(I::index)>(vec.size());

@@ -1,7 +1,8 @@
 #include "refanal/generator.h"
 
-#include <algorithm>
+#include <cassert>
 
+#include "builder.h"
 #include "ir.h"
 #include "semanal/ir.h"
 #include "semanal/types.h"
@@ -16,15 +17,71 @@ class FuncGenerator {
     const acu::ir::AnalyzedPackage* apackage_;
     const ::acu::ir::Func* sfunc_;
     ir::Func rfunc_;
-
-    ir::BlockRef current_block_ {};
+    ir::Builder builder_;
 
     struct LoopTargets {
         ir::BlockRef continue_target;
         ir::BlockRef break_target;
     };
+
+    struct Value {
+        utils::
+            Variant<std::monostate, ir::Const, ir::LocalRef, ir::PlaceBuilder>
+                value;
+
+        Value() = default;
+        Value(ir::Const c) : value(c) {}
+        Value(ir::LocalRef lr) : value(lr) {}
+        Value(ir::PlaceBuilder pb) : value(pb) {}
+
+        ir::Operand as_operand(ir::Builder& builder, Location loc) const {
+            return value.visit(
+                [&](std::monostate) { return builder.op(ir::Const {false}); },
+                [&](const ir::Const& c) { return builder.op(c); },
+                [&](ir::LocalRef lr) { return builder.op(lr); },
+                [&](const ir::PlaceBuilder& pb) {
+                    return builder.op(pb.build());
+                }
+            );
+        }
+
+        ir::PlaceBuilder as_place_builder(
+            ir::Builder& builder, types::SpecType type, Location loc
+        ) const {
+            return value.visit(
+                [&](std::monostate) {
+                    return builder.build_place(ir::LocalRef {0});
+                },
+                [&](const ir::Const& c) {
+                    return builder.build_place(
+                        builder.assign_use(type, builder.op(c), loc)
+                    );
+                },
+                [&](ir::LocalRef lr) { return builder.build_place(lr); },
+                [&](const ir::PlaceBuilder& pb) { return pb; }
+            );
+        }
+
+        ir::LocalRef as_local(
+            ir::Builder& builder, types::SpecType type, Location loc
+        ) const {
+            return value.visit(
+                [&](std::monostate) { return ir::LocalRef {0}; },
+                [&](const ir::Const& c) {
+                    return builder.assign_use(type, builder.op(c), loc);
+                },
+                [&](ir::LocalRef lr) { return lr; },
+                [&](const ir::PlaceBuilder& pb) {
+                    return builder.assign_use(
+                        type, builder.op(pb.build()), loc
+                    );
+                }
+            );
+        }
+    };
+
     std::vector<LoopTargets> loops_;
-    IndexMap<SemInstRef, ir::InstRef> inst_map_;
+    IndexMap<SemInstRef, Value> values_;
     std::uint32_t current_inst_ = 0;
 
 public:
@@ -33,42 +90,53 @@ public:
     )
         : apackage_(&apackage),
           sfunc_(&sfunc),
-          rfunc_(sfunc.name, *sfunc.source, sfunc.location, sfunc.is_extern),
-          inst_map_(sfunc.insts, ir::InstRef {~0u}) {}
+          rfunc_(
+              sfunc.name,
+              *sfunc.source,
+              sfunc.location,
+              sfunc.is_extern,
+              get_params(apackage, sfunc),
+              sfunc.return_type
+          ),
+          builder_(rfunc_),
+          values_(sfunc.insts, Value {}) {}
 
     ir::Func generate() {
-        const auto& sparams = sfunc_->params;
-        std::vector<ir::Param> rparams;
-        rparams.reserve(sparams.size);
-        for (auto i : sparams) {
-            const auto& param = apackage_->ir_package->param(i);
-            rparams.push_back(
-                ir::Param {.name = param.name, .type = param.type}
-            );
+        if (sfunc_->is_extern) {
+            return std::move(rfunc_);
         }
-        rfunc_.set_type(rparams, sfunc_->return_type);
 
-        current_block_ = rfunc_.add_block(ir::Block {});
+        builder_.set_block(builder_.add_block());
 
         if (!sfunc_->insts.empty()) {
             current_inst_ = sfunc_->insts.start;
             ::acu::ir::Block main_block {
-                .end = {sfunc_->insts.start + sfunc_->insts.size-1}
+                .end = {sfunc_->insts.start + sfunc_->insts.size - 1}
             };
             visit_block(main_block);
         }
 
-        if (!is_terminated() && current_block_.index != ~0u) {
-            ir::Inst ret;
-            ret.type = rfunc_.return_type();
-            ret.location = Location {};
-            ret.data = ir::Inst::Return {std::nullopt};
-            ir::InstRef ret_ref = rfunc_.add(ret);
-            rfunc_.block(current_block_).insts.push_back(ret_ref);
+        if (!is_terminated()) {
+            builder_.ret({}, Location {});
         }
 
         rfunc_.rebuild_cfg();
         return std::move(rfunc_);
+    }
+
+private:
+    static std::vector<ir::Local> get_params(
+        const acu::ir::AnalyzedPackage& apackage, const ::acu::ir::Func& sfunc
+    ) {
+        std::vector<ir::Local> rparams;
+        rparams.reserve(sfunc.params.size);
+        for (auto i : sfunc.params) {
+            const auto& param = apackage.ir_package->param(i);
+            rparams.push_back(
+                ir::Local {.name = param.name, .type = param.type}
+            );
+        }
+        return rparams;
     }
 
     void visit_block(acu::ir::Block sblock) {
@@ -78,525 +146,481 @@ public:
     }
 
     [[nodiscard]] bool is_terminated() const {
-        const auto& block = rfunc_.block(current_block_);
-        if (block.insts.empty()) return false;
-        auto last_inst_ref = block.insts.back();
-        auto last_inst = rfunc_.inst(last_inst_ref);
-        return last_inst.data.is<ir::Inst::Jump>() ||
-               last_inst.data.is<ir::Inst::Branch>() ||
-               last_inst.data.is<ir::Inst::Return>();
+        if (builder_.current_block().index == ~0u) return true;
+        return rfunc_.block(builder_.current_block()).terminator.has_value();
     }
 
-    void jump_to(ir::BlockRef target, Location loc) {
-        if (is_terminated()) return;
-
-        ir::Inst jump = {
-            .data = ir::Inst::Jump {target},
-            .type =
-                types::SpecType {
-                    .type = types::None, .specifier = types::Specifier::None
-                },
-            .location = loc,
-        };
-
-        emit_inst(jump);
+    [[nodiscard]] bool is_reference(types::SpecType t) const {
+        return t.specifier == types::Specifier::Let ||
+               t.specifier == types::Specifier::Var;
     }
 
-    ir::InstRef get_mapped(::acu::ir::InstRef sref) { return inst_map_[sref]; }
-
-    ir::InstRef get_mapped(std::optional<::acu::ir::InstRef> sref) {
-        if (!sref) return ir::InstRef {~0u};
-        return inst_map_[*sref];
+    ir::Operand get_operand(SemInstRef sref, Location loc) {
+        return values_[sref].as_operand(builder_, loc);
     }
 
-    ir::InstRef get_cast(
-        ::acu::ir::InstRef sref, types::SpecType expected_type, Location loc
+    Value get_cast(
+        acu::ir::ParamRef param, types::SpecType expected_type, Location loc
     ) {
-        auto rref = get_mapped(sref);
-        if (sref.index >= apackage_->inst_types.size()) return rref;
-        auto actual_type = apackage_->inst_types[sref];
+        auto actual_type = apackage_->ir_package->param(param).type;
+        Value v {ir::LocalRef {param.index}};
+        return get_cast(v, actual_type, expected_type, loc);
+    }
+
+    Value get_cast(
+        Value& v,
+        types::SpecType actual_type,
+        types::SpecType expected_type,
+        Location loc
+    ) {
         if (actual_type.type != expected_type.type) {
-            ir::Inst cast_inst {
-                .data = ir::Inst::Cast {.value = rref},
-                .type = expected_type,
-                .location = loc,
+            v = Value {builder_.assign_cast(
+                expected_type, v.as_operand(builder_, loc), loc
+            )};
+            actual_type = {
+                .type = expected_type.type,
+                .specifier = types::Specifier::Val,
             };
-            return emit_inst(cast_inst);
         }
-        return rref;
+
+        if (is_reference(actual_type) && !is_reference(expected_type)) {
+            v = Value {v.as_place_builder(builder_, actual_type, loc).deref()};
+            actual_type.specifier = types::Specifier::Val;
+        }
+        if (!is_reference(actual_type) && is_reference(expected_type)) {
+            v = Value {builder_.assign_ref(
+                expected_type,
+                v.as_place_builder(builder_, actual_type, loc).build(),
+                loc
+            )};
+            actual_type.specifier = expected_type.specifier;
+        }
+
+        return v;
     }
 
-    ir::InstRef get_cast(
-        SemInstRef sref, types::TypeId expected_type, Location loc
+    Value get_cast(
+        SemInstRef sref, types::SpecType expected_type, Location loc
     ) {
-        return get_cast(
-            sref,
-            types::SpecType {
-                .type = expected_type, .specifier = types::Specifier::None
+        auto actual_type = apackage_->inst_types[sref];
+        Value v = values_[sref];
+        return get_cast(v, actual_type, expected_type, loc);
+    }
+
+    uint32_t get_field_index(types::TypeId struct_type, std::string_view name) {
+        const auto& type_def = apackage_->ir_package->types().get(struct_type);
+        const auto& s = type_def.data.get<types::Type::Struct>();
+        for (uint32_t i = 0; i < s.fields.size(); ++i) {
+            if (s.fields[i].name == name) return i;
+        }
+        return 0;
+    }
+
+    ir::Const convert_const(const SemInst::Const::Value& val) {
+        return val.visit(
+            [&](bool v) -> ir::Const { return {v}; },
+            [&](std::int64_t v) -> ir::Const { return {v}; },
+            [&](double v) -> ir::Const { return {v}; },
+            [&](char32_t v) -> ir::Const { return {v}; },
+            [&](std::string_view v) -> ir::Const { return {v}; },
+            [&](::acu::ir::FuncRef v) -> ir::Const {
+                return {ir::FuncRef {v.index}};
             },
-            loc
+            [&](::acu::ir::UsedFuncRef v) -> ir::Const {
+                return {ir::UsedFuncRef {.index = v.index}};
+            },
+            [&](types::TypeId) -> ir::Const { return {false}; }
         );
     }
 
-    ir::InstRef emit_inst(ir::Inst inst) {
-        ir::InstRef rref = rfunc_.add(inst);
-        if (!is_terminated()) {
-            rfunc_.block(current_block_).insts.push_back(rref);
-        }
-        return rref;
-    }
-
     void visit_inst(SemInstRef sref) {
+        if (is_terminated()) return;
+
         const auto& sinst = apackage_->ir_package->inst(sref);
         const auto& type = apackage_->inst_types[sref];
 
-        auto emit = [&](auto data) -> ir::InstRef {
-            ir::Inst rinst = {
-                .data = std::move(data),
-                .type = type,
-                .location = sinst.location,
-            };
-            ir::InstRef ref = emit_inst(rinst);
-            inst_map_[sref] = ref;
-            return ref;
-        };
-
         sinst.data.visit(
-            [&](const SemInst::Const& inst) {
-                auto v = inst.value.visit(
-                    [&](bool v) -> ir::Inst::Const::Value { return v; },
-                    [&](std::int64_t v) -> ir::Inst::Const::Value { return v; },
-                    [&](double v) -> ir::Inst::Const::Value { return v; },
-                    [&](char32_t v) -> ir::Inst::Const::Value { return v; },
-                    [&](std::string_view v) -> ir::Inst::Const::Value {
-                        return v;
-                    },
-                    [&](::acu::ir::FuncRef v) -> ir::Inst::Const::Value {
-                        return ir::FuncRef {v.index};
-                    },
-                    [&](::acu::ir::UsedFuncRef v) -> ir::Inst::Const::Value {
-                        return ir::UsedFuncRef {.index = v.index};
-                    },
-                    [&](types::TypeId v) -> ir::Inst::Const::Value {
-                        return false;  // TypeId is handled in Call for
-                                       // CreateStruct
-                    }
-                );
-                emit(ir::Inst::Const {v});
+            [&](const SemInst::Const& c) {
+                values_[sref] = Value {convert_const(c.value)};
             },
             [&](const SemInst::VarDecl& inst) {
-                emit(ir::Inst::VarDecl {inst.name});
+                values_[sref] = Value {builder_.add_local(type, inst.name)};
             },
             [&](const SemInst::LoadVar& inst) {
-                emit(ir::Inst::LoadVar {get_mapped(inst.var)});
+                values_[sref] = get_cast(inst.var, type, sinst.location);
             },
             [&](const SemInst::LoadParam& inst) {
-                emit(ir::Inst::LoadParam {ir::ParamRef {inst.param.index}});
+                values_[sref] = get_cast(inst.param, type, sinst.location);
             },
             [&](const SemInst::Store& inst) {
-                auto var_type = apackage_->inst_types[inst.var];
-                emit(
-                    ir::Inst::Store {
-                        .var = get_mapped(inst.var),
-                        .value = get_cast(inst.value, var_type, sinst.location)
-                    }
+                auto p = values_[inst.var]
+                             .as_place_builder(
+                                 builder_,
+                                 apackage_->inst_types[inst.var],
+                                 sinst.location
+                             )
+                             .build();
+                auto v = get_cast(
+                    inst.value, apackage_->inst_types[inst.var], sinst.location
+                );
+                builder_.assign(
+                    p,
+                    builder_.r_use(v.as_operand(builder_, sinst.location)),
+                    sinst.location
                 );
             },
             [&](const SemInst::Binary& inst) {
-                emit(
-                    ir::Inst::Binary {
-                        .left = get_cast(inst.left, type, sinst.location),
-                        .right = get_cast(inst.right, type, sinst.location),
-                        .op = static_cast<ir::Inst::BinaryOp>(inst.op)
-                    }
-                );
+                auto val_type = type;
+                val_type.specifier = types::Specifier::Val;
+                values_[sref] = Value {builder_.assign_binary(
+                    val_type,
+                    static_cast<ir::BinaryOp>(inst.op),
+                    get_cast(inst.left, val_type, sinst.location)
+                        .as_operand(builder_, sinst.location),
+                    get_cast(inst.right, val_type, sinst.location)
+                        .as_operand(builder_, sinst.location),
+                    sinst.location
+                )};
             },
             [&](const SemInst::Unary& inst) {
-                ir::InstRef val = get_mapped(inst.value);
-                if (inst.op == SemInst::UnaryOp::Not) {
-                    val = get_cast(inst.value, types::Bool, sinst.location);
-                }
-                emit(
-                    ir::Inst::Unary {
-                        .value = val,
-                        .op = static_cast<ir::Inst::UnaryOp>(inst.op)
-                    }
-                );
+                auto val_type = type;
+                val_type.specifier = types::Specifier::Val;
+                values_[sref] = Value {builder_.assign_unary(
+                    val_type,
+                    static_cast<ir::UnaryOp>(inst.op),
+                    get_cast(inst.value, val_type, sinst.location)
+                        .as_operand(builder_, sinst.location),
+                    sinst.location
+                )};
             },
             [&](const SemInst::Comparison& inst) {
                 auto comparators =
                     apackage_->ir_package->comparators(inst.comparators);
                 if (comparators.empty()) return;
 
-                auto current_left_sref = inst.left;
-
-                ir::BlockRef merge_block {~0u};
-                if (comparators.size() > 1) {
-                    merge_block = rfunc_.add_block(ir::Block {});
-                }
-
-                for (size_t i = 0; i < comparators.size(); ++i) {
-                    auto& comp = comparators[i];
-
-                    visit_block(comp.value);
-                    auto right_sref = comp.value.end;
-
-                    ir::Inst comp_inst {
-                        .data =
-                            ir::Inst::Comparison {
-                                .left = get_cast(
-                                    current_left_sref, comp.type, sinst.location
-                                ),
-                                .right = get_cast(
-                                    right_sref, comp.type, sinst.location
-                                ),
-                                .op =
-                                    static_cast<ir::Inst::ComparisonOp>(comp.op)
-                            },
-                        .type = apackage_->inst_types[sref],
-                        .location = sinst.location
+                if (comparators.size() == 1) {
+                    auto& comp = comparators[0];
+                    types::SpecType comp_type = {
+                        .type = comp.type, .specifier = types::Specifier::Val
                     };
-
-                    ir::InstRef comp_ref = rfunc_.add(comp_inst);
-                    if (!is_terminated()) {
-                        rfunc_.block(current_block_).insts.push_back(comp_ref);
+                    auto l = get_cast(inst.left, comp_type, sinst.location);
+                    visit_block(comp.value);
+                    auto r =
+                        get_cast(comp.value.end, comp_type, sinst.location);
+                    values_[sref] = Value {builder_.assign_comp(
+                        comp_type,
+                        static_cast<ir::ComparisonOp>(comp.op),
+                        l.as_operand(builder_, sinst.location),
+                        r.as_operand(builder_, sinst.location),
+                        sinst.location
+                    )};
+                } else {
+                    auto& comp = comparators[0];
+                    types::SpecType comp_type = {
+                        .type = comp.type, .specifier = types::Specifier::Val
+                    };
+                    auto l = get_cast(inst.left, comp_type, sinst.location);
+                    visit_block(comp.value);
+                    auto r =
+                        get_cast(comp.value.end, comp_type, sinst.location);
+                    auto res = builder_.assign_comp(
+                        comp_type,
+                        static_cast<ir::ComparisonOp>(comp.op),
+                        l.as_operand(builder_, sinst.location),
+                        r.as_operand(builder_, sinst.location),
+                        sinst.location
+                    );
+                    values_[sref] = Value {res};
+                    for (size_t i = 1; i < comparators.size(); ++i) {
+                        visit_block(comparators[i].value);
                     }
-
-                    if (i == 0) {
-                        inst_map_[sref] = comp_ref;
-                    }
-
-                    if (i < comparators.size() - 1) {
-                        auto right_block = rfunc_.add_block(ir::Block {});
-
-                        ir::Inst branch {
-                            .data =
-                                ir::Inst::Branch {
-                                    .condition = comp_ref,
-                                    .true_target = right_block,
-                                    .false_target = merge_block
-                                },
-                            .type = apackage_->inst_types[sref],
-                            .location = sinst.location
-                        };
-                        ir::InstRef branch_ref = rfunc_.add(branch);
-                        if (!is_terminated()) {
-                            rfunc_.block(current_block_)
-                                .insts.push_back(branch_ref);
-                        }
-                        if (i == 0) {
-                            inst_map_[sref] = branch_ref;
-                        }
-
-                        current_block_ = right_block;
-                        current_left_sref = right_sref;
-                    }
-                }
-
-                if (comparators.size() > 1) {
-                    jump_to(merge_block, sinst.location);
-                    current_block_ = merge_block;
                 }
             },
             [&](const SemInst::Call& inst) {
-                auto func_s_type = apackage_->inst_types[inst.value].type;
-                const types::Type::Func* defined_func = nullptr;
-                if (func_s_type != types::None) {
-                    const auto& f_type =
-                        apackage_->ir_package->types().get(func_s_type);
-                    defined_func = f_type.data.get_if<types::Type::Func>();
-                }
-
                 const auto& callee_inst =
                     apackage_->ir_package->inst(inst.value);
-                if (callee_inst.data.is<::acu::ir::Inst::Const>()) {
-                    const auto& const_val =
-                        callee_inst.data.get<::acu::ir::Inst::Const>();
-                    if (const_val.value.is<types::TypeId>()) {
-                        auto struct_type = const_val.value.get<types::TypeId>();
-                        const auto& struct_def =
-                            apackage_->ir_package->types()
-                                .get(struct_type)
-                                .data.get<types::Type::Struct>();
-
-                        auto s_args =
-                            apackage_->ir_package->inst_refs(inst.args);
-                        std::vector<ir::InstRef> r_args;
-                        for (size_t i = 0; i < s_args.size(); ++i) {
-                            if (i < struct_def.fields.size()) {
-                                r_args.push_back(get_cast(
-                                    s_args[i],
-                                    struct_def.fields[i].type.type,
-                                    sinst.location
-                                ));
-                            } else {
-                                r_args.push_back(get_mapped(s_args[i]));
-                            }
-                        }
-                        ir::InstRefs refs = rfunc_.add(r_args);
-
-                        emit(
-                            ir::Inst::CreateStruct {
-                                .struct_type = struct_type, .args = refs
-                            }
-                        );
-                    }
-                }
-
                 auto s_args = apackage_->ir_package->inst_refs(inst.args);
-                auto nargs = apackage_->ir_package->call_args(inst.named_args);
-                std::vector<ir::InstRef> r_args;
-                r_args.reserve(s_args.size() + nargs.size());
-                for (size_t i = 0; i < s_args.size(); ++i) {
-                    r_args.push_back(get_cast(
-                        s_args[i], defined_func->params[i].type, sinst.location
-                    ));
+                std::vector<ir::Operand> r_args;
+                r_args.reserve(s_args.size());
+
+                if (auto* c = callee_inst.data.get_if<SemInst::Const>()) {
+                    if (auto* t = c->value.get_if<types::TypeId>()) {
+                        const auto& struct_type =
+                            apackage_->ir_package->types().get(*t);
+                        const auto& s =
+                            struct_type.data.get<types::Type::Struct>();
+                        for (size_t i = 0; i < s.fields.size(); ++i) {
+                            r_args.push_back(
+                                get_cast(
+                                    s_args[i], s.fields[i].type, sinst.location
+                                )
+                                    .as_operand(builder_, sinst.location)
+                            );
+                        }
+                        values_[sref] = Value {builder_.assign_struct(
+                            {.type = *t, .specifier = types::Specifier::Val},
+                            r_args,
+                            sinst.location
+                        )};
+                        return;
+                    }
                 }
-                for (const auto& param :
-                     std::span(defined_func->params).subspan(s_args.size())) {
-                    auto result =
-                        std::ranges::find_if(nargs, [&](const auto& arg) {
-                            return arg.name == param.name;
-                        });
-                    if (result != nargs.end()) {
+
+                auto func_type = apackage_->inst_types[inst.value].type;
+                if (func_type != types::None) {
+                    const auto& f_type =
+                        apackage_->ir_package->types().get(func_type);
+                    const auto& defined_func =
+                        f_type.data.get<types::Type::Func>();
+                    for (size_t i = 0; i < s_args.size(); ++i) {
                         r_args.push_back(
-                            get_cast(result->value, param.type, sinst.location)
+                            get_cast(
+                                s_args[i],
+                                defined_func.params[i].type,
+                                sinst.location
+                            )
+                                .as_operand(builder_, sinst.location)
                         );
                     }
+                    values_[sref] = Value {builder_.assign_call(
+                        type,
+                        get_operand(inst.value, sinst.location),
+                        r_args,
+                        sinst.location
+                    )};
                 }
-                ir::InstRefs refs = rfunc_.add(r_args);
-
-                emit(
-                    ir::Inst::Call {
-                        .value = get_mapped(inst.value), .args = refs
-                    }
-                );
             },
             [&](const SemInst::If& inst) {
-                auto true_block = rfunc_.add_block(ir::Block {});
-                ir::BlockRef false_block {~0u};
-                if (inst.else_block) {
-                    false_block = rfunc_.add_block(ir::Block {});
-                }
-                auto merge_block = rfunc_.add_block(ir::Block {});
+                auto then_block = builder_.add_block();
+                auto else_block =
+                    inst.else_block ? builder_.add_block() : ir::BlockRef {~0u};
+                auto merge_block = builder_.add_block();
 
-                ir::Inst branch {
-                    .data =
-                        ir::Inst::Branch {
-                            .condition = get_cast(
-                                inst.value, types::Bool, sinst.location
-                            ),
-                            .true_target = true_block,
-                            .false_target =
-                                inst.else_block ? false_block : merge_block
-                        },
-                    .type = apackage_->inst_types[sref],
-                    .location = sinst.location,
-                };
-                ir::InstRef branch_ref = rfunc_.add(branch);
-                if (!is_terminated())
-                    rfunc_.block(current_block_).insts.push_back(branch_ref);
-                inst_map_[sref] = branch_ref;
-
-                current_block_ = true_block;
-                visit_block(inst.then_block);
-                jump_to(merge_block, sinst.location);
-
-                if (inst.else_block) {
-                    current_block_ = false_block;
-                    visit_block(*inst.else_block);
-                    jump_to(merge_block, sinst.location);
-                }
-
-                current_block_ = merge_block;
-            },
-            [&](const SemInst::Loop& inst) {
-                auto loop_body = rfunc_.add_block(ir::Block {});
-                auto loop_merge = rfunc_.add_block(ir::Block {});
-
-                jump_to(loop_body, sinst.location);
-
-                loops_.push_back(
-                    {.continue_target = loop_body, .break_target = loop_merge}
+                auto cond = get_cast(
+                    inst.value,
+                    {.type = types::Bool, .specifier = types::Specifier::Val},
+                    sinst.location
+                );
+                builder_.branch(
+                    cond.as_operand(builder_, sinst.location),
+                    then_block,
+                    inst.else_block ? else_block : merge_block,
+                    sinst.location
                 );
 
-                current_block_ = loop_body;
-                visit_block(inst.block);
-                jump_to(loop_body, sinst.location);
+                builder_.set_block(then_block);
+                visit_block(inst.then_block);
+                if (!is_terminated()) {
+                    builder_.jump(merge_block);
+                }
 
+                if (inst.else_block) {
+                    builder_.set_block(else_block);
+                    visit_block(*inst.else_block);
+                    if (!is_terminated()) {
+                        builder_.jump(merge_block);
+                    }
+                }
+
+                builder_.set_block(merge_block);
+            },
+            [&](const SemInst::Loop& inst) {
+                auto header = builder_.add_block();
+                auto exit = builder_.add_block();
+
+                builder_.jump(header);
+                builder_.set_block(header);
+
+                loops_.push_back(
+                    {.continue_target = header, .break_target = exit}
+                );
+                visit_block(inst.block);
+                if (!is_terminated()) {
+                    builder_.jump(header);
+                }
                 loops_.pop_back();
 
-                current_block_ = loop_merge;
-                auto skip_idx = sref;
+                builder_.set_block(exit);
             },
             [&](const SemInst::Return& inst) {
-                std::optional<ir::InstRef> val;
+                std::optional<ir::Operand> val;
                 if (inst.value) {
                     val = get_cast(
-                        *inst.value, sfunc_->return_type, sinst.location
+                              *inst.value, sfunc_->return_type, sinst.location
+                    )
+                              .as_operand(builder_, sinst.location);
+                }
+                builder_.ret(val, sinst.location);
+            },
+            [&](const SemInst::Break&) {
+                if (!loops_.empty()) {
+                    builder_.jump(loops_.back().break_target, sinst.location);
+                }
+            },
+            [&](const SemInst::Continue&) {
+                if (!loops_.empty()) {
+                    builder_.jump(
+                        loops_.back().continue_target, sinst.location
                     );
-                }
-                emit(ir::Inst::Return {val});
-            },
-            [&](const SemInst::Break& inst) {
-                if (!loops_.empty()) {
-                    jump_to(loops_.back().break_target, sinst.location);
-                }
-            },
-            [&](const SemInst::Continue& inst) {
-                if (!loops_.empty()) {
-                    jump_to(loops_.back().continue_target, sinst.location);
                 }
             },
             [&](const SemInst::GetAttr& inst) {
-                auto base_ref = get_mapped(inst.value);
-                auto base_type = apackage_->inst_types[inst.value].type;
-
-                const auto& defined_struct =
-                    apackage_->ir_package->types()
-                        .get(base_type)
-                        .data.get<types::Type::Struct>();
-                uint32_t field_idx = 0;
-                for (size_t i = 0; i < defined_struct.fields.size(); ++i) {
-                    if (defined_struct.fields[i].name == inst.name) {
-                        field_idx = i;
-                        break;
-                    }
-                }
-
-                emit(
-                    ir::Inst::GetField {.value = base_ref, .index = field_idx}
-                );
+                values_[sref] = Value {
+                    values_[inst.value]
+                        .as_place_builder(
+                            builder_,
+                            apackage_->inst_types[inst.value],
+                            sinst.location
+                        )
+                        .field(get_field_index(
+                            apackage_->inst_types[inst.value].type, inst.name
+                        ))
+                };
             },
             [&](const SemInst::SetAttr& inst) {
-                auto base_ref = get_mapped(inst.var);
-                auto base_type = apackage_->inst_types[inst.var].type;
-
-                const auto& defined_struct =
-                    apackage_->ir_package->types()
-                        .get(base_type)
-                        .data.get<types::Type::Struct>();
-                uint32_t field_idx = 0;
-                ir::InstRef value_mapped = get_mapped(inst.value);
-                for (size_t i = 0; i < defined_struct.fields.size(); ++i) {
-                    if (defined_struct.fields[i].name == inst.name) {
-                        field_idx = i;
-                        value_mapped = get_cast(
-                            inst.value,
-                            defined_struct.fields[i].type.type,
+                auto p =
+                    values_[inst.value]
+                        .as_place_builder(
+                            builder_,
+                            apackage_->inst_types[inst.value],
                             sinst.location
-                        );
-                        break;
-                    }
-                }
-
-                emit(
-                    ir::Inst::SetField {
-                        .var = base_ref,
-                        .index = field_idx,
-                        .value = value_mapped
-                    }
+                        )
+                        .field(get_field_index(
+                            apackage_->inst_types[inst.value].type, inst.name
+                        ))
+                        .build();
+                builder_.assign(
+                    p,
+                    builder_.r_use(get_operand(inst.value, sinst.location)),
+                    sinst.location
                 );
             },
             [&](const SemInst::GetItem& inst) {
-                emit(
-                    ir::Inst::GetItem {
-                        .value = get_mapped(inst.value),
-                        .index = get_mapped(inst.index)
-                    }
-                );
+                values_[sref] =
+                    Value {values_[inst.value]
+                               .as_place_builder(
+                                   builder_,
+                                   apackage_->inst_types[inst.value],
+                                   sinst.location
+                               )
+                               .index(
+                                   values_[inst.index].as_local(
+                                       builder_,
+                                       {.type = types::UInt,
+                                        .specifier = types::Specifier::Val},
+                                       sinst.location
+                                   )
+                               )};
             },
             [&](const SemInst::SetItem& inst) {
-                auto base_type = apackage_->inst_types[inst.var].type;
-                types::TypeId item_type = types::None;
-                if (base_type != types::None) {
-                    const auto& defined_type =
-                        apackage_->ir_package->types().get(base_type);
-                    if (auto at =
-                            defined_type.data.get_if<types::Type::Array>()) {
-                        item_type = at->item.type;
-                    } else if (auto pt = defined_type.data
-                                             .get_if<types::Type::Ptr>()) {
-                        item_type = pt->type.type;
-                    }
-                }
-                ir::InstRef value_mapped = get_mapped(inst.value);
-                if (item_type != types::None) {
-                    value_mapped =
-                        get_cast(inst.value, item_type, sinst.location);
-                }
-
-                emit(
-                    ir::Inst::SetItem {
-                        .var = get_mapped(inst.var),
-                        .index = get_mapped(inst.index),
-                        .value = value_mapped
-                    }
+                builder_.assign(
+                    values_[inst.value]
+                        .as_place_builder(
+                            builder_,
+                            apackage_->inst_types[inst.value],
+                            sinst.location
+                        )
+                        .index(
+                            values_[inst.index].as_local(
+                                builder_,
+                                {.type = types::UInt,
+                                 .specifier = types::Specifier::Val},
+                                sinst.location
+                            )
+                        )
+                        .build(),
+                    builder_.r_use(get_operand(inst.value, sinst.location)),
+                    sinst.location
                 );
-            },
-            [&](const SemInst::As& inst) {
-                emit(
-                    ir::Inst::Cast {
-                        .value = get_mapped(inst.value),
-                    }
-                );
-            },
-            [&](const SemInst::Logical& inst) {
-                auto right_block = rfunc_.add_block(ir::Block {});
-                auto merge_block = rfunc_.add_block(ir::Block {});
-
-                ir::Inst branch;
-                branch.type = apackage_->inst_types[sref];
-                branch.location = sinst.location;
-                if (inst.op == ::acu::ir::Inst::LogicalOp::And) {
-                    branch.data = ir::Inst::Branch {
-                        .condition =
-                            get_cast(inst.left, types::Bool, sinst.location),
-                        .true_target = right_block,
-                        .false_target = merge_block
-                    };
-                } else {
-                    branch.data = ir::Inst::Branch {
-                        .condition =
-                            get_cast(inst.left, types::Bool, sinst.location),
-                        .true_target = merge_block,
-                        .false_target = right_block
-                    };
-                }
-                ir::InstRef branch_ref = emit_inst(branch);
-                inst_map_[sref] = branch_ref;
-                current_block_ = right_block;
-                visit_block(inst.right);
-                jump_to(merge_block, sinst.location);
-
-                current_block_ = merge_block;
-            },
-            [&](const SemInst::Array& inst) {
-                auto s_args = apackage_->ir_package->inst_refs(inst.items);
-                auto array_type = apackage_->inst_types[sref].type;
-                types::TypeId item_type = types::None;
-                if (array_type != types::None) {
-                    const auto& defined_type =
-                        apackage_->ir_package->types().get(array_type);
-                    if (auto at =
-                            defined_type.data.get_if<types::Type::Array>()) {
-                        item_type = at->item.type;
-                    }
-                }
-
-                std::vector<ir::InstRef> r_args;
-                r_args.reserve(s_args.size());
-                for (auto s_arg : s_args) {
-                    r_args.push_back(get_mapped(s_arg));
-                }
-                ir::InstRefs refs = rfunc_.add(r_args);
-                emit(ir::Inst::Array {refs});
-            },
-            [&](const SemInst::AddressOf& inst) {
-                emit(ir::Inst::AddressOf {get_mapped(inst.value)});
             },
             [&](const SemInst::Deref& inst) {
-                emit(ir::Inst::Deref {get_mapped(inst.value)});
+                values_[sref] =
+                    Value {values_[inst.value]
+                               .as_place_builder(
+                                   builder_,
+                                   apackage_->inst_types[inst.value],
+                                   sinst.location
+                               )
+                               .deref()};
+            },
+            [&](const SemInst::AddressOf& inst) {
+                values_[sref] = Value {builder_.assign_addr_of(
+                    apackage_->inst_types[sref],
+                    values_[inst.value]
+                        .as_place_builder(
+                            builder_,
+                            apackage_->inst_types[inst.value],
+                            sinst.location
+                        )
+                        .build(),
+                    sinst.location
+                )};
+            },
+            [&](const SemInst::Array& inst) {
+                auto s_items = apackage_->ir_package->inst_refs(inst.items);
+                std::vector<ir::Operand> r_items;
+                r_items.reserve(s_items.size());
+
+                const auto& arr = apackage_->ir_package->types()
+                                      .get(type.type)
+                                      .data.get<types::Type::Array>();
+
+                for (auto s_item : s_items) {
+                    r_items.push_back(
+                        get_cast(s_item, arr.item, sinst.location)
+                            .as_operand(builder_, sinst.location)
+                    );
+                }
+
+                values_[sref] = Value {
+                    builder_.assign_array(type, r_items, sinst.location)
+                };
+            },
+            [&](const SemInst::As& inst) {
+                values_[sref] = get_cast(inst.value, type, sinst.location);
+            },
+            [&](const SemInst::Logical& inst) {
+                auto res = builder_.add_local(type);
+                auto val_a = get_operand(inst.left, sinst.location);
+                builder_.assign(
+                    builder_.place(res), builder_.r_use(val_a), sinst.location
+                );
+
+                auto right_block = builder_.add_block();
+                auto merge_block = builder_.add_block();
+
+                auto cond = get_cast(
+                    inst.left,
+                    {.type = types::Bool, .specifier = types::Specifier::Val},
+                    sinst.location
+                );
+
+                if (inst.op == ::acu::ir::Inst::LogicalOp::And) {
+                    builder_.branch(
+                        cond.as_operand(builder_, sinst.location),
+                        right_block,
+                        merge_block,
+                        sinst.location
+                    );
+                } else {
+                    builder_.branch(
+                        cond.as_operand(builder_, sinst.location),
+                        merge_block,
+                        right_block,
+                        sinst.location
+                    );
+                }
+
+                builder_.set_block(right_block);
+                visit_block(inst.right);
+                auto val_b = get_operand(inst.right.end, sinst.location);
+                builder_.assign(
+                    builder_.place(res), builder_.r_use(val_b), sinst.location
+                );
+                builder_.jump(merge_block);
+
+                builder_.set_block(merge_block);
+                values_[sref] = Value {res};
             }
         );
     }

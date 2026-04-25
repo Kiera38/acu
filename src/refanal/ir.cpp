@@ -18,10 +18,10 @@ Location UsedFunc::location(const Project& project) const {
 bool UsedFunc::is_extern(const Project& project) const {
     return project.module(module).func(func).is_extern();
 }
-Param UsedFunc::param(const Project& project, ParamRef ref) const {
+const Local& UsedFunc::param(const Project& project, LocalRef ref) const {
     return project.module(module).func(func).param(ref);
 }
-IndexSpan<const Param, ParamRef> UsedFunc::params(
+IndexSpan<const Local, LocalRef> UsedFunc::params(
     const Project& project
 ) const {
     return project.module(module).func(func).params();

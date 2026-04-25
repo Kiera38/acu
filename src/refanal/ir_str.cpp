@@ -7,11 +7,11 @@ namespace acu::refanal {
 
 namespace {
 
-std::string to_string(const ir::Param& param, const types::TypePool& types) {
-    return std::format("{}: {}", param.name, types.to_string(param.type));
+std::string to_string(const ir::Local& local, const types::TypePool& types) {
+    return std::format("{}: {}", local.name, types.to_string(local.type));
 }
 
-std::string to_string(const ir::Inst::Const::Value& value) {
+std::string to_string(const ir::Const::Value& value) {
     return value.visit(
         [&](bool v) -> std::string { return v ? "true" : "false"; },
         [&](std::int64_t v) { return std::to_string(v); },
@@ -23,9 +23,9 @@ std::string to_string(const ir::Inst::Const::Value& value) {
     );
 }
 
-std::string binary_op_to_string(ir::Inst::BinaryOp op) {
+std::string binary_op_to_string(ir::BinaryOp op) {
     switch (op) {
-        using enum ir::Inst::BinaryOp;
+        using enum ir::BinaryOp;
         case Add: return "+";
         case Sub: return "-";
         case Mul: return "*";
@@ -40,9 +40,9 @@ std::string binary_op_to_string(ir::Inst::BinaryOp op) {
     }
 }
 
-std::string unary_op_to_string(ir::Inst::UnaryOp op) {
+std::string unary_op_to_string(ir::UnaryOp op) {
     switch (op) {
-        using enum ir::Inst::UnaryOp;
+        using enum ir::UnaryOp;
         case Not: return "not";
         case Neg: return "-";
         case BitNot: return "~";
@@ -50,9 +50,9 @@ std::string unary_op_to_string(ir::Inst::UnaryOp op) {
     }
 }
 
-std::string comparison_op_to_string(ir::Inst::ComparisonOp op) {
+std::string comparison_op_to_string(ir::ComparisonOp op) {
     switch (op) {
-        using enum ir::Inst::ComparisonOp;
+        using enum ir::ComparisonOp;
         case Less: return "<";
         case Greater: return ">";
         case LessEqual: return "<=";
@@ -63,6 +63,98 @@ std::string comparison_op_to_string(ir::Inst::ComparisonOp op) {
     }
 }
 
+std::string to_string(const ir::Place& place, const ir::Func& func) {
+    std::string str = std::format("_{}", place.local.index);
+    auto projections = func.projections(place.projections);
+    for (const auto& proj : projections) {
+        switch (proj.kind) {
+            case ir::Projection::Kind::Field:
+                str = std::format("({}).{}", str, proj.index);
+                break;
+            case ir::Projection::Kind::Index:
+                str = std::format("({})[_{}]", str, proj.index);
+                break;
+            case ir::Projection::Kind::Deref:
+                str = std::format("*({})", str);
+                break;
+        }
+    }
+    return str;
+}
+
+std::string to_string(const ir::Operand& operand, const ir::Func& func) {
+    return operand.data.visit(
+        [&](const ir::Const& c) { return to_string(c.value); },
+        [&](const ir::Place& p) { return to_string(p, func); }
+    );
+}
+
+std::string to_string(const ir::RValue& rvalue, const ir::Func& func) {
+    return rvalue.data.visit(
+        [&](const ir::RValue::Use& v) { return to_string(v.operand, func); },
+        [&](const ir::RValue::Unary& v) {
+            return std::format(
+                "{} {}", unary_op_to_string(v.op), to_string(v.operand, func)
+            );
+        },
+        [&](const ir::RValue::Binary& v) {
+            return std::format(
+                "{} {}, {}",
+                binary_op_to_string(v.op),
+                to_string(v.left, func),
+                to_string(v.right, func)
+            );
+        },
+        [&](const ir::RValue::Comparison& v) {
+            return std::format(
+                "{} {}, {}",
+                comparison_op_to_string(v.op),
+                to_string(v.left, func),
+                to_string(v.right, func)
+            );
+        },
+        [&](const ir::RValue::Call& v) {
+            std::string str = std::format("call {}(", to_string(v.callee, func));
+            auto args = func.operands(v.args);
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (i > 0) str += ", ";
+                str += to_string(args[i], func);
+            }
+            str += ")";
+            return str;
+        },
+        [&](const ir::RValue::Ref& v) {
+            return std::format("&{}", to_string(v.place, func));
+        },
+        [&](const ir::RValue::AddressOf& v) {
+            return std::format("addrof {}", to_string(v.place, func));
+        },
+        [&](const ir::RValue::Cast& v) {
+            return std::format("cast {}", to_string(v.operand, func));
+        },
+        [&](const ir::RValue::CreateStruct& v) {
+            std::string str = std::format("struct {}(", v.type.index);
+            auto args = func.operands(v.args);
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (i > 0) str += ", ";
+                str += to_string(args[i], func);
+            }
+            str += ")";
+            return str;
+        },
+        [&](const ir::RValue::Array& v) {
+            std::string str = "array(";
+            auto items = func.operands(v.items);
+            for (size_t i = 0; i < items.size(); ++i) {
+                if (i > 0) str += ", ";
+                str += to_string(items[i], func);
+            }
+            str += ")";
+            return str;
+        }
+    );
+}
+
 }  // namespace
 
 std::string to_string(
@@ -70,12 +162,13 @@ std::string to_string(
 ) {
     std::string str;
     str += std::format("Func {}\n", func.name());
-    str += "params:\n";
-    for (auto i : func.params().indices()) {
+    str += "locals:\n";
+    for (auto i : func.locals().indices()) {
         str += std::format(
-            "  %{} = param {}\n",
+            "  _{} = {}{}\n",
             i.index,
-            to_string(func.params()[i], analyzed.ir_package->types())
+            to_string(func.locals()[i], analyzed.ir_package->types()),
+            i.index < func.arg_count() ? " (argument)" : ""
         );
     }
 
@@ -83,144 +176,54 @@ std::string to_string(
     for (size_t b = 0; b < func.blocks().size(); ++b) {
         str += std::format("  block {}:\n", b);
         const auto& block = func.block(ir::BlockRef {static_cast<uint32_t>(b)});
-        for (auto ref : block.insts) {
-            const auto& inst = func.inst(ref);
-            std::string ir_str = std::format(
-                "    %{} : {} = ",
-                ref.index,
-                analyzed.ir_package->types().to_string(inst.type)
-            );
+        for (auto ref : block.statements) {
+            const auto& stmt = func.statement(ref);
+            std::string ir_str = "    ";
 
-            inst.data.visit(
-                [&](const ir::Inst::Const& i) {
-                    ir_str += std::format("const {}", to_string(i.value));
-                },
-                [&](const ir::Inst::VarDecl& i) {
-                    ir_str += std::format("var decl {}", i.name);
-                },
-                [&](const ir::Inst::LoadVar& i) {
-                    ir_str += std::format("load var %{}", i.var.index);
-                },
-                [&](const ir::Inst::LoadParam& i) {
-                    ir_str += std::format("load param %{}", i.param.index);
-                },
-                [&](const ir::Inst::Store& i) {
+            stmt.data.visit(
+                [&](const ir::Statement::Assign& i) {
                     ir_str += std::format(
-                        "store %{} -> var %{}", i.value.index, i.var.index
+                        "{} = {}",
+                        to_string(i.place, func),
+                        to_string(i.rvalue, func)
                     );
                 },
-                [&](const ir::Inst::Binary& i) {
-                    ir_str += std::format(
-                        "{} %{}, %{}",
-                        binary_op_to_string(i.op),
-                        i.left.index,
-                        i.right.index
-                    );
+                [&](const ir::Statement::Nop&) { ir_str += "nop"; }
+            );
+            str += ir_str + "\n";
+        }
+        if (block.terminator) {
+            std::string term_str = "    ";
+            block.terminator->data.visit(
+                [&](const ir::Terminator::Jump& i) {
+                    term_str += std::format("jump to block {}", i.target.index);
                 },
-                [&](const ir::Inst::Unary& i) {
-                    ir_str += std::format(
-                        "{} %{}", unary_op_to_string(i.op), i.value.index
-                    );
-                },
-                [&](const ir::Inst::Comparison& i) {
-                    ir_str += std::format(
-                        "{} %{}, %{}",
-                        comparison_op_to_string(i.op),
-                        i.left.index,
-                        i.right.index
-                    );
-                },
-                [&](const ir::Inst::Call& i) {
-                    ir_str += std::format("call %{}(", i.value.index);
-                    auto args = func.inst_refs(i.args);
-                    for (size_t j = 0; j < args.size(); ++j) {
-                        if (j > 0) ir_str += ", ";
-                        ir_str += std::format("%{}", args[j].index);
-                    }
-                    ir_str += ")";
-                },
-                [&](const ir::Inst::Cast& i) {
-                    ir_str += std::format(
-                        "cast %{} to type {}",
-                        i.value.index,
-                        inst.type.type.index
-                    );
-                },
-                [&](const ir::Inst::CreateStruct& i) {
-                    ir_str += std::format(
-                        "create struct type {}(", i.struct_type.index
-                    );
-                    auto args = func.inst_refs(i.args);
-                    for (size_t j = 0; j < args.size(); ++j) {
-                        if (j > 0) ir_str += ", ";
-                        ir_str += std::format("%{}", args[j].index);
-                    }
-                    ir_str += ")";
-                },
-                [&](const ir::Inst::GetField& i) {
-                    ir_str += std::format(
-                        "get field {} from %{}", i.index, i.value.index
-                    );
-                },
-                [&](const ir::Inst::SetField& i) {
-                    ir_str += std::format(
-                        "set field {} on %{} with %{}",
-                        i.index,
-                        i.var.index,
-                        i.value.index
-                    );
-                },
-                [&](const ir::Inst::AddressOf& i) {
-                    ir_str += std::format("addrof %{}", i.value.index);
-                },
-                [&](const ir::Inst::GetItem& i) {
-                    ir_str += std::format(
-                        "getitem %{}[%{}]", i.value.index, i.index.index
-                    );
-                },
-                [&](const ir::Inst::SetItem& i) {
-                    ir_str += std::format(
-                        "setitem %{}[%{}] = %{}",
-                        i.var.index,
-                        i.index.index,
-                        i.value.index
-                    );
-                },
-                [&](const ir::Inst::Deref& i) {
-                    ir_str += std::format("deref %{}", i.value.index);
-                },
-                [&](const ir::Inst::Array& i) {
-                    ir_str += "array(";
-                    auto items = func.inst_refs(i.items);
-                    for (size_t j = 0; j < items.size(); ++j) {
-                        if (j > 0) ir_str += ", ";
-                        ir_str += std::format("%{}", items[j].index);
-                    }
-                    ir_str += ")";
-                },
-                [&](const ir::Inst::Jump& i) {
-                    ir_str += std::format("jump to block {}", i.target.index);
-                },
-                [&](const ir::Inst::Branch& i) {
-                    ir_str += std::format(
-                        "branch on %{} to block {} else block {}",
-                        i.condition.index,
+                [&](const ir::Terminator::Branch& i) {
+                    term_str += std::format(
+                        "branch on {} to block {} else block {}",
+                        to_string(i.condition, func),
                         i.true_target.index,
                         i.false_target.index
                     );
                 },
-                [&](const ir::Inst::Return& i) {
+                [&](const ir::Terminator::Return& i) {
                     if (i.value)
-                        ir_str += std::format("return %{}", i.value->index);
+                        term_str +=
+                            std::format("return {}", to_string(*i.value, func));
                     else
-                        ir_str += "return";
+                        term_str += "return";
+                },
+                [&](const ir::Terminator::Unreachable&) {
+                    term_str += "unreachable";
                 }
             );
-            str += ir_str + "\n";
+            str += term_str + "\n";
         }
     }
     return str;
 }
+
+
 
 std::string to_string(
     const ir::Module& module, const acu::ir::AnalyzedPackage& analyzed
