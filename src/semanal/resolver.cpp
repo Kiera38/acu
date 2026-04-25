@@ -3,7 +3,6 @@
 #include "package_name.h"
 #include "semanal/ir.h"
 
-
 namespace acu::semanal {
 namespace {
 std::size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
@@ -455,7 +454,8 @@ void Resolver::resolve_func_def(const nodes::Func& func_node) {
             }
             ir_func.insts.start = ir_package_.last_inst().index + 1;
             resolve_stmt(*func_node.body, ir_func);
-            ir_func.insts.size = ir_package_.last_inst().index + 1 - ir_func.insts.start;
+            ir_func.insts.size =
+                ir_package_.last_inst().index + 1 - ir_func.insts.start;
             context_->pop();
         }
     }

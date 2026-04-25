@@ -1,4 +1,3 @@
-#include "ir.h"
 #include "resolver.h"
 
 namespace acu::semanal {
@@ -19,7 +18,7 @@ std::uint8_t as_uint8(
 }
 }
 types::SpecType Resolver::resolve_type(const nodes::Expr& expr) {
-    return expr.value.visit(
+    auto res = expr.value.visit(
         [&](const nodes::Expr::Name& name) -> types::SpecType {
             if (auto type = context_->find(name.name)) {
                 return {.type = type->data.get<types::TypeId>()};
@@ -175,6 +174,7 @@ types::SpecType Resolver::resolve_type(const nodes::Expr& expr) {
             return {.type = types::None};
         }
     );
+    return res;
 }
 
 std::int64_t Resolver::get_int_const(const nodes::Expr& expr) {

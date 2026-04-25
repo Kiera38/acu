@@ -83,6 +83,7 @@ add_executable(acu
     src/refanal/generator.cpp
     src/refanal/ir_str.cpp
     src/refanal/optimizer.cpp
+    src/refanal/check.cpp
 
     src/refanal/ir.cpp
 

@@ -1,4 +1,5 @@
 #include "refanal/optimizer.h"
+#include "refanal/check.h"
 
 #include <map>
 #include <vector>
@@ -221,7 +222,8 @@ void optimize(
     acu::ir::AnalyzedPackage& analyzed,
     ErrorHandler& err_handler
 ) {
-    // infer_specifiers(module, err_handler); // Removed, now handled in semanal
+    check(module, analyzed, err_handler);
+
     for (auto i : module.funcs().indices()) {
         Optimizer opt(module.funcs()[i]);
         opt.process();
