@@ -3,7 +3,7 @@
 #include <map>
 #include <vector>
 
-#include "refanal/specifiers.h"
+
 
 namespace acu::refanal {
 namespace {
@@ -221,7 +221,7 @@ void optimize(
     acu::ir::AnalyzedPackage& analyzed,
     ErrorHandler& err_handler
 ) {
-    infer_specifiers(module, err_handler);
+    // infer_specifiers(module, err_handler); // Removed, now handled in semanal
     for (auto i : module.funcs().indices()) {
         Optimizer opt(module.funcs()[i]);
         opt.process();

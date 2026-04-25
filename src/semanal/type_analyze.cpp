@@ -119,22 +119,23 @@ struct TypeVar {
     std::optional<types::SpecType> type;
     std::optional<Location> define_loc;
     bool locked = false;
+    bool locked_spec = false;
 
     types::TypeId add_type(
-        types::TypeId tp,
+        types::SpecType tp,
         Location loc,
         const Source& source,
         const types::TypePool& pool,
         ErrorHandler& err_handler
     ) {
         if (locked) {
-            if (type.has_value() && type->type != tp) {
-                if (!can_convert(tp, type->type)) {
+            if (type.has_value() && type->type != tp.type) {
+                if (!can_convert(tp.type, type->type)) {
                     std::string hint = "";
-                    if (can_cast(tp, type->type, pool)) {
+                    if (can_cast(tp.type, type->type, pool)) {
                         hint = std::format(
                             "use 'as {}' for explicit conversion",
-                            pool.to_string(*type)
+                            pool.to_string(type->type)
                         );
                     }
                     err_handler.error(
@@ -142,8 +143,8 @@ struct TypeVar {
                         loc,
                         std::format(
                             "Type mismatch: cannot convert {} to {}",
-                            pool.to_string(tp),
-                            pool.to_string(*type)
+                            pool.to_string(tp.type),
+                            pool.to_string(type->type)
                         ),
                         hint
                     );
@@ -151,25 +152,42 @@ struct TypeVar {
             }
         } else {
             if (type.has_value()) {
-                auto unified = unify(type->type, tp);
+                auto unified = unify(type->type, tp.type);
                 if (!unified.has_value()) {
                     err_handler.error(
                         source,
                         loc,
                         std::format(
                             "Type mismatch: cannot unify {} and {}",
-                            pool.to_string(tp),
-                            pool.to_string(*type)
+                            pool.to_string(tp.type),
+                            pool.to_string(type->type)
                         )
                     );
                 } else {
-                    type = {.type = *unified, .specifier = type->specifier};
+                    type->type = *unified;
                 }
             } else {
-                type = {.type = tp, .specifier = types::Specifier::None};
+                type = tp;
                 define_loc = loc;
             }
         }
+
+        if (!locked_spec && tp.specifier != types::Specifier::None) {
+            if (type->specifier == types::Specifier::None) {
+                type->specifier = tp.specifier;
+            } else if (
+                tp.specifier == types::Specifier::Var &&
+                type->specifier == types::Specifier::Let
+            ) {
+                type->specifier = types::Specifier::Var;
+            } else if (
+                tp.specifier == types::Specifier::Val &&
+                type->specifier != types::Specifier::Val
+            ) {
+                type->specifier = types::Specifier::Val;
+            }
+        }
+
         return type->type;
     }
 
@@ -192,7 +210,8 @@ struct TypeVar {
             std::string hint = "";
             if (can_cast(type->type, tp.type, pool)) {
                 hint = std::format(
-                    "use 'as {}' for explicit conversion", pool.to_string(tp)
+                    "use 'as {}' for explicit conversion",
+                    pool.to_string(tp.type)
                 );
             }
             err_handler.error(
@@ -200,14 +219,17 @@ struct TypeVar {
                 loc,
                 std::format(
                     "Type mismatch: cannot convert {} to {}",
-                    pool.to_string(tp),
-                    pool.to_string(*type)
+                    pool.to_string(tp.type),
+                    pool.to_string(type->type)
                 ),
                 hint
             );
         }
         type = tp;
         locked = true;
+        if (tp.specifier != types::Specifier::None) {
+            locked_spec = true;
+        }
         if (!define_loc.has_value()) {
             define_loc = loc;
         }
@@ -237,7 +259,7 @@ struct TypeVar {
         ErrorHandler& err_handler
     ) {
         if (other.type.has_value()) {
-            return add_type(other.type->type, loc, source, pool, err_handler);
+            return add_type(*other.type, loc, source, pool, err_handler);
         }
         return type.has_value() ? type->type : types::None;
     }
@@ -272,7 +294,7 @@ public:
         changed_ = false;
         current_inst_ = 0;
         propagate_range(
-            ir::Block {.end = {func_->insts.start + func_->insts.size-1}}
+            ir::Block {.end = {func_->insts.start + func_->insts.size - 1}}
         );
         return changed_;
     }
@@ -284,6 +306,150 @@ private:
 
     [[nodiscard]] const types::Type::Func& get_func_type() const {
         return type_pool_->get(func_type_id_).data.get<types::Type::Func>();
+    }
+
+    void require_var(ir::InstRef ref, Location loc, std::string_view context) {
+        auto& tv = type_vars_[ref];
+        if (tv.type && tv.type->specifier == types::Specifier::Var) return;
+
+        const auto& inst = package_->inst(ref);
+        bool possible = inst.data.visit(
+            [&](const ir::Inst::LoadVar& data) {
+                require_var(data.var, loc, context);
+                return true;
+            },
+            [&](const ir::Inst::VarDecl&) {
+                if (tv.locked_spec &&
+                    tv.type->specifier == types::Specifier::Let) {
+                    error(
+                        loc,
+                        std::format(
+                            "cannot mutate immutable variable (declared with "
+                            "let): {}",
+                            context
+                        )
+                    );
+                    return false;
+                }
+                if (tv.type->specifier == types::Specifier::Let) {
+                    tv.type->specifier = types::Specifier::Var;
+                    changed_ = true;
+                }
+                return true;
+            },
+            [&](const ir::Inst::GetAttr& data) {
+                auto tp = type_vars_[data.value].type;
+                if (tp.has_value()) {
+                    const auto& type = type_pool_->get(tp->type);
+                    if (auto st = type.data.get_if<types::Type::Struct>()) {
+                        for (const auto& field : st->fields) {
+                            if (field.name == data.name) {
+                                if (field.type.specifier ==
+                                    types::Specifier::Let) {
+                                    error(
+                                        loc,
+                                        std::format(
+                                            "cannot mutate immutable field "
+                                            "'{}': {}",
+                                            data.name,
+                                            context
+                                        )
+                                    );
+                                    return false;
+                                }
+                                if (field.type.specifier ==
+                                    types::Specifier::Val) {
+                                    require_var(data.value, loc, context);
+                                }
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
+            },
+            [&](const ir::Inst::GetItem& data) {
+                auto tp = type_vars_[data.value].type;
+                if (tp.has_value()) {
+                    const auto& type = type_pool_->get(tp->type);
+                    if (auto at = type.data.get_if<types::Type::Array>()) {
+                        if (at->item.specifier == types::Specifier::Let) {
+                            error(
+                                loc,
+                                std::format(
+                                    "cannot mutate immutable array item: {}",
+                                    context
+                                )
+                            );
+                            return false;
+                        }
+                        if (at->item.specifier == types::Specifier::Val) {
+                            require_var(data.value, loc, context);
+                        }
+                        return true;
+                    } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
+                        if (pt->type.specifier == types::Specifier::Let) {
+                            error(
+                                loc,
+                                std::format(
+                                    "cannot mutate immutable pointer target: "
+                                    "{}",
+                                    context
+                                )
+                            );
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            },
+            [&](const ir::Inst::Deref& data) {
+                auto tp = type_vars_[data.value].type;
+                if (tp.has_value()) {
+                    const auto& type = type_pool_->get(tp->type);
+                    if (auto pt = type.data.get_if<types::Type::Ptr>()) {
+                        if (pt->type.specifier == types::Specifier::Let) {
+                            error(
+                                loc,
+                                std::format(
+                                    "cannot mutate immutable pointer target: "
+                                    "{}",
+                                    context
+                                )
+                            );
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            },
+            [&](const ir::Inst::LoadParam& data) {
+                auto param_type = get_func_type().params[data.param.index];
+                if (param_type.type.specifier == types::Specifier::Let) {
+                    error(
+                        loc,
+                        std::format(
+                            "cannot mutate immutable parameter: {}", context
+                        )
+                    );
+                    return false;
+                }
+                return true;
+            },
+            [&](const auto&) {
+                error(loc, std::format("value cannot be mutated: {}", context));
+                return false;
+            }
+        );
+
+        if (possible && tv.type) {
+            if (tv.type->specifier == types::Specifier::Let) {
+                tv.type->specifier = types::Specifier::Var;
+                changed_ = true;
+            }
+        }
     }
 
     void propagate_range(ir::Block range) {
@@ -314,17 +480,27 @@ private:
                         return package_->func_type(func_ref);
                     },
                     [&](ir::UsedFuncRef func_ref) {
-                        auto used_func =
-                            package_->used_func(func_ref);
+                        auto used_func = package_->used_func(func_ref);
                         return used_func.type;
                     },
                     [&](types::TypeId type_id) { return types::Const; }
                 );
-                lock_type(ref, type, inst.location);
+                lock_type(
+                    ref,
+                    {.type = type, .specifier = types::Specifier::Val},
+                    inst.location
+                );
             },
             [&](const ir::Inst::VarDecl& data) {
                 if (data.type.has_value()) {
                     lock_type(ref, *data.type, inst.location);
+                } else {
+                    add_type(
+                        ref,
+                        {.type = types::Nothing,
+                         .specifier = types::Specifier::Let},
+                        inst.location
+                    );
                 }
             },
             [&](const ir::Inst::LoadVar& data) {
@@ -338,7 +514,7 @@ private:
             },
             [&](const ir::Inst::Store& data) {
                 copy_type(data.value, data.var, inst.location);
-                add_type(ref, types::None, inst.location);
+                lock_type(ref, types::None, inst.location);
             },
             [&](const ir::Inst::Binary& data) {
                 auto left = type_vars_[data.left].type;
@@ -367,7 +543,12 @@ private:
                                 )
                             );
                         }
-                        add_type(ref, *unified, inst.location);
+                        add_type(
+                            ref,
+                            {.type = *unified,
+                             .specifier = types::Specifier::Val},
+                            inst.location
+                        );
                     }
                 }
             },
@@ -376,39 +557,58 @@ private:
 
                 auto left_tp = type_vars_[data.left].type;
                 if (left_tp && !can_convert(left_tp->type, types::Bool)) {
-                    error(inst.location,
+                    error(
+                        inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*left_tp)
-                        ));
+                        )
+                    );
                 }
                 auto right_tp = type_vars_[data.right.end].type;
                 if (right_tp && !can_convert(right_tp->type, types::Bool)) {
-                    error(inst.location,
+                    error(
+                        inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*right_tp)
-                        ));
+                        )
+                    );
                 }
-                add_type(ref, types::Bool, inst.location);
+                add_type(
+                    ref,
+                    {.type = types::Bool, .specifier = types::Specifier::Val},
+                    inst.location
+                );
             },
             [&](const ir::Inst::Unary& data) {
                 if (data.op == ir::Inst::UnaryOp::Not) {
                     auto val_tp = type_vars_[data.value].type;
                     if (val_tp && !can_convert(val_tp->type, types::Bool)) {
-                        error(inst.location,
+                        error(
+                            inst.location,
                             std::format(
                                 "Type mismatch: cannot convert '{}' to Bool",
                                 type_pool_->to_string(*val_tp)
-                            ));
+                            )
+                        );
                     }
-                    add_type(ref, types::Bool, inst.location);
+                    add_type(
+                        ref,
+                        {.type = types::Bool,
+                         .specifier = types::Specifier::Val},
+                        inst.location
+                    );
                 } else {
                     copy_type(data.value, ref, inst.location);
                 }
             },
             [&](const ir::Inst::Comparison& data) {
-                lock_type(ref, types::Bool, inst.location);
+                lock_type(
+                    ref,
+                    {.type = types::Bool, .specifier = types::Specifier::Val},
+                    inst.location
+                );
                 auto current_left = data.left;
                 auto comparators = package_->comparators(data.comparators);
 
@@ -450,11 +650,13 @@ private:
 
                 auto cond_tp = type_vars_[data.value].type;
                 if (cond_tp && !can_convert(cond_tp->type, types::Bool)) {
-                    error(inst.location,
+                    error(
+                        inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*cond_tp)
-                        ));
+                        )
+                    );
                 }
                 lock_type(ref, types::None, inst.location);
             },
@@ -466,18 +668,24 @@ private:
             },
             [&](const ir::Inst::Return& data) {
                 if (data.value.has_value()) {
-                    add_type(
-                        *data.value,
-                        get_func_type().return_type.type,
-                        inst.location
-                    );
+                    auto& func_type = get_func_type();
+                    if (func_type.return_type.specifier ==
+                        types::Specifier::Var) {
+                        require_var(*data.value, inst.location, "return value");
+                    }
+                    add_type(*data.value, func_type.return_type, inst.location);
                 }
                 lock_type(ref, types::Nothing, inst.location);
             },
             [&](const ir::Inst::AddressOf& data) {
                 auto tp = type_vars_[data.value].type;
                 if (tp.has_value()) {
-                    add_type(ref, type_pool_->add_ptr(*tp), inst.location);
+                    add_type(
+                        ref,
+                        {.type = type_pool_->add_ptr(*tp),
+                         .specifier = types::Specifier::Val},
+                        inst.location
+                    );
                 }
             },
             [&](const ir::Inst::Deref& data) {
@@ -485,7 +693,7 @@ private:
                 if (tp.has_value()) {
                     const auto& type = type_pool_->get(tp->type);
                     if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(ref, pt->type.type, inst.location);
+                        add_type(ref, pt->type, inst.location);
                     }
                 }
             },
@@ -494,9 +702,9 @@ private:
                 if (tp.has_value()) {
                     const auto& type = type_pool_->get(tp->type);
                     if (auto at = type.data.get_if<types::Type::Array>()) {
-                        add_type(ref, at->item.type, inst.location);
+                        add_type(ref, at->item, inst.location);
                     } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(ref, pt->type.type, inst.location);
+                        add_type(ref, pt->type, inst.location);
                     }
                 }
             },
@@ -505,11 +713,12 @@ private:
                 if (var_tp.has_value()) {
                     const auto& type = type_pool_->get(var_tp->type);
                     if (auto at = type.data.get_if<types::Type::Array>()) {
-                        add_type(data.value, at->item.type, inst.location);
+                        add_type(data.value, at->item, inst.location);
                     } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(data.value, pt->type.type, inst.location);
+                        add_type(data.value, pt->type, inst.location);
                     }
                 }
+                require_var(data.var, inst.location, "item assignment");
                 lock_type(ref, types::None, inst.location);
             },
             [&](const ir::Inst::GetAttr& data) {
@@ -533,14 +742,13 @@ private:
                     if (auto st = type.data.get_if<types::Type::Struct>()) {
                         for (const auto& field : st->fields) {
                             if (field.name == data.name) {
-                                add_type(
-                                    data.value, field.type.type, inst.location
-                                );
+                                add_type(data.value, field.type, inst.location);
                                 break;
                             }
                         }
                     }
                 }
+                require_var(data.var, inst.location, "attribute assignment");
                 lock_type(ref, types::None, inst.location);
             },
             [&](const ir::Inst::Array& data) {
@@ -569,9 +777,12 @@ private:
                 if (common_tp.has_value() && !type_vars_[ref].locked) {
                     lock_type(
                         ref,
-                        type_pool_->add_array(
-                            {.type = *common_tp}, items.size()
-                        ),
+                        {.type = type_pool_->add_array(
+                             {.type = *common_tp,
+                              .specifier = types::Specifier::Let},
+                             items.size()
+                         ),
+                         .specifier = types::Specifier::Val},
                         inst.location
                     );
                 }
@@ -581,17 +792,18 @@ private:
                 auto from_tp = type_vars_[data.value].type;
                 if (from_tp.has_value() &&
                     !can_cast(from_tp->type, data.type.type, *type_pool_)) {
-                    error(inst.location,
+                    error(
+                        inst.location,
                         std::format(
                             "Type mismatch: cannot explicitly cast {} to {}",
                             type_pool_->to_string(*from_tp),
                             type_pool_->to_string(data.type)
-                        ));
+                        )
+                    );
                 }
             },
             [&](const auto& i) {
-                error(inst.location,
-                    "Internal error: Unknown instruction");
+                error(inst.location, "Internal error: Unknown instruction");
             }
         );
     }
@@ -600,46 +812,57 @@ private:
         ir::InstRef ref, const ir::Inst& inst, const types::Type::Func& ft
     ) {
         const auto& data = inst.data.get<ir::Inst::Call>();
-        add_type(ref, ft.return_type.type, inst.location);
+        add_type(ref, ft.return_type, inst.location);
         if (data.args.size + data.named_args.size > ft.params.size()) {
-            error(inst.location,
+            error(
+                inst.location,
                 std::format(
                     "argument count mismatch: function has {} "
                     "parameters but call arguments {}",
                     ft.params.size(),
                     data.args.size + data.named_args.size
-                ));
+                )
+            );
         }
         if (data.args.size < ft.min_pos_args) {
-            error(inst.location,
+            error(
+                inst.location,
                 std::format(
                     "функция ожидает не меньше {} позиционных аргументов, но "
                     "передано {}",
                     ft.min_pos_args,
                     data.args.size
-                ));
+                )
+            );
         }
         if (data.args.size > ft.max_pos_args) {
-            error(inst.location,
+            error(
+                inst.location,
                 std::format(
                     "функция ожидает не больше {} позиционных аргументов, но "
                     "передано {}",
                     ft.min_pos_args,
                     data.args.size
-                ));
+                )
+            );
         }
         auto args = package_->inst_refs(data.args);
         for (size_t i = 0; i < args.size(); ++i) {
             auto arg_tp = type_vars_[args[i]].type;
             if (arg_tp && !can_convert(arg_tp->type, ft.params[i].type.type)) {
-                error(inst.location,
+                error(
+                    inst.location,
                     std::format(
                         "Type mismatch: cannot convert "
                         "argument {} from {} to {}",
                         i,
                         type_pool_->to_string(*arg_tp),
                         type_pool_->to_string(ft.params[i].type)
-                    ));
+                    )
+                );
+            }
+            if (ft.params[i].type.specifier == types::Specifier::Var) {
+                require_var(args[i], inst.location, "function argument");
             }
         }
         auto named_args = package_->call_args(data.named_args);
@@ -659,42 +882,55 @@ private:
                         return param.name == named_arg.name;
                     });
                 if (result != search_params.end()) {
-                    error(inst.location,
+                    error(
+                        inst.location,
                         std::format(
                             "argument with name {} already "
                             "passed as {} argument",
                             named_arg.name,
                             result - search_params.begin()
-                        ));
+                        )
+                    );
                     return std::nullopt;
                 }
-                error(inst.location,
+                error(
+                    inst.location,
                     std::format(
                         "argument with name {} not found", named_arg.name
-                    ));
+                    )
+                );
                 return std::nullopt;
             }();
             auto arg_tp = type_vars_[named_arg.value].type;
             if (param && arg_tp &&
                 !can_convert(arg_tp->type, param->type.type)) {
-                error(inst.location,
+                error(
+                    inst.location,
                     std::format(
                         "Type mismatch: cannot convert "
                         "argument {} from {} to {}",
                         named_arg.name,
                         type_pool_->to_string(*arg_tp),
                         type_pool_->to_string(param->type)
-                    ));
+                    )
+                );
+            }
+            if (param && param->type.specifier == types::Specifier::Var) {
+                require_var(
+                    named_arg.value, inst.location, "named function argument"
+                );
             }
         }
     }
 
-    void add_type(ir::InstRef inst, types::TypeId type, Location loc) {
+    void add_type(ir::InstRef inst, types::SpecType type, Location loc) {
         auto& tv = type_vars_[inst];
         bool previously_defined = tv.defined();
-        auto previous_type = tv.get().type;
-        auto tp = tv.add_type(type, loc, *func_->source, *type_pool_, *err_handler_);
-        if (!previously_defined || tp != previous_type) {
+        auto previous_type = tv.get();
+        auto tp =
+            tv.add_type(type, loc, *func_->source, *type_pool_, *err_handler_);
+        if (!previously_defined || tp != previous_type.type ||
+            tv.get().specifier != previous_type.specifier) {
             changed_ = true;
         }
     }
@@ -735,7 +971,9 @@ private:
     std::uint32_t current_inst_ = 0;
 };
 
-[[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types(IndexSpan<TypeVar, ir::InstRef> type_vars) {
+[[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types(
+    IndexSpan<TypeVar, ir::InstRef> type_vars
+) {
     IndexVector<types::SpecType, ir::InstRef> result;
     result.reserve(type_vars.size());
     for (auto i : type_vars.indices()) {
@@ -765,10 +1003,12 @@ ir::AnalyzedPackage type_analyze(
     IndexVector<TypeVar, ir::InstRef> type_vars(package.last_inst().index + 1);
     std::deque<TypeAnalyzer> analyzers;
     for (auto func_ref : package.funcs().indices()) {
-        if(package.func(func_ref).is_extern) {
+        if (package.func(func_ref).is_extern) {
             continue;
         }
-        analyzers.emplace_back(package, type_vars.data(), func_ref, err_handler);
+        analyzers.emplace_back(
+            package, type_vars.data(), func_ref, err_handler
+        );
     }
     while (!analyzers.empty()) {
         auto analyzer = analyzers.front();
