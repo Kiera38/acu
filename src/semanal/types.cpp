@@ -219,16 +219,16 @@ namespace acu::ir {
 types::TypeId Package::func_type(FuncRef ref) {
     const auto& func = funcs_[ref];
     auto params =
-        func.params() |
+        this->params(func.params) |
         std::views::transform([](const Param& param) -> types::Type::FuncParam {
             return {.name = param.name, .type = param.type};
         }) |
         std::ranges::to<std::vector<types::Type::FuncParam>>();
     types::Type::Func type {
         .params = std::move(params),
-        .min_pos_args = func.min_pos_args(),
-        .max_pos_args = func.max_pos_args(),
-        .return_type = func.return_type()
+        .min_pos_args = func.min_pos_args,
+        .max_pos_args = func.max_pos_args,
+        .return_type = func.return_type
     };
     return types_.add_func(type);
 }

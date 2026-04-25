@@ -14,7 +14,6 @@ using SemInst = acu::ir::Inst;
 
 class FuncGenerator {
     const acu::ir::AnalyzedPackage* apackage_;
-    const acu::ir::AnalyzedFunc* afunc_;
     const ::acu::ir::Func* sfunc_;
     ir::Func rfunc_;
 
@@ -25,39 +24,37 @@ class FuncGenerator {
         ir::BlockRef break_target;
     };
     std::vector<LoopTargets> loops_;
-    IndexVector<ir::InstRef, SemInstRef> inst_map_;
+    IndexMap<SemInstRef, ir::InstRef> inst_map_;
     std::uint32_t current_inst_ = 0;
 
 public:
     FuncGenerator(
-        const acu::ir::AnalyzedPackage& apackage,
-        const acu::ir::AnalyzedFunc& afunc,
-        const ::acu::ir::Func& sfunc
+        const acu::ir::AnalyzedPackage& apackage, const ::acu::ir::Func& sfunc
     )
         : apackage_(&apackage),
-          afunc_(&afunc),
           sfunc_(&sfunc),
-          rfunc_(
-              sfunc.name(), sfunc.source(), sfunc.location(), sfunc.is_extern()
-          ) {}
+          rfunc_(sfunc.name, *sfunc.source, sfunc.location, sfunc.is_extern),
+          inst_map_(sfunc.insts, ir::InstRef {~0u}) {}
 
     ir::Func generate() {
-        const auto& sparams = sfunc_->params();
+        const auto& sparams = sfunc_->params;
         std::vector<ir::Param> rparams;
-        rparams.reserve(sparams.size());
-        for (auto i : sparams.indices()) {
+        rparams.reserve(sparams.size);
+        for (auto i : sparams) {
+            const auto& param = apackage_->ir_package->param(i);
             rparams.push_back(
-                ir::Param {.name = sparams[i].name, .type = sparams[i].type}
+                ir::Param {.name = param.name, .type = param.type}
             );
         }
-        rfunc_.set_type(rparams, sfunc_->return_type());
-
-        inst_map_.resize(sfunc_->insts().size(), ir::InstRef {~0u});
+        rfunc_.set_type(rparams, sfunc_->return_type);
 
         current_block_ = rfunc_.add_block(ir::Block {});
 
-        if (!sfunc_->insts().empty()) {
-            ::acu::ir::Block main_block {.end = sfunc_->last_inst()};
+        if (!sfunc_->insts.empty()) {
+            current_inst_ = sfunc_->insts.start;
+            ::acu::ir::Block main_block {
+                .end = {sfunc_->insts.start + sfunc_->insts.size-1}
+            };
             visit_block(main_block);
         }
 
@@ -76,7 +73,7 @@ public:
 
     void visit_block(acu::ir::Block sblock) {
         while (current_inst_ <= sblock.end.index) {
-            visit_inst(SemInstRef{current_inst_++});
+            visit_inst(SemInstRef {current_inst_++});
         }
     }
 
@@ -116,8 +113,8 @@ public:
         ::acu::ir::InstRef sref, types::SpecType expected_type, Location loc
     ) {
         auto rref = get_mapped(sref);
-        if (sref.index >= afunc_->inst_types.size()) return rref;
-        auto actual_type = afunc_->inst_types[sref];
+        if (sref.index >= apackage_->inst_types.size()) return rref;
+        auto actual_type = apackage_->inst_types[sref];
         if (actual_type.type != expected_type.type) {
             ir::Inst cast_inst {
                 .data = ir::Inst::Cast {.value = rref},
@@ -150,8 +147,8 @@ public:
     }
 
     void visit_inst(SemInstRef sref) {
-        const auto& sinst = sfunc_->inst(sref);
-        const auto& type = afunc_->inst_types[sref];
+        const auto& sinst = apackage_->ir_package->inst(sref);
+        const auto& type = apackage_->inst_types[sref];
 
         auto emit = [&](auto data) -> ir::InstRef {
             ir::Inst rinst = {
@@ -197,7 +194,7 @@ public:
                 emit(ir::Inst::LoadParam {ir::ParamRef {inst.param.index}});
             },
             [&](const SemInst::Store& inst) {
-                auto var_type = afunc_->inst_types[inst.var];
+                auto var_type = apackage_->inst_types[inst.var];
                 emit(
                     ir::Inst::Store {
                         .var = get_mapped(inst.var),
@@ -227,7 +224,8 @@ public:
                 );
             },
             [&](const SemInst::Comparison& inst) {
-                auto comparators = sfunc_->comparators(inst.comparators);
+                auto comparators =
+                    apackage_->ir_package->comparators(inst.comparators);
                 if (comparators.empty()) return;
 
                 auto current_left_sref = inst.left;
@@ -255,7 +253,7 @@ public:
                                 .op =
                                     static_cast<ir::Inst::ComparisonOp>(comp.op)
                             },
-                        .type = afunc_->inst_types[sref],
+                        .type = apackage_->inst_types[sref],
                         .location = sinst.location
                     };
 
@@ -278,7 +276,7 @@ public:
                                     .true_target = right_block,
                                     .false_target = merge_block
                                 },
-                            .type = afunc_->inst_types[sref],
+                            .type = apackage_->inst_types[sref],
                             .location = sinst.location
                         };
                         ir::InstRef branch_ref = rfunc_.add(branch);
@@ -301,7 +299,7 @@ public:
                 }
             },
             [&](const SemInst::Call& inst) {
-                auto func_s_type = afunc_->inst_types[inst.value].type;
+                auto func_s_type = apackage_->inst_types[inst.value].type;
                 const types::Type::Func* defined_func = nullptr;
                 if (func_s_type != types::None) {
                     const auto& f_type =
@@ -309,7 +307,8 @@ public:
                     defined_func = f_type.data.get_if<types::Type::Func>();
                 }
 
-                const auto& callee_inst = sfunc_->inst(inst.value);
+                const auto& callee_inst =
+                    apackage_->ir_package->inst(inst.value);
                 if (callee_inst.data.is<::acu::ir::Inst::Const>()) {
                     const auto& const_val =
                         callee_inst.data.get<::acu::ir::Inst::Const>();
@@ -320,7 +319,8 @@ public:
                                 .get(struct_type)
                                 .data.get<types::Type::Struct>();
 
-                        auto s_args = sfunc_->inst_refs(inst.args);
+                        auto s_args =
+                            apackage_->ir_package->inst_refs(inst.args);
                         std::vector<ir::InstRef> r_args;
                         for (size_t i = 0; i < s_args.size(); ++i) {
                             if (i < struct_def.fields.size()) {
@@ -343,8 +343,8 @@ public:
                     }
                 }
 
-                auto s_args = sfunc_->inst_refs(inst.args);
-                auto nargs = sfunc_->call_args(inst.named_args);
+                auto s_args = apackage_->ir_package->inst_refs(inst.args);
+                auto nargs = apackage_->ir_package->call_args(inst.named_args);
                 std::vector<ir::InstRef> r_args;
                 r_args.reserve(s_args.size() + nargs.size());
                 for (size_t i = 0; i < s_args.size(); ++i) {
@@ -390,7 +390,7 @@ public:
                             .false_target =
                                 inst.else_block ? false_block : merge_block
                         },
-                    .type = afunc_->inst_types[sref],
+                    .type = apackage_->inst_types[sref],
                     .location = sinst.location,
                 };
                 ir::InstRef branch_ref = rfunc_.add(branch);
@@ -433,7 +433,7 @@ public:
                 std::optional<ir::InstRef> val;
                 if (inst.value) {
                     val = get_cast(
-                        *inst.value, sfunc_->return_type(), sinst.location
+                        *inst.value, sfunc_->return_type, sinst.location
                     );
                 }
                 emit(ir::Inst::Return {val});
@@ -450,7 +450,7 @@ public:
             },
             [&](const SemInst::GetAttr& inst) {
                 auto base_ref = get_mapped(inst.value);
-                auto base_type = afunc_->inst_types[inst.value].type;
+                auto base_type = apackage_->inst_types[inst.value].type;
 
                 const auto& defined_struct =
                     apackage_->ir_package->types()
@@ -470,7 +470,7 @@ public:
             },
             [&](const SemInst::SetAttr& inst) {
                 auto base_ref = get_mapped(inst.var);
-                auto base_type = afunc_->inst_types[inst.var].type;
+                auto base_type = apackage_->inst_types[inst.var].type;
 
                 const auto& defined_struct =
                     apackage_->ir_package->types()
@@ -507,7 +507,7 @@ public:
                 );
             },
             [&](const SemInst::SetItem& inst) {
-                auto base_type = afunc_->inst_types[inst.var].type;
+                auto base_type = apackage_->inst_types[inst.var].type;
                 types::TypeId item_type = types::None;
                 if (base_type != types::None) {
                     const auto& defined_type =
@@ -546,7 +546,7 @@ public:
                 auto merge_block = rfunc_.add_block(ir::Block {});
 
                 ir::Inst branch;
-                branch.type = afunc_->inst_types[sref];
+                branch.type = apackage_->inst_types[sref];
                 branch.location = sinst.location;
                 if (inst.op == ::acu::ir::Inst::LogicalOp::And) {
                     branch.data = ir::Inst::Branch {
@@ -572,8 +572,8 @@ public:
                 current_block_ = merge_block;
             },
             [&](const SemInst::Array& inst) {
-                auto s_args = sfunc_->inst_refs(inst.items);
-                auto array_type = afunc_->inst_types[sref].type;
+                auto s_args = apackage_->ir_package->inst_refs(inst.items);
+                auto array_type = apackage_->inst_types[sref].type;
                 types::TypeId item_type = types::None;
                 if (array_type != types::None) {
                     const auto& defined_type =
@@ -585,6 +585,7 @@ public:
                 }
 
                 std::vector<ir::InstRef> r_args;
+                r_args.reserve(s_args.size());
                 for (auto s_arg : s_args) {
                     r_args.push_back(get_mapped(s_arg));
                 }
@@ -606,9 +607,8 @@ ir::Module generate(acu::ir::AnalyzedPackage& analyzed_package) {
         analyzed_package.ir_package->name(),
         analyzed_package.ir_package->types()
     );
-    for (const auto& afunc : analyzed_package.analyzed_funcs) {
-        const auto& sfunc = analyzed_package.ir_package->func(afunc.ref);
-        FuncGenerator fg(analyzed_package, afunc, sfunc);
+    for (const auto& sfunc : analyzed_package.ir_package->funcs()) {
+        FuncGenerator fg(analyzed_package, sfunc);
         rmod.add(fg.generate());
     }
     for (const auto& ufunc : analyzed_package.ir_package->used_funcs()) {

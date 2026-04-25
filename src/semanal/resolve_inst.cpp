@@ -197,7 +197,7 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
             if (data.type) {
                 type = resolve_type(*data.type);
             }
-            auto var_ref = func.add({
+            auto var_ref = ir_package_.add({
                 .data = ir::Inst::VarDecl {.name = data.name, .type = type},
                 .location = stmt.location,
             });
@@ -205,7 +205,7 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
             context_->add(data.name, {var_ref});
             if (data.init) {
                 auto value_ref = resolve_expr(*data.init, func);
-                func.add({
+                ir_package_.add({
                     .data =
                         ir::Inst::Store {.var = var_ref, .value = value_ref},
                     .location = stmt.location,
@@ -221,7 +221,7 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
         },
         [&](const nodes::Stmt::If& data) {
             auto cond_ref = resolve_expr(*data.cond, func);
-            auto if_ref = func.add({
+            auto if_ref = ir_package_.add({
                 .data = ir::Inst::If {.value = cond_ref},
                 .location = stmt.location,
             });
@@ -231,31 +231,31 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
             if (data.else_block) {
                 else_block = resolve_block(*data.else_block, func);
             }
-            func.set_if_blocks(if_ref, then_block, else_block);
+            ir_package_.set_if_blocks(if_ref, then_block, else_block);
         },
         [&](const nodes::Stmt::While& data) {
-            auto loop_ref = func.add({
+            auto loop_ref = ir_package_.add({
                 .data = ir::Inst::Loop {},
                 .location = stmt.location,
             });
             auto loop_block = resolve_block(func, [&] {
                 auto cond_ref = resolve_expr(*data.cond, func);
-                auto if_ref = func.add({
+                auto if_ref = ir_package_.add({
                     .data = ir::Inst::If {.value = cond_ref},
                     .location = stmt.location,
                 });
                 auto then_block = resolve_block(*data.body, func);
-                auto break_ref = func.add({
+                auto break_ref = ir_package_.add({
                     .data = ir::Inst::Break {},
                     .location = stmt.location,
                 });
-                func.set_if_blocks(
+                ir_package_.set_if_blocks(
                     if_ref,
                     then_block,
                     ir::Block {.end = break_ref}
                 );
             });
-            func.set_loop_block(loop_ref, loop_block);
+            ir_package_.set_loop_block(loop_ref, loop_block);
         },
         [&](const nodes::Stmt::Return& data) {
             ir::Inst return_inst;
@@ -267,16 +267,16 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
             }
             return_inst.location = stmt.location;
 
-            func.add(return_inst);
+            ir_package_.add(return_inst);
         },
         [&](const nodes::Stmt::Break& data) {
-            func.add({
+            ir_package_.add({
                 .data = ir::Inst::Break {},
                 .location = stmt.location,
             });
         },
         [&](const nodes::Stmt::Continue& data) {
-            func.add({
+            ir_package_.add({
                 .data = ir::Inst::Continue {},
                 .location = stmt.location,
             });
@@ -309,7 +309,7 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
                 std::unreachable();
             }();
             convert_store(
-                func.add({
+                ir_package_.add({
                     .data =
                         ir::Inst::Binary {
                             .left = target_ref, .right = value_ref, .op = ir_op
@@ -328,7 +328,7 @@ ir::Block Resolver::resolve_block(
     ir::Func& func, std::invocable auto&& resolve
 ) {
     std::invoke(resolve);
-    return {.end = func.last_inst()};
+    return {.end = ir_package_.last_inst()};
 }
 
 ir::Block Resolver::resolve_block(const nodes::Stmt& stmt, ir::Func& func) {
@@ -346,24 +346,24 @@ ir::InstRef Resolver::convert_store(
         [&](const nodes::Expr::Name& node) {
             if (auto var = context_->find(node.name)) {
                 auto ref = var->data.get<ir::InstRef>();
-                return func.add({
+                return ir_package_.add({
                     .data = ir::Inst::Store {.var = ref, .value = value},
                     .location = expr.location,
                 });
             } else {
-                auto var_ref = func.add({
+                auto var_ref = ir_package_.add({
                     .data = ir::Inst::VarDecl {.name = node.name},
                     .location = expr.location,
                 });
                 context_->add(node.name, {var_ref});
-                return func.add({
+                return ir_package_.add({
                     .data = ir::Inst::Store {.var = var_ref, .value = value},
                     .location = expr.location,
                 });
             }
         },
         [&](const nodes::Expr::GetItem& node) {
-            return func.add({
+            return ir_package_.add({
                 .data =
                     ir::Inst::SetItem {
                         .var = resolve_expr(*node.value, func),
@@ -374,7 +374,7 @@ ir::InstRef Resolver::convert_store(
             });
         },
         [&](const nodes::Expr::GetAttr& node) {
-            return func.add({
+            return ir_package_.add({
                 .data =
                     ir::Inst::SetAttr {
                         .var = resolve_expr(*node.value, func),
@@ -403,7 +403,7 @@ ir::Inst::Const Resolver::convert_const(const nodes::Expr::Literal& lit) {
 ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
     return expr.value.visit(
         [&](const nodes::Expr::Literal& node) {
-            return func.add({
+            return ir_package_.add({
                 .data = convert_const(node),
                 .location = expr.location,
             });
@@ -411,7 +411,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
         [&](const nodes::Expr::Name& node) {
             auto entry = context_->find(node.name);
             if (entry != nullptr) {
-                return func.add(entry->data.visit(
+                return ir_package_.add(entry->data.visit(
                     [&](ir::InstRef var_ref) -> ir::Inst {
                         return {
                             .data = ir::Inst::LoadVar {.var = var_ref},
@@ -456,7 +456,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                     std::format("name '{}' not found", node.name),
                     context_->suggest_similar_name(node.name)
                 );
-                return func.add({
+                return ir_package_.add({
                     .data = ir::Inst::Const {false},
                     .location = expr.location,
                 });
@@ -466,7 +466,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
             auto left_ref = resolve_expr(*node.left, func);
             if (node.op == nodes::Expr::BinaryOp::LogicalAnd ||
                 node.op == nodes::Expr::BinaryOp::LogicalOr) {
-                auto logical_ref = func.add({
+                auto logical_ref = ir_package_.add({
                     .data =
                         ir::Inst::Logical {
                             .left = left_ref,
@@ -478,7 +478,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                 });
 
                 auto right_block = resolve_block(*node.right, func);
-                func.set_logical_block(logical_ref, right_block);
+                ir_package_.set_logical_block(logical_ref, right_block);
                 return logical_ref;
             } else {
                 auto right_ref = resolve_expr(*node.right, func);
@@ -498,7 +498,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                         default: std::unreachable();
                     }
                 }();
-                return func.add({
+                return ir_package_.add({
                     .data =
                         ir::Inst::Binary {
                             .left = left_ref, .right = right_ref, .op = ir_op
@@ -513,16 +513,16 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                 node.op == nodes::Expr::UnaryOp::AddressOf) {
                 switch (node.op) {
                     case nodes::Expr::UnaryOp::Deref:
-                        return func.add({
+                        return ir_package_.add({
                             .data = ir::Inst::Deref {operand_ref},
                             .location = expr.location,
                         });
                     case nodes::Expr::UnaryOp::AddressOf:
-                        return func.add({
+                        return ir_package_.add({
                             .data = ir::Inst::AddressOf {operand_ref},
                             .location = expr.location,
                         });
-                    default: return func.add(ir::Inst {});
+                    default: return ir_package_.add(ir::Inst {});
                 }
             }
 
@@ -536,7 +536,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                 }
             }();
 
-            return func.add({
+            return ir_package_.add({
                 .data = ir::Inst::Unary {.value = operand_ref, .op = ir_op},
                 .location = expr.location,
             });
@@ -564,9 +564,9 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                     arg_refs.push_back(resolve_expr(*arg.value, func));
                 }
             }
-            auto inst_refs = func.add(arg_refs);
-            auto call_args = func.add_call_args(named_args);
-            return func.add({
+            auto inst_refs = ir_package_.add(arg_refs);
+            auto call_args = ir_package_.add_call_args(named_args);
+            return ir_package_.add({
                 .data =
                     ir::Inst::Call {
                         .value = callee_ref,
@@ -579,7 +579,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
         [&](const nodes::Expr::GetItem& node) {
             auto container_ref = resolve_expr(*node.value, func);
             auto index_ref = resolve_expr(*node.args[0], func);
-            return func.add({
+            return ir_package_.add({
                 .data =
                     ir::Inst::GetItem {
                         .value = container_ref, .index = index_ref
@@ -591,7 +591,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
             PackageName path;
             if (flatten_module_path(expr, path)) {
                 if (auto item_entry = find_in_imported_module_chain(path)) {
-                    return func.add(item_entry->data.visit(
+                    return ir_package_.add(item_entry->data.visit(
                         [&](ir::FuncRef func_ref) -> ir::Inst {
                             return {
                                 .data = ir::Inst::Const {.value = func_ref},
@@ -621,7 +621,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                 }
             }
             auto obj_ref = resolve_expr(*node.value, func);
-            return func.add({
+            return ir_package_.add({
                 .data = ir::Inst::GetAttr {.value = obj_ref, .name = node.name},
                 .location = expr.location,
             });
@@ -633,8 +633,8 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                 item_refs.push_back(resolve_expr(*item, func));
             }
 
-            auto inst_refs = func.add(item_refs);
-            return func.add({
+            auto inst_refs = ir_package_.add(item_refs);
+            return ir_package_.add({
                 .data = ir::Inst::Array {inst_refs},
                 .location = expr.location,
             });
@@ -642,7 +642,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
         [&](const nodes::Expr::As& node) {
             auto value_ref = resolve_expr(*node.value, func);
             auto type = resolve_type(*node.type);
-            return func.add({
+            return ir_package_.add({
                 .data = ir::Inst::As {.value = value_ref, .type = type},
                 .location = expr.location,
             });
@@ -655,11 +655,11 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                     expr.location,
                     "Invalid comparison expression"
                 );
-                return func.add(ir::Inst {});
+                return ir_package_.add(ir::Inst {});
             }
 
             auto left_ref = resolve_expr(*node.operands[0], func);
-            auto comparison_ref = func.add({
+            auto comparison_ref = ir_package_.add({
                 .data = ir::Inst::Comparison {.left = left_ref},
                 .location = expr.location,
             });
@@ -686,10 +686,10 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                     .op = ir_op,
                 });
             }
-            func.set_comparators(comparison_ref, comparators);
+            ir_package_.set_comparators(comparison_ref, comparators);
             return comparison_ref;
         },
-        [&](const auto&) { return func.add(ir::Inst {}); }
+        [&](const auto&) { return ir_package_.add(ir::Inst {}); }
     );
 }
 

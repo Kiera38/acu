@@ -7,7 +7,6 @@
 
 #include "hash.h"
 
-
 namespace acu {
 template <typename T>
 concept Index = requires(T i) {
@@ -117,6 +116,8 @@ struct RefRange {
 
     iterator begin() const { return iterator {start}; }
     iterator end() const { return iterator {start + size}; }
+
+    [[nodiscard]] bool empty() const { return size == 0; }
 };
 
 template <typename T, Index I = Ref<T>>
@@ -239,7 +240,10 @@ public:
     RefRange<T, I> append_range(R&& range) {
         auto start = static_cast<std::uint32_t>(vec.size());
         vec.append_range(std::forward<R>(range));
-        return RefRange<T, I> {.start = start, .size = static_cast<std::uint32_t>(vec.size() - start)};
+        return RefRange<T, I> {
+            .start = start,
+            .size = static_cast<std::uint32_t>(vec.size() - start)
+        };
     }
 
     IndexSpan<T, I> data() { return IndexSpan<T, I>(vec); }
@@ -260,8 +264,10 @@ private:
 template <Index I, typename T>
 class IndexMap {
 public:
-    IndexMap(RefRange<T, I> range) : start(range.start), vec(range.size) {}
-    IndexMap(RefRange<T, I> range, T i)
+    template <typename IT>
+    IndexMap(RefRange<IT, I> range) : start(range.start), vec(range.size) {}
+    template <typename IT>
+    IndexMap(RefRange<IT, I> range, T i)
         : start(range.start), vec(range.size, i) {}
 
     decltype(auto) operator[](I i) { return vec[i.index - start]; }

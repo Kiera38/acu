@@ -93,7 +93,7 @@ static std::string indent_string(std::string_view str, int indent_level = 1) {
 }
 
 std::string to_string(
-    std::span<const Inst> block, size_t offset, const Func& func
+    const Package& package, std::span<const Inst> block, size_t offset, const Func& func
 ) {
     std::string block_str;
     for (size_t i = 0; i < block.size(); i++) {
@@ -136,11 +136,12 @@ std::string to_string(
                     inst.left.index,
                     logical_op_to_string(inst.op)
                 );
-                auto all = func.insts();
+                auto all = package.insts(func.insts);
                 block_str += indent_string(
                     to_string(
+                        package,
                         all.subspan(
-                            InstRef{idx},
+                            idx,
                             inst.right.end.index - idx+1
                         ),
                         idx+1,
@@ -163,8 +164,8 @@ std::string to_string(
             [&](const Inst::Comparison& inst) {
                 block_str +=
                     std::format("%{} = comparison %{}\n", idx, inst.left.index);
-                auto comps = func.comparators(inst.comparators);
-                auto all = func.insts();
+                auto comps = package.comparators(inst.comparators);
+                auto all = package.insts(func.insts);
                 auto current_start = static_cast<std::uint32_t>(i)+1;
                 for (size_t k = 0; k < comps.size(); ++k) {
                     auto& comp = comps[k];
@@ -176,8 +177,9 @@ std::string to_string(
                     );
                     block_str += indent_string(
                         to_string(
+                            package,
                             all.subspan(
-                                InstRef{current_start},
+                                current_start,
                                 comp.value.end.index - current_start +
                                     1
                             ),
@@ -192,7 +194,7 @@ std::string to_string(
             [&](const Inst::Call& inst) {
                 block_str +=
                     std::format("%{} = call %{}(", idx, inst.value.index);
-                auto refs = func.inst_refs(inst.args);
+                auto refs = package.inst_refs(inst.args);
                 for (size_t j = 0; j < refs.size(); ++j) {
                     if (j) block_str += ", ";
                     block_str += std::format("%{}", refs[j].index);
@@ -201,11 +203,12 @@ std::string to_string(
             },
             [&](const Inst::Loop& inst) {
                 block_str += std::format("%{} = loop {{\n", idx);
-                auto all = func.insts();
+                auto all = package.insts(func.insts);
                 block_str += indent_string(
                     to_string(
+                        package,
                         all.subspan(
-                            InstRef{idx+1},
+                            idx+1,
                             inst.block.end.index - idx + 1
                         ),
                         idx,
@@ -220,11 +223,12 @@ std::string to_string(
                 block_str += std::format(
                     "%{} = if %{} then {{\n", idx, inst.value.index
                 );
-                auto all = func.insts();
+                auto all = package.insts(func.insts);
                 block_str += indent_string(
                     to_string(
+                        package,
                         all.subspan(
-                            InstRef{idx+1},
+                            idx+1,
                             inst.then_block.end.index -
                                 idx + 1
                         ),
@@ -237,11 +241,12 @@ std::string to_string(
                 if (inst.else_block.has_value()) {
                     auto& eb = *inst.else_block;
                     block_str += "} else {\n";
-                    auto all = func.insts();
+                    auto all = package.insts(func.insts);
                     block_str += indent_string(
                         to_string(
+                            package,
                             all.subspan(
-                                InstRef{inst.then_block.end.index+1},
+                                inst.then_block.end.index+1,
                                 eb.end.index - inst.then_block.end.index + 1
                             ),
                             inst.then_block.end.index,
@@ -308,7 +313,7 @@ std::string to_string(
             },
             [&](const Inst::Array& inst) {
                 block_str += std::format("%{} = array(", idx);
-                auto refs = func.inst_refs(inst.items);
+                auto refs = package.inst_refs(inst.items);
                 for (size_t j = 0; j < refs.size(); ++j) {
                     if (j) block_str += ", ";
                     block_str += std::format("%{}", refs[j].index);
@@ -332,21 +337,21 @@ std::string to_string(
 }
 }
 
-std::string to_string(const Func& func) {
+std::string to_string(const Package& package, const Func& func) {
     std::string params_str;
-    for (const auto& param : func.params()) {
+    for (const auto& param : package.params(func.params)) {
         params_str += to_string(param) + '\n';
     }
-    std::string code_str = to_string(func.insts(), 0, func);
+    std::string code_str = to_string(package, package.insts(func.insts), 0, func);
     return std::format(
-        "Func {}\nparams:{}\ncode:\n{}", func.name(), params_str, code_str
+        "Func {}\nparams:{}\ncode:\n{}", func.name, params_str, code_str
     );
 }
 
 std::string to_string(const Package& package) {
     std::string funcs_str;
     for (const auto& func : package.funcs()) {
-        funcs_str += to_string(func) + '\n';
+        funcs_str += to_string(package, func) + '\n';
     }
     return std::format("Package\nfuncs:\n{}", funcs_str);
 }

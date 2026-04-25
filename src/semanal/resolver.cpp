@@ -1,6 +1,7 @@
 #include "resolver.h"
 
 #include "package_name.h"
+#include "semanal/ir.h"
 
 
 namespace acu::semanal {
@@ -386,10 +387,13 @@ void Resolver::resolve_struct_def(const nodes::Struct& struct_node) {
 ir::FuncRef Resolver::create_func_def(
     const nodes::Func& func_node, Location location
 ) {
-    ir::Func ir_func(
-        func_node.name, context_->source(), location, func_node.is_extern
-    );
-    auto func_ref = ir_package_.add(std::move(ir_func));
+    ir::Func ir_func {
+        .source = &context_->source(),
+        .location = location,
+        .name = func_node.name,
+        .is_extern = func_node.is_extern
+    };
+    auto func_ref = ir_package_.add(ir_func);
     context_->add(func_node.name, {func_ref});
     return func_ref;
 }
@@ -436,12 +440,10 @@ void Resolver::resolve_func_def(const nodes::Func& func_node) {
                 return_type.specifier = types::Specifier::Val;
             }
         }
-        ir_func.set_type(
-            ir_params,
-            func_node.min_pos_args,
-            func_node.max_pos_args,
-            return_type
-        );
+        ir_func.params = ir_package_.add_params(ir_params);
+        ir_func.min_pos_args = func_node.min_pos_args;
+        ir_func.max_pos_args = func_node.max_pos_args;
+        ir_func.return_type = return_type;
 
         if (!func_node.is_extern && func_node.body) {
             context_->push();
@@ -451,7 +453,9 @@ void Resolver::resolve_func_def(const nodes::Func& func_node) {
                     {ir::ParamRef {static_cast<std::uint32_t>(i)}}
                 );
             }
+            ir_func.insts.start = ir_package_.last_inst().index + 1;
             resolve_stmt(*func_node.body, ir_func);
+            ir_func.insts.size = ir_package_.last_inst().index + 1 - ir_func.insts.start;
             context_->pop();
         }
     }

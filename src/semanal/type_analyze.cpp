@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "errors.h"
+#include "index.h"
 #include "ir.h"
 #include "semanal/ir.h"
 #include "semanal/semanal.h"
@@ -251,82 +252,48 @@ struct TypeVar {
     }
 };
 
-struct TypeVarMap {
-    IndexVector<TypeVar, ir::InstRef> vars;
-
-    TypeVar& operator[](ir::InstRef inst) {
-        if (inst.index >= vars.size()) {
-            vars.resize(inst.index + 1);
-        }
-        return vars[inst];
-    }
-};
-
 class TypeAnalyzer {
 public:
     TypeAnalyzer(
-        ir::Package& package, ir::FuncRef func_ref, ErrorHandler& err_handler
+        ir::Package& package,
+        IndexSpan<TypeVar, ir::InstRef> type_vars,
+        ir::FuncRef func_ref,
+        ErrorHandler& err_handler
     )
         : package_(&package),
+          type_vars_(type_vars),
           type_pool_(&package.types()),
-          func_ref_(func_ref),
           func_(&package.func(func_ref)),
           err_handler_(&err_handler) {
         func_type_id_ = package.func_type(func_ref);
-        source_ = &func_->source();
-        const auto& type = package.types().get(func_type_id_);
-        if (!type.data.is<types::Type::Func>()) {
-            throw std::runtime_error(
-                "Internal error: Function type is not a Func type"
-            );
-        }
-    }
-
-    [[nodiscard]] ir::FuncRef func_ref() const { return func_ref_; }
-    [[nodiscard]] bool is_extern() const { return func_->is_extern(); }
-
-    [[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types() const {
-        IndexVector<types::SpecType, ir::InstRef> result;
-        for (auto i : type_vars_.vars.indices()) {
-            const auto& var = type_vars_.vars[i];
-            if (!var.defined()) {
-                err_handler_->error(
-                    *source_,
-                    func_->inst(i).location,
-                    "Type variable not defined (inference failed)"
-                );
-                result.push_back(
-                    {.type = types::None, .specifier = types::Specifier::None}
-                );
-            } else {
-                result.push_back(var.get());
-            }
-        }
-        return result;
     }
 
     bool propagate() {
         changed_ = false;
         current_inst_ = 0;
         propagate_range(
-            ir::Block {.end = func_->last_inst()}
+            ir::Block {.end = {func_->insts.start + func_->insts.size-1}}
         );
         return changed_;
     }
 
 private:
+    void error(Location location, std::string message) const {
+        err_handler_->error(*func_->source, location, std::move(message));
+    }
+
     [[nodiscard]] const types::Type::Func& get_func_type() const {
         return type_pool_->get(func_type_id_).data.get<types::Type::Func>();
     }
 
-    void propagate_range(ir::Block range) {;
+    void propagate_range(ir::Block range) {
         while (current_inst_ <= range.end.index) {
             propagate_inst({current_inst_++});
         }
     }
 
     void propagate_inst(ir::InstRef ref) {
-        const auto& inst = func_->inst(ref);
+        const auto& inst = package_->inst(ref);
         inst.data.visit(
             [&](const ir::Inst::Const& data) {
                 auto type = data.value.visit(
@@ -347,7 +314,8 @@ private:
                         return package_->func_type(func_ref);
                     },
                     [&](ir::UsedFuncRef func_ref) {
-                        auto used_func = package_->used_func(func_ref);
+                        auto used_func =
+                            package_->used_func(func_ref);
                         return used_func.type;
                     },
                     [&](types::TypeId type_id) { return types::Const; }
@@ -390,8 +358,7 @@ private:
                         }
 
                         if (!ok) {
-                            err_handler_->error(
-                                *source_,
+                            error(
                                 inst.location,
                                 std::format(
                                     "Type mismatch: binary operation "
@@ -409,25 +376,19 @@ private:
 
                 auto left_tp = type_vars_[data.left].type;
                 if (left_tp && !can_convert(left_tp->type, types::Bool)) {
-                    err_handler_->error(
-                        *source_,
-                        inst.location,
+                    error(inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*left_tp)
-                        )
-                    );
+                        ));
                 }
                 auto right_tp = type_vars_[data.right.end].type;
                 if (right_tp && !can_convert(right_tp->type, types::Bool)) {
-                    err_handler_->error(
-                        *source_,
-                        inst.location,
+                    error(inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*right_tp)
-                        )
-                    );
+                        ));
                 }
                 add_type(ref, types::Bool, inst.location);
             },
@@ -435,14 +396,11 @@ private:
                 if (data.op == ir::Inst::UnaryOp::Not) {
                     auto val_tp = type_vars_[data.value].type;
                     if (val_tp && !can_convert(val_tp->type, types::Bool)) {
-                        err_handler_->error(
-                            *source_,
-                            inst.location,
+                        error(inst.location,
                             std::format(
                                 "Type mismatch: cannot convert '{}' to Bool",
                                 type_pool_->to_string(*val_tp)
-                            )
-                        );
+                            ));
                     }
                     add_type(ref, types::Bool, inst.location);
                 } else {
@@ -452,7 +410,7 @@ private:
             [&](const ir::Inst::Comparison& data) {
                 lock_type(ref, types::Bool, inst.location);
                 auto current_left = data.left;
-                auto comparators = func_->comparators(data.comparators);
+                auto comparators = package_->comparators(data.comparators);
 
                 for (auto& comparator : comparators) {
                     propagate_range(comparator.value);
@@ -476,9 +434,7 @@ private:
                     if (auto ft = type.data.get_if<types::Type::Func>()) {
                         check_func(ref, inst, *ft);
                     } else {
-                        err_handler_->error(
-                            *source_, inst.location, "is not function"
-                        );
+                        error(inst.location, "is not function");
                     }
                 }
             },
@@ -494,14 +450,11 @@ private:
 
                 auto cond_tp = type_vars_[data.value].type;
                 if (cond_tp && !can_convert(cond_tp->type, types::Bool)) {
-                    err_handler_->error(
-                        *source_,
-                        inst.location,
+                    error(inst.location,
                         std::format(
                             "Type mismatch: cannot convert '{}' to Bool",
                             type_pool_->to_string(*cond_tp)
-                        )
-                    );
+                        ));
                 }
                 lock_type(ref, types::None, inst.location);
             },
@@ -591,7 +544,7 @@ private:
                 lock_type(ref, types::None, inst.location);
             },
             [&](const ir::Inst::Array& data) {
-                auto items = func_->inst_refs(data.items);
+                auto items = package_->inst_refs(data.items);
                 if (items.empty()) {
                     return;
                 }
@@ -628,23 +581,17 @@ private:
                 auto from_tp = type_vars_[data.value].type;
                 if (from_tp.has_value() &&
                     !can_cast(from_tp->type, data.type.type, *type_pool_)) {
-                    err_handler_->error(
-                        *source_,
-                        inst.location,
+                    error(inst.location,
                         std::format(
                             "Type mismatch: cannot explicitly cast {} to {}",
                             type_pool_->to_string(*from_tp),
                             type_pool_->to_string(data.type)
-                        )
-                    );
+                        ));
                 }
             },
             [&](const auto& i) {
-                err_handler_->error(
-                    *source_,
-                    inst.location,
-                    "Internal error: Unknown instruction"
-                );
+                error(inst.location,
+                    "Internal error: Unknown instruction");
             }
         );
     }
@@ -655,59 +602,47 @@ private:
         const auto& data = inst.data.get<ir::Inst::Call>();
         add_type(ref, ft.return_type.type, inst.location);
         if (data.args.size + data.named_args.size > ft.params.size()) {
-            err_handler_->error(
-                *source_,
-                inst.location,
+            error(inst.location,
                 std::format(
                     "argument count mismatch: function has {} "
                     "parameters but call arguments {}",
                     ft.params.size(),
                     data.args.size + data.named_args.size
-                )
-            );
+                ));
         }
         if (data.args.size < ft.min_pos_args) {
-            err_handler_->error(
-                *source_,
-                inst.location,
+            error(inst.location,
                 std::format(
                     "функция ожидает не меньше {} позиционных аргументов, но "
                     "передано {}",
                     ft.min_pos_args,
                     data.args.size
-                )
-            );
+                ));
         }
         if (data.args.size > ft.max_pos_args) {
-            err_handler_->error(
-                *source_,
-                inst.location,
+            error(inst.location,
                 std::format(
                     "функция ожидает не больше {} позиционных аргументов, но "
                     "передано {}",
                     ft.min_pos_args,
                     data.args.size
-                )
-            );
+                ));
         }
-        auto args = func_->inst_refs(data.args);
+        auto args = package_->inst_refs(data.args);
         for (size_t i = 0; i < args.size(); ++i) {
             auto arg_tp = type_vars_[args[i]].type;
             if (arg_tp && !can_convert(arg_tp->type, ft.params[i].type.type)) {
-                err_handler_->error(
-                    *source_,
-                    inst.location,
+                error(inst.location,
                     std::format(
                         "Type mismatch: cannot convert "
                         "argument {} from {} to {}",
                         i,
                         type_pool_->to_string(*arg_tp),
                         type_pool_->to_string(ft.params[i].type)
-                    )
-                );
+                    ));
             }
         }
-        auto named_args = func_->call_args(data.named_args);
+        auto named_args = package_->call_args(data.named_args);
         for (const auto& named_arg : named_args) {
             auto param = [&] -> std::optional<types::Type::FuncParam> {
                 auto search_params = std::span(ft.params).subspan(args.size());
@@ -724,41 +659,32 @@ private:
                         return param.name == named_arg.name;
                     });
                 if (result != search_params.end()) {
-                    err_handler_->error(
-                        *source_,
-                        inst.location,
+                    error(inst.location,
                         std::format(
                             "argument with name {} already "
                             "passed as {} argument",
                             named_arg.name,
                             result - search_params.begin()
-                        )
-                    );
+                        ));
                     return std::nullopt;
                 }
-                err_handler_->error(
-                    *source_,
-                    inst.location,
+                error(inst.location,
                     std::format(
                         "argument with name {} not found", named_arg.name
-                    )
-                );
+                    ));
                 return std::nullopt;
             }();
             auto arg_tp = type_vars_[named_arg.value].type;
             if (param && arg_tp &&
                 !can_convert(arg_tp->type, param->type.type)) {
-                err_handler_->error(
-                    *source_,
-                    inst.location,
+                error(inst.location,
                     std::format(
                         "Type mismatch: cannot convert "
                         "argument {} from {} to {}",
                         named_arg.name,
                         type_pool_->to_string(*arg_tp),
                         type_pool_->to_string(param->type)
-                    )
-                );
+                    ));
             }
         }
     }
@@ -767,7 +693,7 @@ private:
         auto& tv = type_vars_[inst];
         bool previously_defined = tv.defined();
         auto previous_type = tv.get().type;
-        auto tp = tv.add_type(type, loc, *source_, *type_pool_, *err_handler_);
+        auto tp = tv.add_type(type, loc, *func_->source, *type_pool_, *err_handler_);
         if (!previously_defined || tp != previous_type) {
             changed_ = true;
         }
@@ -778,7 +704,7 @@ private:
         bool previously_defined = tv.defined();
         auto previous_type = tv.get().type;
         auto tp = tv.union_tp(
-            type_vars_[src], loc, *source_, *type_pool_, *err_handler_
+            type_vars_[src], loc, *func_->source, *type_pool_, *err_handler_
         );
         if (!previously_defined || tp != previous_type) {
             changed_ = true;
@@ -788,57 +714,70 @@ private:
     void lock_type(ir::InstRef inst, types::TypeId type, Location loc) {
         auto& tv = type_vars_[inst];
         if (tv.locked) return;
-        tv.lock(type, loc, *source_, *type_pool_, *err_handler_);
+        tv.lock(type, loc, *func_->source, *type_pool_, *err_handler_);
         changed_ = true;
     }
 
     void lock_type(ir::InstRef inst, types::SpecType type, Location loc) {
         auto& tv = type_vars_[inst];
         if (tv.locked) return;
-        tv.lock(type, loc, *source_, *type_pool_, *err_handler_);
+        tv.lock(type, loc, *func_->source, *type_pool_, *err_handler_);
         changed_ = true;
     }
 
     ir::Package* package_;
-    const Source* source_;
+    IndexSpan<TypeVar, ir::InstRef> type_vars_;
     types::TypePool* type_pool_;
     types::TypeId func_type_id_ {};
-    ir::FuncRef func_ref_;
     ir::Func* func_;
-    TypeVarMap type_vars_;
     ErrorHandler* err_handler_;
     bool changed_ = false;
     std::uint32_t current_inst_ = 0;
 };
+
+[[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types(IndexSpan<TypeVar, ir::InstRef> type_vars) {
+    IndexVector<types::SpecType, ir::InstRef> result;
+    result.reserve(type_vars.size());
+    for (auto i : type_vars.indices()) {
+        const auto& var = type_vars[i];
+        result.push_back(var.get());
+        // if (!var.defined()) {
+        //     error(
+        //         package.inst(i).location,
+        //         "Type variable not defined (inference failed)"
+        //     );
+        //     result.push_back(
+        //         {.type = types::None, .specifier = types::Specifier::None}
+        //     );
+        // } else {
+        //     result.push_back(var.get());
+        // }
+    }
+    return result;
+}
+
 }
 
 ir::AnalyzedPackage type_analyze(
     ir::Package& package, ErrorHandler& err_handler
 ) {
     ir::AnalyzedPackage result(&package);
+    IndexVector<TypeVar, ir::InstRef> type_vars(package.last_inst().index + 1);
     std::deque<TypeAnalyzer> analyzers;
     for (auto func_ref : package.funcs().indices()) {
-        analyzers.emplace_back(package, func_ref, err_handler);
-    }
-    while (!analyzers.empty()) {
-        auto analyzer = std::move(analyzers.front());
-        analyzers.pop_front();
-        if (analyzer.is_extern()) {
-            result.analyzed_funcs.push_back({
-                .ref = analyzer.func_ref(),
-                .inst_types = {},
-            });
+        if(package.func(func_ref).is_extern) {
             continue;
         }
+        analyzers.emplace_back(package, type_vars.data(), func_ref, err_handler);
+    }
+    while (!analyzers.empty()) {
+        auto analyzer = analyzers.front();
+        analyzers.pop_front();
         if (analyzer.propagate()) {
-            analyzers.push_back(std::move(analyzer));
-        } else {
-            result.analyzed_funcs.push_back({
-                .ref = analyzer.func_ref(),
-                .inst_types = analyzer.get_types(),
-            });
+            analyzers.push_back(analyzer);
         }
     }
+    result.inst_types = get_types(type_vars.data());
     return result;
 }
 
