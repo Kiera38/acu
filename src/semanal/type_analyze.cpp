@@ -633,8 +633,19 @@ private:
                     const auto& type = type_pool_->get(func_tp->type);
                     if (auto ft = type.data.get_if<types::Type::Func>()) {
                         check_func(ref, inst, *ft);
+                    } else if (type.data.get_if<types::Type::Const>()) {
+                        if (auto id = package_->inst(data.value)
+                                          .data.get<ir::Inst::Const>()
+                                          .value.get_if<types::TypeId>()) {
+                            lock_type(
+                                ref,
+                                {.type = *id,
+                                 .specifier = types::Specifier::Val},
+                                inst.location
+                            );
+                        }
                     } else {
-                        error(inst.location, "is not function");
+                        error(inst.location, "is not function or struct");
                     }
                 }
             },
@@ -969,6 +980,16 @@ private:
     ErrorHandler* err_handler_;
     bool changed_ = false;
     std::uint32_t current_inst_ = 0;
+    const ir::Func* current_func_ = nullptr;
+
+public:
+    void process(const ir::Func& func) {
+        current_func_ = &func;
+        for (auto ref : func.insts) {
+            propagate_inst(ref);
+        }
+        current_func_ = nullptr;
+    }
 };
 
 [[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types(
