@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ir.h"
+#include "semanal/types.h"
 
 namespace acu::refanal::ir {
 
@@ -13,21 +14,17 @@ public:
     }
 
     PlaceBuilder& field(std::uint32_t index) {
-        projections_.push_back(
-            {.kind = Projection::Kind::Field, .index = index}
-        );
+        projections_.emplace_back(Projection::Field {index});
         return *this;
     }
 
-    PlaceBuilder& index(LocalRef idx_local) {
-        projections_.push_back(
-            {.kind = Projection::Kind::Index, .index = idx_local.index}
-        );
+    PlaceBuilder& index(OperandRef idx) {
+        projections_.emplace_back(Projection::Index {idx});
         return *this;
     }
 
     PlaceBuilder& deref() {
-        projections_.push_back({.kind = Projection::Kind::Deref, .index = 0});
+        projections_.emplace_back(Projection::Deref {});
         return *this;
     }
 
@@ -61,7 +58,7 @@ public:
 
     // --- Places & Projections ---
     [[nodiscard]] Place place(LocalRef local) const {
-        return Place {local, {}};
+        return Place {.local = local, .projections = {}};
     }
 
     PlaceBuilder build_place(LocalRef local) {
@@ -70,76 +67,81 @@ public:
 
     PlaceBuilder build_place(Place p) { return PlaceBuilder {*func_, p}; }
 
-    Place project(Place p, Projection proj) {
+    Place project(Place p, Projection::Value proj) {
         auto existing = func_->projections(p.projections);
         std::vector<Projection> new_projs(existing.begin(), existing.end());
-        new_projs.push_back(proj);
+        new_projs.emplace_back(proj);
         return Place {
             .local = p.local, .projections = func_->add_projections(new_projs)
         };
     }
 
     Place field(Place p, std::uint32_t index) {
-        return project(p, {.kind = Projection::Kind::Field, .index = index});
+        return project(p, Projection::Field {index});
     }
 
-    Place index(Place p, LocalRef idx_local) {
-        return project(
-            p, {.kind = Projection::Kind::Index, .index = idx_local.index}
-        );
+    Place index(Place p, OperandRef index) {
+        return project(p, Projection::Index {index});
     }
 
-    Place deref(Place p) {
-        return project(p, {.kind = Projection::Kind::Deref, .index = 0});
-    }
+    Place deref(Place p) { return project(p, Projection::Deref {}); }
 
     // --- Operands ---
-    [[nodiscard]] Operand op(Const c) const { return Operand {c}; }
-    [[nodiscard]] Operand op(Place p) const { return Operand {p}; }
-    [[nodiscard]] Operand op(LocalRef l) const { return op(place(l)); }
+    [[nodiscard]] OperandRef op(Const c, types::Specifier specifier) const {
+        return func_->add_operand(Operand {.data = c, .specifier = specifier});
+    }
+    [[nodiscard]] OperandRef op(Place p, types::Specifier specifier) const {
+        return func_->add_operand(Operand {.data = p, .specifier = specifier});
+    }
+    [[nodiscard]] OperandRef op(LocalRef l, types::Specifier specifier) const {
+        return op(place(l), specifier);
+    }
 
     // --- RValue Factories ---
-    [[nodiscard]] static RValue r_use(Operand o) {
-        return RValue {RValue::Use {o}};
+    [[nodiscard]] static RValue r_use(OperandRef o) {
+        return {RValue::Use {o}};
     }
-    [[nodiscard]] static RValue r_unary(UnaryOp op, Operand o) {
-        return RValue {RValue::Unary {.operand = o, .op = op}};
+    [[nodiscard]] static RValue r_unary(UnaryOp op, OperandRef o) {
+        return {RValue::Unary {.operand = o, .op = op}};
     }
-    [[nodiscard]] static RValue r_binary(BinaryOp op, Operand l, Operand r) {
-        return RValue {RValue::Binary {.left = l, .right = r, .op = op}};
+    [[nodiscard]] static RValue r_binary(
+        BinaryOp op, OperandRef l, OperandRef r
+    ) {
+        return {RValue::Binary {.left = l, .right = r, .op = op}};
     }
-    [[nodiscard]] static RValue r_comp(ComparisonOp op, Operand l, Operand r) {
-        return RValue {RValue::Comparison {.left = l, .right = r, .op = op}};
+    [[nodiscard]] static RValue r_comp(
+        ComparisonOp op, OperandRef l, OperandRef r
+    ) {
+        return {RValue::Comparison {.left = l, .right = r, .op = op}};
     }
-    RValue r_call(Operand callee, std::span<const Operand> args) {
+    RValue r_call(OperandRef callee, std::span<const OperandRef> args) {
         return RValue {
-            RValue::Call {.callee = callee, .args = func_->add_operands(args)}
+            .data = RValue::Call {
+                .callee = callee, .args = func_->add_operands(args)
+            },
         };
     }
-    [[nodiscard]] static RValue r_ref(Place p) {
-        return RValue {RValue::Ref {p}};
-    }
     [[nodiscard]] static RValue r_addr_of(Place p) {
-        return RValue {RValue::AddressOf {p}};
+        return {RValue::AddressOf {.place = p}};
     }
-    [[nodiscard]] static RValue r_cast(Operand o) {
-        return RValue {RValue::Cast {o}};
+    [[nodiscard]] static RValue r_cast(OperandRef o) {
+        return {RValue::Cast {.operand = o}};
     }
-    RValue r_struct(types::TypeId type, std::span<const Operand> args) {
-        return RValue {RValue::CreateStruct {
+    RValue r_struct(types::TypeId type, std::span<const OperandRef> args) {
+        return {RValue::CreateStruct {
             .type = type, .args = func_->add_operands(args)
         }};
     }
-    RValue r_array(std::span<const Operand> items) {
-        return RValue {RValue::Array {func_->add_operands(items)}};
+    RValue r_array(std::span<const OperandRef> items) {
+        return {RValue::Array {.items = func_->add_operands(items)}};
     }
 
     // --- Statements ---
     StatementRef assign(Place p, RValue rv, Location loc = {}) {
-        StatementRef ref = func_->add(
-            {.data = Statement::Assign {.place = p, .rvalue = rv},
-             .location = loc}
-        );
+        StatementRef ref = func_->add({
+            .data = Statement::Assign {.place = p, .rvalue = rv},
+            .location = loc,
+        });
         if (current_block_.index != ~0u) {
             func_->block(current_block_).statements.push_back(ref);
         }
@@ -152,12 +154,14 @@ public:
         return local;
     }
 
-    LocalRef assign_use(types::SpecType type, Operand op, Location loc = {}) {
+    LocalRef assign_use(
+        types::SpecType type, OperandRef op, Location loc = {}
+    ) {
         return assign(type, r_use(op), loc);
     }
 
     LocalRef assign_unary(
-        types::SpecType type, UnaryOp op, Operand o, Location loc = {}
+        types::SpecType type, UnaryOp op, OperandRef o, Location loc = {}
     ) {
         return assign(type, r_unary(op, o), loc);
     }
@@ -165,8 +169,8 @@ public:
     LocalRef assign_binary(
         types::SpecType type,
         BinaryOp op,
-        Operand l,
-        Operand r,
+        OperandRef l,
+        OperandRef r,
         Location loc = {}
     ) {
         return assign(type, r_binary(op, l, r), loc);
@@ -175,8 +179,8 @@ public:
     LocalRef assign_comp(
         types::SpecType type,
         ComparisonOp op,
-        Operand l,
-        Operand r,
+        OperandRef l,
+        OperandRef r,
         Location loc = {}
     ) {
         return assign(type, r_comp(op, l, r), loc);
@@ -184,33 +188,35 @@ public:
 
     LocalRef assign_call(
         types::SpecType type,
-        Operand callee,
-        std::span<const Operand> args,
+        OperandRef callee,
+        std::span<const OperandRef> args,
         Location loc = {}
     ) {
         return assign(type, r_call(callee, args), loc);
-    }
-
-    LocalRef assign_ref(types::SpecType type, Place p, Location loc = {}) {
-        return assign(type, r_ref(p), loc);
     }
 
     LocalRef assign_addr_of(types::SpecType type, Place p, Location loc = {}) {
         return assign(type, r_addr_of(p), loc);
     }
 
-    LocalRef assign_cast(types::SpecType type, Operand o, Location loc = {}) {
+    LocalRef assign_cast(
+        types::SpecType type, OperandRef o, Location loc = {}
+    ) {
         return assign(type, r_cast(o), loc);
     }
 
     LocalRef assign_struct(
-        types::SpecType type, std::span<const Operand> args, Location loc = {}
+        types::SpecType type,
+        std::span<const OperandRef> args,
+        Location loc = {}
     ) {
         return assign(type, r_struct(type.type, args), loc);
     }
 
     LocalRef assign_array(
-        types::SpecType type, std::span<const Operand> items, Location loc = {}
+        types::SpecType type,
+        std::span<const OperandRef> items,
+        Location loc = {}
     ) {
         return assign(type, r_array(items), loc);
     }
@@ -229,7 +235,7 @@ public:
         terminate(Terminator::Jump {target}, loc);
     }
 
-    void branch(Operand cond, BlockRef t, BlockRef f, Location loc = {}) {
+    void branch(OperandRef cond, BlockRef t, BlockRef f, Location loc = {}) {
         terminate(
             Terminator::Branch {
                 .condition = cond, .true_target = t, .false_target = f
@@ -238,7 +244,7 @@ public:
         );
     }
 
-    void ret(std::optional<Operand> val = std::nullopt, Location loc = {}) {
+    void ret(std::optional<OperandRef> val = std::nullopt, Location loc = {}) {
         terminate(Terminator::Return {val}, loc);
     }
 
@@ -249,7 +255,8 @@ public:
 private:
     void terminate(Terminator::Value data, Location loc) {
         if (current_block_.index != ~0u) {
-            func_->block(current_block_).terminator = Terminator {data, loc};
+            func_->block(current_block_).terminator =
+                Terminator {.data = data, .location = loc};
         }
     }
 

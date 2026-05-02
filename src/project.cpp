@@ -188,9 +188,9 @@ void refanal_package(
     Package& package, acu::ErrorHandler& err_handler, bool show_refanal
 ) {
     package.refanal_module = acu::refanal::generate(package.analyzed);
-    acu::refanal::optimize(
-        package.refanal_module, package.analyzed, err_handler
-    );
+    // acu::refanal::optimize(
+    //     package.refanal_module, package.analyzed, err_handler
+    // );
 
     if (err_handler.has_errors()) {
         err_handler.emit_all();

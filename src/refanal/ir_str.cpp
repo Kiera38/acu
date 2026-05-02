@@ -2,6 +2,7 @@
 
 #include <format>
 #include <string>
+#include "refanal/ir.h"
 
 namespace acu::refanal {
 
@@ -63,21 +64,23 @@ std::string comparison_op_to_string(ir::ComparisonOp op) {
     }
 }
 
+std::string to_string(ir::OperandRef ref, const ir::Func& func);
+
 std::string to_string(const ir::Place& place, const ir::Func& func) {
     std::string str = std::format("_{}", place.local.index);
     auto projections = func.projections(place.projections);
     for (const auto& proj : projections) {
-        switch (proj.kind) {
-            case ir::Projection::Kind::Field:
-                str = std::format("({}).{}", str, proj.index);
-                break;
-            case ir::Projection::Kind::Index:
-                str = std::format("({})[_{}]", str, proj.index);
-                break;
-            case ir::Projection::Kind::Deref:
-                str = std::format("*({})", str);
-                break;
-        }
+        str = proj.data.visit(
+            [&](ir::Projection::Index i) {
+                return std::format("({})[{}]", str, to_string(i.index, func));
+            },
+            [&](ir::Projection::Field f) {
+                return std::format("({}).{}", str, f.field);
+            },
+            [&](ir::Projection::Deref) {
+                return std::format("*({})", str);
+            }
+        );
     }
     return str;
 }
@@ -87,6 +90,10 @@ std::string to_string(const ir::Operand& operand, const ir::Func& func) {
         [&](const ir::Const& c) { return to_string(c.value); },
         [&](const ir::Place& p) { return to_string(p, func); }
     );
+}
+
+std::string to_string(ir::OperandRef ref, const ir::Func& func) {
+    return to_string(func.operand(ref), func);
 }
 
 std::string to_string(const ir::RValue& rvalue, const ir::Func& func) {
@@ -122,9 +129,6 @@ std::string to_string(const ir::RValue& rvalue, const ir::Func& func) {
             }
             str += ")";
             return str;
-        },
-        [&](const ir::RValue::Ref& v) {
-            return std::format("&{}", to_string(v.place, func));
         },
         [&](const ir::RValue::AddressOf& v) {
             return std::format("addrof {}", to_string(v.place, func));

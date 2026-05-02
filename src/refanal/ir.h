@@ -74,11 +74,7 @@ struct Local {
 };
 using LocalRef = Ref<Local>;
 
-struct Projection {
-    enum class Kind : std::uint8_t { Field, Index, Deref };
-    Kind kind;
-    std::uint32_t index;  // Field index or LocalRef index for Kind::Index
-};
+struct Projection;
 using ProjectionRef = Ref<Projection>;
 using Projections = RefRange<Projection>;
 
@@ -90,45 +86,57 @@ struct Place {
 struct Operand {
     using Value = utils::Variant<Const, Place>;
     Value data;
+    types::Specifier specifier {};
+};
+using OperandRef = Ref<Operand>;
+using Operands = RefRange<OperandRef>;
+
+struct Projection {
+    struct Index {
+        OperandRef index;
+    };
+    struct Field {
+        std::uint32_t field;
+    };
+    struct Deref {};
+    using Value = utils::Variant<Index, Field, Deref>;
+    Value data;
 };
 
 struct RValue {
     struct Use {
-        Operand operand;
+        OperandRef operand;
     };
     struct Unary {
-        Operand operand;
+        OperandRef operand;
         UnaryOp op;
     };
     struct Binary {
-        Operand left;
-        Operand right;
+        OperandRef left;
+        OperandRef right;
         BinaryOp op;
     };
     struct Comparison {
-        Operand left;
-        Operand right;
+        OperandRef left;
+        OperandRef right;
         ComparisonOp op;
     };
     struct Call {
-        Operand callee;
-        RefRange<Operand> args;
-    };
-    struct Ref {
-        Place place;
+        OperandRef callee;
+        Operands args;
     };
     struct AddressOf {
         Place place;
     };
     struct Cast {
-        Operand operand;
+        OperandRef operand;
     };
     struct CreateStruct {
         types::TypeId type;
-        RefRange<Operand> args;
+        Operands args;
     };
     struct Array {
-        RefRange<Operand> items;
+        Operands items;
     };
 
     using Value = utils::Variant<
@@ -137,7 +145,6 @@ struct RValue {
         Binary,
         Comparison,
         Call,
-        Ref,
         AddressOf,
         Cast,
         CreateStruct,
@@ -163,13 +170,13 @@ struct Terminator {
     };
 
     struct Branch {
-        Operand condition;
+        OperandRef condition;
         BlockRef true_target;
         BlockRef false_target;
     };
 
     struct Return {
-        std::optional<Operand> value;
+        std::optional<OperandRef> value;
     };
 
     struct Unreachable {};
@@ -194,6 +201,7 @@ public:
         const Source& source,
         Location location,
         bool is_extern,
+        types::TypeId type,
         std::span<const Local> params,
         types::SpecType return_type
     )
@@ -201,12 +209,14 @@ public:
           source_(&source),
           location_(location),
           is_extern_(is_extern),
+          type_(type),
           arg_count_(params.size()),
           return_type_(return_type),
           locals_(params.begin(), params.end()) {}
 
     [[nodiscard]] std::string_view name() const { return name_; }
     [[nodiscard]] const Source& source() const { return *source_; }
+    [[nodiscard]] types::TypeId type() const { return type_; }
     [[nodiscard]] std::string mangle_name() const {
         if (is_extern_ || source_->module_name.empty()) {
             return std::string(name_);
@@ -254,10 +264,12 @@ public:
     ) const {
         return projections_.range(refs);
     }
-    [[nodiscard]] std::span<const Operand> operands(
-        RefRange<Operand> refs
-    ) const {
-        return operands_.range(refs);
+    [[nodiscard]] const Operand& operand(OperandRef ref) const {
+        return operands_[ref];
+    }
+    [[nodiscard]] Operand& operand(OperandRef ref) { return operands_[ref]; }
+    [[nodiscard]] std::span<const OperandRef> operands(Operands refs) const {
+        return operand_refs_.range(refs);
     }
 
     StatementRef add(const Statement& statement) {
@@ -285,8 +297,11 @@ public:
         return projections_.append_range(projections);
     }
 
-    RefRange<Operand> add_operands(std::span<const Operand> operands) {
-        return operands_.append_range(operands);
+    OperandRef add_operand(const Operand& operand) {
+        return operands_.push_back(operand);
+    }
+    Operands add_operands(std::span<const OperandRef> operands) {
+        return operand_refs_.append_range(operands);
     }
 
     [[nodiscard]] const Local& local(LocalRef ref) const {
@@ -297,6 +312,38 @@ public:
         return locals_.data();
     }
     [[nodiscard]] IndexSpan<Local, LocalRef> locals() { return locals_.data(); }
+
+    [[nodiscard]] types::SpecType place_type(
+        Place place, const types::TypePool& types
+    ) const {
+        auto type = locals_[place.local].type;
+        for (auto projection : projections(place.projections)) {
+            type = projection.data.visit(
+                [&](Projection::Index i) {
+                    if (auto ptr = types.get(type.type)
+                                       .data.get_if<types::Type::Ptr>()) {
+                        return ptr->type;
+                    } else {
+                        return types.get(type.type)
+                            .data.get<types::Type::Array>()
+                            .item;
+                    }
+                },
+                [&](Projection::Field f) {
+                    return types.get(type.type)
+                        .data.get<types::Type::Struct>()
+                        .fields[f.field]
+                        .type;
+                },
+                [&](Projection::Deref) {
+                    return types.get(type.type)
+                        .data.get<types::Type::Ptr>()
+                        .type;
+                }
+            );
+        }
+        return type;
+    }
 
     void rebuild_cfg() {
         for (auto i : blocks_.indices()) {
@@ -332,13 +379,15 @@ private:
     Location location_;
     std::string_view name_;
     bool is_extern_ = false;
+    types::TypeId type_;
     std::uint32_t arg_count_ = 0;
     types::SpecType return_type_;
     IndexVector<Statement, StatementRef> statements_;
     IndexVector<Block, BlockRef> blocks_;
     IndexVector<Local, LocalRef> locals_;
     IndexVector<Projection, ProjectionRef> projections_;
-    IndexVector<Operand, Ref<Operand>> operands_;
+    IndexVector<Operand, OperandRef> operands_;
+    IndexVector<OperandRef> operand_refs_;
 };
 
 class Module;
@@ -392,8 +441,54 @@ public:
     FuncRef add(Func&& func) { return funcs_.push_back(std::move(func)); }
     UsedFuncRef add(UsedFunc func) { return used_funcs_.push_back(func); }
 
-    types::TypePool& types() { return *types_; }
-    [[nodiscard]] const types::TypePool& types() const { return *types_; }
+    [[nodiscard]] types::TypePool& types() const { return *types_; }
+
+    [[nodiscard]] types::SpecType const_type(const Const& v) const {
+        return v.value.visit(
+            [&](bool) {
+                return types::SpecType {
+                    .type = types::Bool, .specifier = types::Specifier::Val
+                };
+            },
+            [&](int64_t) {
+                return types::SpecType {
+                    .type = types::Int, .specifier = types::Specifier::Val
+                };
+            },
+            [&](double) {
+                return types::SpecType {
+                    .type = types::Float, .specifier = types::Specifier::Val
+                };
+            },
+            [&](char32_t) {
+                return types::SpecType {
+                    .type = types::UInt32, .specifier = types::Specifier::Val
+                };
+            },
+            [&](std::string_view value) {
+                return types::SpecType {
+                    .type = types().add_array(
+                        {.type = types::UInt32,
+                         .specifier = types::Specifier::Val},
+                        value.length()
+                    ),
+                    .specifier = types::Specifier::Val
+                };
+            },
+            [&](FuncRef ref) {
+                return types::SpecType {
+                    .type = funcs_[ref].type(),
+                    .specifier = types::Specifier::Val
+                };
+            },
+            [&](UsedFuncRef ref) {
+                return types::SpecType {
+                    .type = used_funcs_[ref].type,
+                    .specifier = types::Specifier::Val
+                };
+            }
+        );
+    }
 
 private:
     PackageNameRef name_;

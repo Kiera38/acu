@@ -19,6 +19,7 @@
 #include <llvm/TargetParser/Host.h>
 
 #include <stdexcept>
+#include <string_view>
 
 #include "index.h"
 #include "llvm/IR/Constants.h"
@@ -36,10 +37,15 @@ public:
         const Project& project,
         const llvm::DataLayout& layout
     )
-        : context_(&context), ir_module_(&module), project_(&project), layout_(&layout) {}
+        : context_(&context),
+          ir_module_(&module),
+          project_(&project),
+          layout_(&layout) {}
 
     std::unique_ptr<llvm::Module> generate() {
-        llvm_module_ = std::make_unique<llvm::Module>(ir_module_->name().join(), *context_);
+        llvm_module_ = std::make_unique<llvm::Module>(
+            ir_module_->name().join(), *context_
+        );
         llvm_module_->setDataLayout(*layout_);
 
         functions_.clear();
@@ -194,6 +200,7 @@ public:
 
     void generate() {
         if (ir_func->blocks().empty()) return;
+
         blocks_.reserve(ir_func->blocks().size());
         for (auto i : ir_func->blocks().indices()) {
             blocks_.push_back(
@@ -204,204 +211,194 @@ public:
                 )
             );
         }
-        inst_values_.resize(ir_func->insts().size());
 
-        builder_.SetInsertPoint(&llvm_func->getEntryBlock());
-        IndexVector<llvm::Value*, refanal::ir::ParamRef> args;
-        for (auto i : ir_func->params().indices()) {
-            auto param = ir_func->param(i);
-            llvm_func->getArg(i.index)->setName(param.name);
-            args.push_back(builder_.CreateAlloca(
-                get_rep_type(param.type),
-                nullptr,
-                std::string(param.name) + ".arg"
-            ));
+        auto* entry = llvm::BasicBlock::Create(
+            *generator->context_, "entry", llvm_func, blocks_[{0}]
+        );
+        builder_.SetInsertPoint(entry);
+
+        local_values_.resize(ir_func->locals().size());
+        for (auto i : ir_func->locals().indices()) {
+            const auto& local = ir_func->local(i);
+            local_values_[i] = builder_.CreateAlloca(
+                get_rep_type(local.type), nullptr, local.name
+            );
         }
+
         for (auto i : ir_func->params().indices()) {
-            builder_.CreateStore(llvm_func->getArg(i.index), args[i]);
+            builder_.CreateStore(
+                llvm_func->getArg(i.index),
+                local_values_[refanal::ir::LocalRef {i.index}]
+            );
         }
+        builder_.CreateBr(blocks_[{0}]);
 
         for (auto b_idx : ir_func->blocks().indices()) {
             builder_.SetInsertPoint(blocks_[b_idx]);
-            for (auto inst_ref : ir_func->block(b_idx).insts) {
-                const auto& inst = ir_func->inst(inst_ref);
-                inst_values_[inst_ref] = generate_inst(inst, args);
+            const auto& block = ir_func->block(b_idx);
+            for (auto stmt_ref : block.statements) {
+                generate_statement(ir_func->statement(stmt_ref));
+            }
+            if (block.terminator) {
+                generate_terminator(*block.terminator);
             }
         }
+
         llvm::verifyFunction(*llvm_func);
     }
 
 private:
-    llvm::Value* generate_inst(
-        const refanal::ir::Inst& inst,
-        const IndexVector<llvm::Value*, refanal::ir::ParamRef>& args
-    ) {
-        return inst.data.visit(
-            [&](const refanal::ir::Inst::Const& c) -> llvm::Value* {
-                return c.value.visit(
-                    [&](bool b) -> llvm::Value* {
-                        return llvm::ConstantInt::get(
-                            llvm::Type::getInt1Ty(*generator->context_), b
-                        );
-                    },
-                    [&](std::int64_t i) -> llvm::Value* {
-                        return llvm::ConstantInt::get(
-                            get_base_type(inst.type.type), i
-                        );
-                    },
-                    [&](double d) -> llvm::Value* {
-                        return llvm::ConstantFP::get(
-                            get_base_type(inst.type.type), d
-                        );
-                    },
-                    [&](char32_t ch) -> llvm::Value* {
-                        return llvm::ConstantInt::get(
-                            llvm::Type::getInt32Ty(*generator->context_), ch
-                        );
-                    },
-                    [&](std::string_view s) -> llvm::Value* {
-                        return builder_.CreateGlobalString(s);
-                    },
-                    [&](refanal::ir::FuncRef f) -> llvm::Value* {
-                        return generator->functions_[f];
-                    },
-                    [&](refanal::ir::UsedFuncRef f) -> llvm::Value* {
-                        return generator->used_funcs_[f];
-                    }
+    void generate_statement(const refanal::ir::Statement& stmt) {
+        stmt.data.visit(
+            [&](const refanal::ir::Statement::Assign& a) {
+                auto type = ir_func->place_type(
+                    a.place, generator->ir_module_->types()
+                );
+                llvm::Value* val = generate_rvalue(a.rvalue, type);
+                llvm::Value* ptr = generate_place_ptr(a.place);
+                builder_.CreateStore(val, ptr);
+            },
+            [&](const refanal::ir::Statement::Nop&) {}
+        );
+    }
+
+    void generate_terminator(const refanal::ir::Terminator& term) {
+        term.data.visit(
+            [&](const refanal::ir::Terminator::Jump& j) {
+                builder_.CreateBr(blocks_[j.target]);
+            },
+            [&](const refanal::ir::Terminator::Branch& b) {
+                builder_.CreateCondBr(
+                    get_operand_value(b.condition),
+                    blocks_[b.true_target],
+                    blocks_[b.false_target]
                 );
             },
-            [&](const refanal::ir::Inst::VarDecl& v) -> llvm::Value* {
-                llvm::IRBuilder<> eb(
-                    &llvm_func->getEntryBlock(),
-                    llvm_func->getEntryBlock().begin()
-                );
-                llvm::Type* bt = get_base_type(inst.type.type);
-                if (!is_ref(inst.type)) {
-                    return eb.CreateAlloca(
-                        bt,
-                        nullptr,
-                        llvm::StringRef(v.name.data(), v.name.size())
-                    );
+            [&](const refanal::ir::Terminator::Return& r) {
+                if (r.value) {
+                    builder_.CreateRet(get_operand_value(*r.value));
                 } else {
-                    llvm::Value* slot = eb.CreateAlloca(
-                        builder_.getPtrTy(),
-                        nullptr,
-                        llvm::StringRef(v.name.data(), v.name.size())
-                    );
-                    return slot;
+                    builder_.CreateRetVoid();
                 }
             },
-            [&](const refanal::ir::Inst::LoadVar& l) -> llvm::Value* {
-                const auto& var_info = ir_func->inst(l.var);
-                return get_value_from_ptr(
-                    inst_values_[l.var], var_info.type, inst.type
-                );
+            [&](const refanal::ir::Terminator::Unreachable&) {
+                builder_.CreateUnreachable();
+            }
+        );
+    }
+
+    llvm::Value* generate_rvalue(
+        const refanal::ir::RValue& rv, types::SpecType type
+    ) {
+        return rv.data.visit(
+            [&](const refanal::ir::RValue::Use& u) -> llvm::Value* {
+                return get_operand_value(u.operand);
             },
-            [&](const refanal::ir::Inst::LoadParam& lp) -> llvm::Value* {
-                auto param = ir_func->param(lp.param);
-                return get_value_from_ptr(
-                    args[lp.param], param.type, inst.type
-                );
+            [&](const refanal::ir::RValue::Unary& u) -> llvm::Value* {
+                llvm::Value* v = get_operand_value(u.operand);
+                switch (u.op) {
+                    case refanal::ir::UnaryOp::Neg:
+                        return v->getType()->isFloatingPointTy()
+                                   ? builder_.CreateFNeg(v)
+                                   : builder_.CreateNeg(v);
+                    case refanal::ir::UnaryOp::Not:
+                    case refanal::ir::UnaryOp::BitNot:
+                        return builder_.CreateNot(v);
+                }
+                return nullptr;
             },
-            [&](const refanal::ir::Inst::Store& s) -> llvm::Value* {
-                llvm::Value* dest_storage = inst_values_[s.var];
-                const auto& dest_info = ir_func->inst(s.var);
-                auto value = get_value(s.value, dest_info.type.specifier);
-                return builder_.CreateStore(value, dest_storage);
-            },
-            [&](const refanal::ir::Inst::Binary& b) -> llvm::Value* {
-                llvm::Value* l = get_value(b.left, types::Specifier::Val);
-                llvm::Value* r = get_value(b.right, types::Specifier::Val);
+            [&](const refanal::ir::RValue::Binary& b) -> llvm::Value* {
+                llvm::Value* l = get_operand_value(b.left);
+                llvm::Value* r = get_operand_value(b.right);
                 bool f = l->getType()->isFloatingPointTy();
-                const auto& left_type = get_type(b.left);
                 bool is_signed = true;
-                if (auto* i = left_type.data.get_if<types::Type::Int>()) {
+                if (auto* i = get_type(get_operand_type(b.left).type)
+                                  .data.get_if<types::Type::Int>()) {
                     is_signed = i->is_signed;
                 }
 
                 switch (b.op) {
-                    case refanal::ir::Inst::BinaryOp::Add:
+                    case refanal::ir::BinaryOp::Add:
                         return f ? builder_.CreateFAdd(l, r)
                                  : builder_.CreateAdd(l, r);
-                    case refanal::ir::Inst::BinaryOp::Sub:
+                    case refanal::ir::BinaryOp::Sub:
                         return f ? builder_.CreateFSub(l, r)
                                  : builder_.CreateSub(l, r);
-                    case refanal::ir::Inst::BinaryOp::Mul:
+                    case refanal::ir::BinaryOp::Mul:
                         return f ? builder_.CreateFMul(l, r)
                                  : builder_.CreateMul(l, r);
-                    case refanal::ir::Inst::BinaryOp::Div:
+                    case refanal::ir::BinaryOp::Div:
                         if (f) return builder_.CreateFDiv(l, r);
                         return is_signed ? builder_.CreateSDiv(l, r)
                                          : builder_.CreateUDiv(l, r);
-                    case refanal::ir::Inst::BinaryOp::Mod:
+                    case refanal::ir::BinaryOp::Mod:
                         if (f) return builder_.CreateFRem(l, r);
                         return is_signed ? builder_.CreateSRem(l, r)
                                          : builder_.CreateURem(l, r);
-                    case refanal::ir::Inst::BinaryOp::LShift:
+                    case refanal::ir::BinaryOp::LShift:
                         return builder_.CreateShl(l, r);
-                    case refanal::ir::Inst::BinaryOp::RShift:
+                    case refanal::ir::BinaryOp::RShift:
                         return is_signed ? builder_.CreateAShr(l, r)
                                          : builder_.CreateLShr(l, r);
-                    case refanal::ir::Inst::BinaryOp::BitAnd:
+                    case refanal::ir::BinaryOp::BitAnd:
                         return builder_.CreateAnd(l, r);
-                    case refanal::ir::Inst::BinaryOp::BitOr:
+                    case refanal::ir::BinaryOp::BitOr:
                         return builder_.CreateOr(l, r);
-                    case refanal::ir::Inst::BinaryOp::BitXor:
+                    case refanal::ir::BinaryOp::BitXor:
                         return builder_.CreateXor(l, r);
                 }
                 return nullptr;
             },
-            [&](const refanal::ir::Inst::Comparison& c) -> llvm::Value* {
-                llvm::Value* l = get_value(c.left, types::Specifier::Val);
-                llvm::Value* r = get_value(c.right, types::Specifier::Val);
+            [&](const refanal::ir::RValue::Comparison& c) -> llvm::Value* {
+                llvm::Value* l = get_operand_value(c.left);
+                llvm::Value* r = get_operand_value(c.right);
                 bool f = l->getType()->isFloatingPointTy();
-                const auto& left_type = get_type(c.left);
                 bool is_signed = true;
-                if (auto* i = left_type.data.get_if<types::Type::Int>()) {
+                if (auto* i = get_type(get_operand_type(c.left).type)
+                                  .data.get_if<types::Type::Int>()) {
                     is_signed = i->is_signed;
                 }
 
                 if (f) {
                     switch (c.op) {
-                        case refanal::ir::Inst::ComparisonOp::Less:
+                        case refanal::ir::ComparisonOp::Less:
                             return builder_.CreateFCmpOLT(l, r);
-                        case refanal::ir::Inst::ComparisonOp::Greater:
+                        case refanal::ir::ComparisonOp::Greater:
                             return builder_.CreateFCmpOGT(l, r);
-                        case refanal::ir::Inst::ComparisonOp::LessEqual:
+                        case refanal::ir::ComparisonOp::LessEqual:
                             return builder_.CreateFCmpOLE(l, r);
-                        case refanal::ir::Inst::ComparisonOp::GreaterEqual:
+                        case refanal::ir::ComparisonOp::GreaterEqual:
                             return builder_.CreateFCmpOGE(l, r);
-                        case refanal::ir::Inst::ComparisonOp::Equal:
+                        case refanal::ir::ComparisonOp::Equal:
                             return builder_.CreateFCmpOEQ(l, r);
-                        case refanal::ir::Inst::ComparisonOp::NotEqual:
+                        case refanal::ir::ComparisonOp::NotEqual:
                             return builder_.CreateFCmpONE(l, r);
                     }
                 } else {
                     switch (c.op) {
-                        case refanal::ir::Inst::ComparisonOp::Less:
+                        case refanal::ir::ComparisonOp::Less:
                             return is_signed ? builder_.CreateICmpSLT(l, r)
                                              : builder_.CreateICmpULT(l, r);
-                        case refanal::ir::Inst::ComparisonOp::Greater:
+                        case refanal::ir::ComparisonOp::Greater:
                             return is_signed ? builder_.CreateICmpSGT(l, r)
                                              : builder_.CreateICmpUGT(l, r);
-                        case refanal::ir::Inst::ComparisonOp::LessEqual:
+                        case refanal::ir::ComparisonOp::LessEqual:
                             return is_signed ? builder_.CreateICmpSLE(l, r)
                                              : builder_.CreateICmpULE(l, r);
-                        case refanal::ir::Inst::ComparisonOp::GreaterEqual:
+                        case refanal::ir::ComparisonOp::GreaterEqual:
                             return is_signed ? builder_.CreateICmpSGE(l, r)
                                              : builder_.CreateICmpUGE(l, r);
-                        case refanal::ir::Inst::ComparisonOp::Equal:
+                        case refanal::ir::ComparisonOp::Equal:
                             return builder_.CreateICmpEQ(l, r);
-                        case refanal::ir::Inst::ComparisonOp::NotEqual:
+                        case refanal::ir::ComparisonOp::NotEqual:
                             return builder_.CreateICmpNE(l, r);
                     }
                 }
                 return nullptr;
             },
-            [&](const refanal::ir::Inst::Call& c) -> llvm::Value* {
-                llvm::Value* callee = get_value(c.value, types::Specifier::Val);
-
-                const auto& t = get_type(c.value);
+            [&](const refanal::ir::RValue::Call& c) -> llvm::Value* {
+                llvm::Value* callee = get_operand_value(c.callee);
+                const auto& t = get_type(get_operand_type(c.callee).type);
                 const types::Type::Func* func_type_info = nullptr;
 
                 if (auto* f = t.data.get_if<types::Type::Func>()) {
@@ -411,16 +408,13 @@ private:
                                          .get(p->type.type)
                                          .data.get_if<types::Type::Func>();
                 }
-
                 if (!func_type_info) return nullptr;
 
+                auto s_args = ir_func->operands(c.args);
                 std::vector<llvm::Value*> args;
-                args.reserve(c.args.size);
-                auto arg_refs = ir_func->inst_refs(c.args);
-                for (size_t i = 0; i < c.args.size; i++) {
-                    args.push_back(get_value(
-                        arg_refs[i], func_type_info->params[i].type.specifier
-                    ));
+                args.reserve(s_args.size());
+                for (size_t i = 0; i < s_args.size(); i++) {
+                    args.push_back(get_operand_value(s_args[i]));
                 }
 
                 std::vector<llvm::Type*> param_types;
@@ -436,237 +430,253 @@ private:
 
                 return builder_.CreateCall(llvm_func_type, callee, args);
             },
-            [&](const refanal::ir::Inst::Jump& j) -> llvm::Value* {
-                return builder_.CreateBr(blocks_[j.target]);
+            [&](const refanal::ir::RValue::AddressOf& a) -> llvm::Value* {
+                return generate_place_ptr(a.place);
             },
-            [&](const refanal::ir::Inst::Branch& b) -> llvm::Value* {
-                return builder_.CreateCondBr(
-                    get_value(b.condition, types::Specifier::Val),
-                    blocks_[b.true_target],
-                    blocks_[b.false_target]
-                );
-            },
-            [&](const refanal::ir::Inst::Return& r) -> llvm::Value* {
-                if (r.value) {
-                    return builder_.CreateRet(
-                        get_value(*r.value, ir_func->return_type().specifier)
-                    );
-                } else {
-                    return builder_.CreateRetVoid();
-                }
-            },
-            [&](const refanal::ir::Inst::Cast& cast) -> llvm::Value* {
-                auto from_type_id = ir_func->inst(cast.value).type.type;
-                auto to_type_id = inst.type.type;
-                if (from_type_id == to_type_id) {
-                    return get_value(cast.value, inst.type.specifier);
-                }
-                auto& from_type =
-                    generator->ir_module_->types().get(from_type_id);
-                auto& to_type = generator->ir_module_->types().get(to_type_id);
-                if (from_type.data.is<types::Type::Array>() &&
-                    to_type.data.is<types::Type::Ptr>()) {
-                    return get_value(cast.value, types::Specifier::Var);
-                }
+            [&](const refanal::ir::RValue::Cast& c) -> llvm::Value* {
+                auto op_type = get_operand_type(c.operand);
+                const auto& src_type = get_type(op_type.type);
+                const auto& dst_type = get_type(type.type);
 
-                llvm::Value* val = get_value(cast.value, types::Specifier::Val);
-                llvm::Type* to_llvm_type = get_base_type(to_type_id);
-
-                return to_type.data.visit(
-                    [&](const types::Type::Bool&) -> llvm::Value* {
-                        if (from_type.data.is<types::Type::Int>())
-                            return builder_.CreateICmpNE(
-                                val, llvm::ConstantInt::get(val->getType(), 0)
-                            );
-                        if (from_type.data.is<types::Type::Float>())
-                            return builder_.CreateFCmpONE(
-                                val, llvm::ConstantFP::getZero(val->getType())
-                            );
-                        if (from_type.data.is<types::Type::Ptr>())
-                            return builder_.CreateICmpNE(
-                                val,
-                                llvm::ConstantPointerNull::get(
-                                    llvm::cast<llvm::PointerType>(
-                                        val->getType()
-                                    )
-                                )
-                            );
-                        throw std::runtime_error("unsupported cast to bool");
-                    },
-                    [&](const types::Type::Int& to_i) -> llvm::Value* {
-                        if (from_type.data.is<types::Type::Int>()) {
-                            return builder_.CreateIntCast(
-                                val, to_llvm_type, to_i.is_signed
-                            );
-                        }
-                        if (from_type.data.is<types::Type::Float>()) {
-                            return to_i.is_signed ? builder_.CreateFPToSI(
-                                                        val, to_llvm_type
-                                                    )
-                                                  : builder_.CreateFPToUI(
-                                                        val, to_llvm_type
-                                                    );
-                        }
-                        if (from_type.data.is<types::Type::Ptr>()) {
-                            return builder_.CreatePtrToInt(val, to_llvm_type);
-                        }
-                        throw std::runtime_error("unsupported cast to int");
-                    },
-                    [&](const types::Type::Float& to_f) -> llvm::Value* {
-                        if (from_type.data.is<types::Type::Int>()) {
-                            const auto& from_i =
-                                from_type.data.get<types::Type::Int>();
-                            return from_i.is_signed ? builder_.CreateSIToFP(
-                                                          val, to_llvm_type
-                                                      )
-                                                    : builder_.CreateUIToFP(
-                                                          val, to_llvm_type
-                                                      );
-                        }
-                        if (from_type.data.is<types::Type::Float>()) {
-                            return builder_.CreateFPCast(val, to_llvm_type);
-                        }
-                        throw std::runtime_error("unsupported cast to float");
-                    },
-                    [&](const types::Type::Ptr&) -> llvm::Value* {
-                        if (from_type.data.is<types::Type::Ptr>()) {
-                            return val;
-                        }
-                        if (from_type.data.is<types::Type::Int>()) {
-                            return builder_.CreateIntToPtr(val, to_llvm_type);
-                        }
-                        throw std::runtime_error("unsupported cast to ptr");
-                    },
-                    [&](const auto&) -> llvm::Value* {
-                        throw std::runtime_error("unsupported cast");
+                // Handle Array-to-Pointer decay specially to avoid loading the
+                // array вообще нужно src брать как let Array, а не val Array и
+                // тогда таких особенностей делать не нужно
+                if (src_type.data.is<types::Type::Array>() &&
+                    dst_type.data.is<types::Type::Ptr>()) {
+                    if (auto* p = ir_func->operand(c.operand)
+                                      .data.get_if<refanal::ir::Place>()) {
+                        auto* ptr = generate_place_ptr(*p);
+                        // Pointer to first element: GEP [0, 0]
+                        return builder_.CreateConstInBoundsGEP2_32(
+                            get_rep_type(op_type), ptr, 0, 0
+                        );
                     }
-                );
+                }
+
+                llvm::Value* val = get_operand_value(c.operand);
+                llvm::Type* src_llvm_type = val->getType();
+                llvm::Type* dst_llvm_type = get_rep_type(type);
+
+                if (src_llvm_type == dst_llvm_type) return val;
+
+                auto* src_int = src_type.data.get_if<types::Type::Int>();
+                auto* dst_int = dst_type.data.get_if<types::Type::Int>();
+                auto* src_float = src_type.data.get_if<types::Type::Float>();
+                auto* dst_float = dst_type.data.get_if<types::Type::Float>();
+
+                if (dst_type.data.is<types::Type::Bool>()) {
+                    if (src_llvm_type->isIntegerTy()) {
+                        return builder_.CreateICmpNE(
+                            val, llvm::ConstantInt::get(src_llvm_type, 0)
+                        );
+                    }
+                    if (src_llvm_type->isFloatingPointTy()) {
+                        return builder_.CreateFCmpUNE(
+                            val, llvm::ConstantFP::get(src_llvm_type, 0.0)
+                        );
+                    }
+                    if (src_llvm_type->isPointerTy()) {
+                        return builder_.CreateIsNotNull(val);
+                    }
+                }
+
+                if (src_int && dst_int) {
+                    return builder_.CreateIntCast(
+                        val, dst_llvm_type, src_int->is_signed
+                    );
+                }
+                if (src_int && dst_float) {
+                    if (src_int->is_signed) {
+                        return builder_.CreateSIToFP(val, dst_llvm_type);
+                    } else {
+                        return builder_.CreateUIToFP(val, dst_llvm_type);
+                    }
+                }
+                if (src_float && dst_int) {
+                    if (dst_int->is_signed) {
+                        return builder_.CreateFPToSI(val, dst_llvm_type);
+                    } else {
+                        return builder_.CreateFPToUI(val, dst_llvm_type);
+                    }
+                }
+                if (src_float && dst_float) {
+                    return builder_.CreateFPCast(val, dst_llvm_type);
+                }
+                if (src_llvm_type->isPointerTy() &&
+                    dst_llvm_type->isIntegerTy()) {
+                    return builder_.CreatePtrToInt(val, dst_llvm_type);
+                }
+                if (src_llvm_type->isIntegerTy() &&
+                    dst_llvm_type->isPointerTy()) {
+                    return builder_.CreateIntToPtr(val, dst_llvm_type);
+                }
+                if (src_llvm_type->isPointerTy() &&
+                    dst_llvm_type->isPointerTy()) {
+                    return builder_.CreatePointerCast(val, dst_llvm_type);
+                }
+                return builder_.CreateBitCast(val, dst_llvm_type);
             },
-            [&](const refanal::ir::Inst::CreateStruct& cs) -> llvm::Value* {
-                llvm::Type* st = get_base_type(cs.struct_type);
+            [&](const refanal::ir::RValue::CreateStruct& cs) -> llvm::Value* {
+                llvm::Type* st = get_base_type(cs.type);
                 llvm::Value* sv = llvm::UndefValue::get(st);
-                auto args = ir_func->inst_refs(cs.args);
-                const auto& struct_def = generator->ir_module_->types()
-                                             .get(cs.struct_type)
-                                             .data.get<types::Type::Struct>();
-                for (uint32_t i = 0; i < args.size(); ++i) {
+                auto s_args = ir_func->operands(cs.args);
+                for (uint32_t i = 0; i < s_args.size(); ++i) {
                     sv = builder_.CreateInsertValue(
-                        sv,
-                        get_value(args[i], struct_def.fields[i].type.specifier),
-                        {i}
+                        sv, get_operand_value(s_args[i]), {i}
                     );
                 }
                 return sv;
             },
-            [&](const refanal::ir::Inst::GetField& gf) -> llvm::Value* {
-                const auto& base_info = ir_func->inst(gf.value);
-                const auto& struct_type =
-                    get_type(base_info).data.get<types::Type::Struct>();
-                if (is_ref(base_info.type)) {
-                    llvm::Value* ptr = inst_values_[gf.value];
-                    llvm::Type* base_type = get_base_type(base_info.type.type);
-                    llvm::Value* field_ptr =
-                        builder_.CreateStructGEP(base_type, ptr, gf.index);
-                    return get_value_from_ptr(
-                        field_ptr, struct_type.fields[gf.index].type, inst.type
-                    );
-                } else {
-                    llvm::Value* val =
-                        get_value(gf.value, types::Specifier::Val);
-                    return builder_.CreateExtractValue(val, {gf.index});
-                }
-            },
-            [&](const refanal::ir::Inst::SetField& sf) -> llvm::Value* {
-                llvm::Value* base_ptr = inst_values_[sf.var];
-                const auto& base_info = ir_func->inst(sf.var);
-                llvm::Type* base_type = get_base_type(base_info.type.type);
-                llvm::Value* field_ptr =
-                    builder_.CreateStructGEP(base_type, base_ptr, sf.index);
-                const auto& struct_type =
-                    get_type(base_info).data.get<types::Type::Struct>();
-                llvm::Value* val = get_value(
-                    sf.value, struct_type.fields[sf.index].type.specifier
-                );
-                return builder_.CreateStore(val, field_ptr);
-            },
-            [&](const refanal::ir::Inst::AddressOf& ao) -> llvm::Value* {
-                return get_value(ao.value, types::Specifier::Var);
-            },
-            [&](const refanal::ir::Inst::Deref& d) -> llvm::Value* {
-                return get_value(d.value, types::Specifier::Val);
-            },
-            [&](const refanal::ir::Inst::GetItem& gi) -> llvm::Value* {
-                llvm::Value* idx = get_value(gi.index, types::Specifier::Val);
-                auto item_type = get_item_type(gi.value);
-                const auto& base_info = ir_func->inst(gi.value);
-                llvm::Type* base_llvm_type = get_base_type(base_info.type.type);
-
-                if (base_llvm_type->isArrayTy()) {
-                    llvm::Value* array_ptr =
-                        get_value(gi.value, types::Specifier::Var);
-                    llvm::Value* item_ptr = builder_.CreateGEP(
-                        base_llvm_type, array_ptr, {builder_.getInt32(0), idx}
-                    );
-                    return get_value_from_ptr(item_ptr, item_type, inst.type);
-                } else {
-                    llvm::Value* ptr =
-                        get_value(gi.value, types::Specifier::Val);
-                    llvm::Value* item_ptr = builder_.CreateGEP(
-                        get_base_type(item_type.type), ptr, idx
-                    );
-                    return get_value_from_ptr(item_ptr, item_type, inst.type);
-                }
-            },
-            [&](const refanal::ir::Inst::SetItem& si) -> llvm::Value* {
-                llvm::Value* idx = get_value(si.index, types::Specifier::Val);
-                auto item_type = get_item_type(si.var);
-                llvm::Value* v = get_value(si.value, item_type.specifier);
-                const auto& base_info = ir_func->inst(si.var);
-                llvm::Type* base_llvm_type = get_base_type(base_info.type.type);
-
-                if (base_llvm_type->isArrayTy()) {
-                    llvm::Value* array_ptr =
-                        get_value(si.var, types::Specifier::Var);
-                    llvm::Value* item_ptr = builder_.CreateGEP(
-                        base_llvm_type, array_ptr, {builder_.getInt32(0), idx}
-                    );
-                    return builder_.CreateStore(v, item_ptr);
-                } else {
-                    llvm::Value* ptr = get_value(si.var, types::Specifier::Val);
-                    llvm::Value* item_ptr = builder_.CreateGEP(
-                        get_base_type(item_type.type), ptr, idx
-                    );
-                    return builder_.CreateStore(v, item_ptr);
-                }
-            },
-            [&](const refanal::ir::Inst::Unary& u) -> llvm::Value* {
-                llvm::Value* v = get_value(u.value, types::Specifier::Val);
-                switch (u.op) {
-                    case refanal::ir::Inst::UnaryOp::Neg:
-                        return v->getType()->isFloatingPointTy()
-                                   ? builder_.CreateFNeg(v)
-                                   : builder_.CreateNeg(v);
-                    case refanal::ir::Inst::UnaryOp::Not:
-                    case refanal::ir::Inst::UnaryOp::BitNot:
-                        return builder_.CreateNot(v);
-                }
-                return nullptr;
-            },
-            [&](const refanal::ir::Inst::Array& arr) -> llvm::Value* {
-                llvm::Type* at = get_base_type(inst.type.type);
-                auto item_spec = get_type(inst)
-                                     .data.get<types::Type::Array>()
-                                     .item.specifier;
+            [&](const refanal::ir::RValue::Array& a) -> llvm::Value* {
+                auto s_items = ir_func->operands(a.items);
+                if (s_items.empty()) return nullptr;
+                llvm::Type* item_type =
+                    get_operand_value(s_items[0])->getType();
+                llvm::Type* at =
+                    llvm::ArrayType::get(item_type, s_items.size());
                 llvm::Value* av = llvm::UndefValue::get(at);
-                auto items = ir_func->inst_refs(arr.items);
-                for (uint32_t k = 0; k < items.size(); ++k) {
+                for (uint32_t i = 0; i < s_items.size(); ++i) {
                     av = builder_.CreateInsertValue(
-                        av, get_value(items[k], item_spec), {k}
+                        av, get_operand_value(s_items[i]), {i}
                     );
                 }
                 return av;
+            }
+        );
+    }
+
+    llvm::Value* generate_place_ptr(const refanal::ir::Place& place) {
+        llvm::Value* ptr = local_values_[place.local];
+        auto projections = ir_func->projections(place.projections);
+        types::SpecType current_type = ir_func->local(place.local).type;
+        for (auto proj : projections) {
+            if (is_ref(current_type)) {
+                ptr = builder_.CreateLoad(get_rep_type(current_type), ptr);
+            }
+            proj.data.visit(
+                [&](refanal::ir::Projection::Index i) {
+                    auto index = get_operand_value(i.index);
+                    if (auto ptr_type = get_type(current_type.type)
+                                            .data.get_if<types::Type::Ptr>()) {
+                        // ptr = builder_.CreateLoad(builder_.getPtrTy(), ptr);
+                        ptr = builder_.CreateGEP(
+                            get_rep_type(ptr_type->type), ptr, index
+                        );
+                        current_type = ptr_type->type;
+                    } else {
+                        const auto& arr_type =
+                            get_type(current_type.type)
+                                .data.get<types::Type::Array>();
+                        ptr = builder_.CreateInBoundsGEP(
+                            get_base_type(current_type.type),
+                            ptr,
+                            {builder_.getInt32(0), index}
+                        );
+                        current_type = arr_type.item;
+                    }
+                },
+                [&](refanal::ir::Projection::Field f) {
+                    const auto& struct_type =
+                        get_type(current_type.type)
+                            .data.get<types::Type::Struct>();
+                    ptr = builder_.CreateStructGEP(
+                        get_base_type(current_type.type), ptr, f.field
+                    );
+                    current_type = struct_type.fields[f.field].type;
+                },
+                [&](refanal::ir::Projection::Deref) {
+                    const auto& ptr_type = get_type(current_type.type)
+                                               .data.get<types::Type::Ptr>();
+                    if (ptr_type.type.specifier == types::Specifier::Val) {
+                        current_type = {
+                            .type = ptr_type.type.type,
+                            .specifier = types::Specifier::Var
+                        };
+                    } else {
+                        ptr = builder_.CreateLoad(
+                            get_rep_type(ptr_type.type), ptr
+                        );
+                        current_type = ptr_type.type;
+                    }
+                }
+            );
+        }
+        return ptr;
+    }
+
+    llvm::Value* get_operand_value(refanal::ir::OperandRef ref) {
+        const auto& op = ir_func->operand(ref);
+        return op.data.visit(
+            [&](const refanal::ir::Const& c) -> llvm::Value* {
+                auto value = generate_const(c);
+                auto type = generator->ir_module_->const_type(c);
+                if (is_ref({.type = type.type, .specifier = op.specifier})) {
+                    if (c.value.is<std::string_view>()) return value;
+                    auto temp = builder_.CreateAlloca(get_rep_type(type));
+                    builder_.CreateStore(value, temp);
+                    return temp;
+                }
+                if (c.value.is<std::string_view>()) {
+                    auto temp = builder_.CreateAlloca(get_rep_type(type));
+                    builder_.CreateStore(value, temp);
+                    return temp;
+                }
+                return value;
             },
-            [&](const auto&) -> llvm::Value* { return nullptr; }
+            [&](const refanal::ir::Place& p) -> llvm::Value* {
+                llvm::Value* ptr = generate_place_ptr(p);
+                auto type =
+                    ir_func->place_type(p, generator->ir_module_->types());
+                types::SpecType load_type = {.type = type.type, .specifier = op.specifier};
+                bool load_type_is_ref = is_ref(load_type);
+                bool place_type_is_ref = is_ref(type);
+                if (load_type_is_ref == place_type_is_ref) {
+                    return builder_.CreateLoad(get_rep_type(type), ptr);
+                }
+                if (load_type_is_ref) {
+                    return ptr;
+                }
+                if (place_type_is_ref) {
+                    return builder_.CreateLoad(
+                        get_rep_type(load_type),
+                        builder_.CreateLoad(get_rep_type(type), ptr)
+                    );
+                }
+                throw std::runtime_error("internal error");
+            }
+        );
+    }
+
+    types::SpecType get_operand_type(refanal::ir::OperandRef ref) {
+        return ir_func->operand(ref).data.visit(
+            [&](refanal::ir::Place p) {
+                return ir_func->place_type(p, generator->ir_module_->types());
+            },
+            [&](const refanal::ir::Const& c) {
+                return generator->ir_module_->const_type(c);
+            }
+        );
+    }
+
+    llvm::Value* generate_const(const refanal::ir::Const& c) {
+        return c.value.visit(
+            [&](bool b) -> llvm::Value* { return builder_.getInt1(b); },
+            [&](std::int64_t i) -> llvm::Value* {
+                return builder_.getInt64(i);
+            },
+            [&](double d) -> llvm::Value* {
+                return llvm::ConstantFP::get(builder_.getDoubleTy(), d);
+            },
+            [&](char32_t ch) -> llvm::Value* { return builder_.getInt32(ch); },
+            [&](std::string_view s) -> llvm::Value* {
+                return builder_.CreateGlobalString(s);
+            },
+            [&](refanal::ir::FuncRef f) -> llvm::Value* {
+                return generator->functions_[f];
+            },
+            [&](refanal::ir::UsedFuncRef f) -> llvm::Value* {
+                return generator->used_funcs_[f];
+            }
         );
     }
 
@@ -678,75 +688,17 @@ private:
         return generator->get_rep_type(type);
     }
 
+    const types::Type& get_type(types::TypeId id) {
+        return generator->ir_module_->types().get(id);
+    }
+
     bool is_ref(types::SpecType type) { return generator->is_ref(type); }
 
-    const types::Type& get_type(refanal::ir::InstRef ref) {
-        return get_type(ir_func->inst(ref));
-    }
-
-    const types::Type& get_type(const refanal::ir::Inst& inst) {
-        types::TypeId type = inst.type.type;
-        return generator->ir_module_->types().get(type);
-    }
-
-    llvm::Value* get_value(refanal::ir::InstRef ref, types::Specifier spec) {
-        auto& inst = ir_func->inst(ref);
-        types::SpecType result_type = {
-            .type = inst.type.type, .specifier = spec
-        };
-        llvm::Value* value = inst_values_[ref];
-        if (is_ref(result_type)) {
-            if (is_ref(inst.type) || value->getType()->isPointerTy()) {
-                return value;
-            } else {
-                llvm::IRBuilder<> eb(
-                    &llvm_func->getEntryBlock(),
-                    llvm_func->getEntryBlock().begin()
-                );
-                llvm::Value* temp =
-                    eb.CreateAlloca(get_base_type(result_type.type));
-                builder_.CreateStore(value, temp);
-                return temp;
-            }
-        } else {
-            if (is_ref(inst.type)) {
-                return builder_.CreateLoad(
-                    get_base_type(result_type.type), value
-                );
-            } else {
-                return value;
-            }
-        }
-    }
-    llvm::Value* get_value_from_ptr(
-        llvm::Value* ptr, types::SpecType ptr_type, types::SpecType value_type
-    ) {
-        if (is_ref(value_type)) {
-            if (is_ref(ptr_type)) {
-                return builder_.CreateLoad(get_rep_type(value_type), ptr);
-            }
-            return ptr;
-        } else {
-            auto value = builder_.CreateLoad(get_rep_type(value_type), ptr);
-            if (is_ref(ptr_type)) {
-                return builder_.CreateLoad(get_rep_type(value_type), value);
-            }
-            return value;
-        }
-    }
-    types::SpecType get_item_type(refanal::ir::InstRef ref) {
-        auto& type = get_type(ref);
-        if (auto ptr = type.data.get_if<types::Type::Ptr>()) {
-            return ptr->type;
-        } else {
-            return type.data.get<types::Type::Array>().item;
-        }
-    }
     Generator* generator;
     const refanal::ir::Func* ir_func;
     llvm::Function* llvm_func;
     llvm::IRBuilder<> builder_;
-    IndexVector<llvm::Value*, refanal::ir::InstRef> inst_values_;
+    IndexVector<llvm::Value*, refanal::ir::LocalRef> local_values_;
     IndexVector<llvm::BasicBlock*, refanal::ir::BlockRef> blocks_;
 };
 
@@ -756,7 +708,7 @@ void Generator::generate_func(
     FuncGenerator generator(*this, ir_func, *llvm_func);
     generator.generate();
 }
-}
+}  // namespace
 
 std::unique_ptr<llvm::Module> generate(
     llvm::LLVMContext& context,
@@ -848,4 +800,4 @@ void emit_object_file(llvm::Module& module, const std::string& filename) {
     dest.flush();
 }
 
-}
+}  // namespace acu::codegen

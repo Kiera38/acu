@@ -34,13 +34,19 @@ class FuncGenerator {
         Value(ir::LocalRef lr) : value(lr) {}
         Value(ir::PlaceBuilder pb) : value(pb) {}
 
-        ir::Operand as_operand(ir::Builder& builder, Location loc) const {
+        ir::OperandRef as_operand(
+            ir::Builder& builder, types::SpecType type, Location loc
+        ) const {
             return value.visit(
-                [&](std::monostate) { return builder.op(ir::Const {false}); },
-                [&](const ir::Const& c) { return builder.op(c); },
-                [&](ir::LocalRef lr) { return builder.op(lr); },
+                [&](std::monostate) {
+                    return builder.op(ir::Const {false}, type.specifier);
+                },
+                [&](const ir::Const& c) {
+                    return builder.op(c, type.specifier);
+                },
+                [&](ir::LocalRef lr) { return builder.op(lr, type.specifier); },
                 [&](const ir::PlaceBuilder& pb) {
-                    return builder.op(pb.build());
+                    return builder.op(pb.build(), type.specifier);
                 }
             );
         }
@@ -53,9 +59,9 @@ class FuncGenerator {
                     return builder.build_place(ir::LocalRef {0});
                 },
                 [&](const ir::Const& c) {
-                    return builder.build_place(
-                        builder.assign_use(type, builder.op(c), loc)
-                    );
+                    return builder.build_place(builder.assign_use(
+                        type, builder.op(c, type.specifier), loc
+                    ));
                 },
                 [&](ir::LocalRef lr) { return builder.build_place(lr); },
                 [&](const ir::PlaceBuilder& pb) { return pb; }
@@ -68,12 +74,14 @@ class FuncGenerator {
             return value.visit(
                 [&](std::monostate) { return ir::LocalRef {0}; },
                 [&](const ir::Const& c) {
-                    return builder.assign_use(type, builder.op(c), loc);
+                    return builder.assign_use(
+                        type, builder.op(c, type.specifier), loc
+                    );
                 },
                 [&](ir::LocalRef lr) { return lr; },
                 [&](const ir::PlaceBuilder& pb) {
                     return builder.assign_use(
-                        type, builder.op(pb.build()), loc
+                        type, builder.op(pb.build(), type.specifier), loc
                     );
                 }
             );
@@ -86,20 +94,21 @@ class FuncGenerator {
 
 public:
     FuncGenerator(
-        const acu::ir::AnalyzedPackage& apackage, const ::acu::ir::Func& sfunc
+        const acu::ir::AnalyzedPackage& apackage, acu::ir::FuncRef sref
     )
         : apackage_(&apackage),
-          sfunc_(&sfunc),
+          sfunc_(&apackage.ir_package->func(sref)),
           rfunc_(
-              sfunc.name,
-              *sfunc.source,
-              sfunc.location,
-              sfunc.is_extern,
-              get_params(apackage, sfunc),
-              sfunc.return_type
+              sfunc_->name,
+              *sfunc_->source,
+              sfunc_->location,
+              sfunc_->is_extern,
+              apackage.ir_package->func_type(sref),
+              get_params(apackage, *sfunc_),
+              sfunc_->return_type
           ),
           builder_(rfunc_),
-          values_(sfunc.insts, Value {}) {}
+          values_(sfunc_->insts, Value {}) {}
 
     ir::Func generate() {
         if (sfunc_->is_extern) {
@@ -155,8 +164,18 @@ private:
                t.specifier == types::Specifier::Var;
     }
 
-    ir::Operand get_operand(SemInstRef sref, Location loc) {
-        return values_[sref].as_operand(builder_, loc);
+    [[nodiscard]] types::SpecType get_item_type(types::TypeId type_id) const {
+        const auto& type = apackage_->ir_package->types().get(type_id);
+        if (auto ptr = type.data.get_if<types::Type::Ptr>()) {
+            return ptr->type;
+        }
+        return type.data.get<types::Type::Array>().item;
+    }
+
+    [[nodiscard]] ir::OperandRef get_operand(
+        SemInstRef sref, types::SpecType type, Location loc
+    ) {
+        return values_[sref].as_operand(builder_, type, loc);
     }
 
     Value get_cast(
@@ -167,7 +186,7 @@ private:
         return get_cast(v, actual_type, expected_type, loc);
     }
 
-    Value get_cast(
+    Value& get_cast(
         Value& v,
         types::SpecType actual_type,
         types::SpecType expected_type,
@@ -175,25 +194,15 @@ private:
     ) {
         if (actual_type.type != expected_type.type) {
             v = Value {builder_.assign_cast(
-                expected_type, v.as_operand(builder_, loc), loc
-            )};
-            actual_type = {
-                .type = expected_type.type,
-                .specifier = types::Specifier::Val,
-            };
-        }
-
-        if (is_reference(actual_type) && !is_reference(expected_type)) {
-            v = Value {v.as_place_builder(builder_, actual_type, loc).deref()};
-            actual_type.specifier = types::Specifier::Val;
-        }
-        if (!is_reference(actual_type) && is_reference(expected_type)) {
-            v = Value {builder_.assign_ref(
                 expected_type,
-                v.as_place_builder(builder_, actual_type, loc).build(),
+                v.as_operand(
+                    builder_,
+                    {.type = actual_type.type,
+                     .specifier = types::Specifier::Val},
+                    loc
+                ),
                 loc
             )};
-            actual_type.specifier = expected_type.specifier;
         }
 
         return v;
@@ -205,6 +214,13 @@ private:
         auto actual_type = apackage_->inst_types[sref];
         Value v = values_[sref];
         return get_cast(v, actual_type, expected_type, loc);
+    }
+
+    ir::OperandRef get_operand_cast(
+        SemInstRef sref, types::SpecType expected_type, Location loc
+    ) {
+        return get_cast(sref, expected_type, loc)
+            .as_operand(builder_, expected_type, loc);
     }
 
     uint32_t get_field_index(types::TypeId struct_type, std::string_view name) {
@@ -227,7 +243,7 @@ private:
                 return {ir::FuncRef {v.index}};
             },
             [&](::acu::ir::UsedFuncRef v) -> ir::Const {
-                return {ir::UsedFuncRef {.index = v.index}};
+                return {ir::UsedFuncRef {v.index}};
             },
             [&](types::TypeId) -> ir::Const { return {false}; }
         );
@@ -253,21 +269,14 @@ private:
                 values_[sref] = get_cast(inst.param, type, sinst.location);
             },
             [&](const SemInst::Store& inst) {
-                auto p = values_[inst.var]
-                             .as_place_builder(
-                                 builder_,
-                                 apackage_->inst_types[inst.var],
-                                 sinst.location
-                             )
-                             .build();
-                auto v = get_cast(
+                auto pb = values_[inst.var].as_place_builder(
+                    builder_, apackage_->inst_types[inst.var], sinst.location
+                );
+                auto p = pb.build();
+                auto v = get_operand_cast(
                     inst.value, apackage_->inst_types[inst.var], sinst.location
                 );
-                builder_.assign(
-                    p,
-                    builder_.r_use(v.as_operand(builder_, sinst.location)),
-                    sinst.location
-                );
+                builder_.assign(p, builder_.r_use(v), sinst.location);
             },
             [&](const SemInst::Binary& inst) {
                 auto val_type = type;
@@ -275,10 +284,8 @@ private:
                 values_[sref] = Value {builder_.assign_binary(
                     val_type,
                     static_cast<ir::BinaryOp>(inst.op),
-                    get_cast(inst.left, val_type, sinst.location)
-                        .as_operand(builder_, sinst.location),
-                    get_cast(inst.right, val_type, sinst.location)
-                        .as_operand(builder_, sinst.location),
+                    get_operand_cast(inst.left, val_type, sinst.location),
+                    get_operand_cast(inst.right, val_type, sinst.location),
                     sinst.location
                 )};
             },
@@ -288,8 +295,7 @@ private:
                 values_[sref] = Value {builder_.assign_unary(
                     val_type,
                     static_cast<ir::UnaryOp>(inst.op),
-                    get_cast(inst.value, val_type, sinst.location)
-                        .as_operand(builder_, sinst.location),
+                    get_operand_cast(inst.value, val_type, sinst.location),
                     sinst.location
                 )};
             },
@@ -303,15 +309,17 @@ private:
                     types::SpecType comp_type = {
                         .type = comp.type, .specifier = types::Specifier::Val
                     };
-                    auto l = get_cast(inst.left, comp_type, sinst.location);
+                    auto l =
+                        get_operand_cast(inst.left, comp_type, sinst.location);
                     visit_block(comp.value);
-                    auto r =
-                        get_cast(comp.value.end, comp_type, sinst.location);
+                    auto r = get_operand_cast(
+                        comp.value.end, comp_type, sinst.location
+                    );
                     values_[sref] = Value {builder_.assign_comp(
                         comp_type,
                         static_cast<ir::ComparisonOp>(comp.op),
-                        l.as_operand(builder_, sinst.location),
-                        r.as_operand(builder_, sinst.location),
+                        l,
+                        r,
                         sinst.location
                     )};
                 } else {
@@ -319,15 +327,17 @@ private:
                     types::SpecType comp_type = {
                         .type = comp.type, .specifier = types::Specifier::Val
                     };
-                    auto l = get_cast(inst.left, comp_type, sinst.location);
+                    auto l =
+                        get_operand_cast(inst.left, comp_type, sinst.location);
                     visit_block(comp.value);
-                    auto r =
-                        get_cast(comp.value.end, comp_type, sinst.location);
+                    auto r = get_operand_cast(
+                        comp.value.end, comp_type, sinst.location
+                    );
                     auto res = builder_.assign_comp(
                         comp_type,
                         static_cast<ir::ComparisonOp>(comp.op),
-                        l.as_operand(builder_, sinst.location),
-                        r.as_operand(builder_, sinst.location),
+                        l,
+                        r,
                         sinst.location
                     );
                     values_[sref] = Value {res};
@@ -340,7 +350,7 @@ private:
                 const auto& callee_inst =
                     apackage_->ir_package->inst(inst.value);
                 auto s_args = apackage_->ir_package->inst_refs(inst.args);
-                std::vector<ir::Operand> r_args;
+                std::vector<ir::OperandRef> r_args;
                 r_args.reserve(s_args.size());
 
                 if (auto* c = callee_inst.data.get_if<SemInst::Const>()) {
@@ -350,12 +360,9 @@ private:
                         const auto& s =
                             struct_type.data.get<types::Type::Struct>();
                         for (size_t i = 0; i < s.fields.size(); ++i) {
-                            r_args.push_back(
-                                get_cast(
-                                    s_args[i], s.fields[i].type, sinst.location
-                                )
-                                    .as_operand(builder_, sinst.location)
-                            );
+                            r_args.push_back(get_operand_cast(
+                                s_args[i], s.fields[i].type, sinst.location
+                            ));
                         }
                         values_[sref] = Value {builder_.assign_struct(
                             {.type = *t, .specifier = types::Specifier::Val},
@@ -366,29 +373,21 @@ private:
                     }
                 }
 
-                auto func_type = apackage_->inst_types[inst.value].type;
-                if (func_type != types::None) {
-                    const auto& f_type =
-                        apackage_->ir_package->types().get(func_type);
-                    const auto& defined_func =
-                        f_type.data.get<types::Type::Func>();
-                    for (size_t i = 0; i < s_args.size(); ++i) {
-                        r_args.push_back(
-                            get_cast(
-                                s_args[i],
-                                defined_func.params[i].type,
-                                sinst.location
-                            )
-                                .as_operand(builder_, sinst.location)
-                        );
-                    }
-                    values_[sref] = Value {builder_.assign_call(
-                        type,
-                        get_operand(inst.value, sinst.location),
-                        r_args,
-                        sinst.location
-                    )};
+                auto func_type = apackage_->inst_types[inst.value];
+                const auto& f_type =
+                    apackage_->ir_package->types().get(func_type.type);
+                const auto& defined_func = f_type.data.get<types::Type::Func>();
+                for (size_t i = 0; i < s_args.size(); ++i) {
+                    r_args.push_back(get_operand_cast(
+                        s_args[i], defined_func.params[i].type, sinst.location
+                    ));
                 }
+                values_[sref] = Value {builder_.assign_call(
+                    type,
+                    get_operand(inst.value, func_type, sinst.location),
+                    r_args,
+                    sinst.location
+                )};
             },
             [&](const SemInst::If& inst) {
                 auto then_block = builder_.add_block();
@@ -396,13 +395,13 @@ private:
                     inst.else_block ? builder_.add_block() : ir::BlockRef {~0u};
                 auto merge_block = builder_.add_block();
 
-                auto cond = get_cast(
+                auto cond = get_operand_cast(
                     inst.value,
                     {.type = types::Bool, .specifier = types::Specifier::Val},
                     sinst.location
                 );
                 builder_.branch(
-                    cond.as_operand(builder_, sinst.location),
+                    cond,
                     then_block,
                     inst.else_block ? else_block : merge_block,
                     sinst.location
@@ -443,12 +442,11 @@ private:
                 builder_.set_block(exit);
             },
             [&](const SemInst::Return& inst) {
-                std::optional<ir::Operand> val;
+                std::optional<ir::OperandRef> val;
                 if (inst.value) {
-                    val = get_cast(
-                              *inst.value, sfunc_->return_type, sinst.location
-                    )
-                              .as_operand(builder_, sinst.location);
+                    val = get_operand_cast(
+                        *inst.value, sfunc_->return_type, sinst.location
+                    );
                 }
                 builder_.ret(val, sinst.location);
             },
@@ -465,54 +463,45 @@ private:
                 }
             },
             [&](const SemInst::GetAttr& inst) {
-                values_[sref] = Value {
-                    values_[inst.value]
-                        .as_place_builder(
-                            builder_,
-                            apackage_->inst_types[inst.value],
-                            sinst.location
-                        )
-                        .field(get_field_index(
-                            apackage_->inst_types[inst.value].type, inst.name
-                        ))
-                };
+                auto type = apackage_->inst_types[inst.value];
+                auto pb = values_[inst.value].as_place_builder(
+                    builder_, type, sinst.location
+                );
+                values_[sref] =
+                    Value {pb.field(get_field_index(type.type, inst.name))};
             },
             [&](const SemInst::SetAttr& inst) {
+                auto type = apackage_->inst_types[inst.var];
+                auto pb = values_[inst.value].as_place_builder(
+                    builder_, type, sinst.location
+                );
                 auto p =
-                    values_[inst.value]
-                        .as_place_builder(
-                            builder_,
-                            apackage_->inst_types[inst.value],
-                            sinst.location
-                        )
-                        .field(get_field_index(
-                            apackage_->inst_types[inst.value].type, inst.name
-                        ))
-                        .build();
+                    pb.field(get_field_index(type.type, inst.name)).build();
                 builder_.assign(
                     p,
-                    builder_.r_use(get_operand(inst.value, sinst.location)),
+                    builder_.r_use(
+                        get_operand_cast(inst.value, type, sinst.location)
+                    ),
                     sinst.location
                 );
             },
             [&](const SemInst::GetItem& inst) {
-                values_[sref] =
-                    Value {values_[inst.value]
-                               .as_place_builder(
-                                   builder_,
-                                   apackage_->inst_types[inst.value],
-                                   sinst.location
-                               )
-                               .index(
-                                   values_[inst.index].as_local(
-                                       builder_,
-                                       {.type = types::UInt,
-                                        .specifier = types::Specifier::Val},
-                                       sinst.location
-                                   )
-                               )};
+                auto type = apackage_->inst_types[inst.value];
+                auto pb = values_[inst.value].as_place_builder(
+                    builder_, type, sinst.location
+                );
+                values_[sref] = Value {pb.index(
+                    values_[inst.index].as_operand(
+                        builder_,
+                        {.type = types::UInt,
+                         .specifier = types::Specifier::Val},
+                        sinst.location
+                    )
+                )};
             },
             [&](const SemInst::SetItem& inst) {
+                auto item_type =
+                    get_item_type(apackage_->inst_types[inst.var].type);
                 builder_.assign(
                     values_[inst.value]
                         .as_place_builder(
@@ -520,16 +509,16 @@ private:
                             apackage_->inst_types[inst.value],
                             sinst.location
                         )
-                        .index(
-                            values_[inst.index].as_local(
-                                builder_,
-                                {.type = types::UInt,
-                                 .specifier = types::Specifier::Val},
-                                sinst.location
-                            )
-                        )
+                        .index(get_operand_cast(
+                            inst.index,
+                            {.type = types::UInt,
+                             .specifier = types::Specifier::Val},
+                            sinst.location
+                        ))
                         .build(),
-                    builder_.r_use(get_operand(inst.value, sinst.location)),
+                    builder_.r_use(
+                        get_operand_cast(inst.value, item_type, sinst.location)
+                    ),
                     sinst.location
                 );
             },
@@ -544,21 +533,17 @@ private:
                                .deref()};
             },
             [&](const SemInst::AddressOf& inst) {
+                auto type = apackage_->inst_types[inst.value];
+                auto pb = values_[inst.value].as_place_builder(
+                    builder_, type, sinst.location
+                );
                 values_[sref] = Value {builder_.assign_addr_of(
-                    apackage_->inst_types[sref],
-                    values_[inst.value]
-                        .as_place_builder(
-                            builder_,
-                            apackage_->inst_types[inst.value],
-                            sinst.location
-                        )
-                        .build(),
-                    sinst.location
+                    apackage_->inst_types[sref], pb.build(), sinst.location
                 )};
             },
             [&](const SemInst::Array& inst) {
                 auto s_items = apackage_->ir_package->inst_refs(inst.items);
-                std::vector<ir::Operand> r_items;
+                std::vector<ir::OperandRef> r_items;
                 r_items.reserve(s_items.size());
 
                 const auto& arr = apackage_->ir_package->types()
@@ -567,8 +552,7 @@ private:
 
                 for (auto s_item : s_items) {
                     r_items.push_back(
-                        get_cast(s_item, arr.item, sinst.location)
-                            .as_operand(builder_, sinst.location)
+                        get_operand_cast(s_item, arr.item, sinst.location)
                     );
                 }
 
@@ -581,7 +565,7 @@ private:
             },
             [&](const SemInst::Logical& inst) {
                 auto res = builder_.add_local(type);
-                auto val_a = get_operand(inst.left, sinst.location);
+                auto val_a = get_operand_cast(inst.left, type, sinst.location);
                 builder_.assign(
                     builder_.place(res), builder_.r_use(val_a), sinst.location
                 );
@@ -589,7 +573,7 @@ private:
                 auto right_block = builder_.add_block();
                 auto merge_block = builder_.add_block();
 
-                auto cond = get_cast(
+                auto cond = get_operand_cast(
                     inst.left,
                     {.type = types::Bool, .specifier = types::Specifier::Val},
                     sinst.location
@@ -597,23 +581,18 @@ private:
 
                 if (inst.op == ::acu::ir::Inst::LogicalOp::And) {
                     builder_.branch(
-                        cond.as_operand(builder_, sinst.location),
-                        right_block,
-                        merge_block,
-                        sinst.location
+                        cond, right_block, merge_block, sinst.location
                     );
                 } else {
                     builder_.branch(
-                        cond.as_operand(builder_, sinst.location),
-                        merge_block,
-                        right_block,
-                        sinst.location
+                        cond, merge_block, right_block, sinst.location
                     );
                 }
 
                 builder_.set_block(right_block);
                 visit_block(inst.right);
-                auto val_b = get_operand(inst.right.end, sinst.location);
+                auto val_b =
+                    get_operand_cast(inst.right.end, type, sinst.location);
                 builder_.assign(
                     builder_.place(res), builder_.r_use(val_b), sinst.location
                 );
@@ -631,8 +610,8 @@ ir::Module generate(acu::ir::AnalyzedPackage& analyzed_package) {
         analyzed_package.ir_package->name(),
         analyzed_package.ir_package->types()
     );
-    for (const auto& sfunc : analyzed_package.ir_package->funcs()) {
-        FuncGenerator fg(analyzed_package, sfunc);
+    for (auto i : analyzed_package.ir_package->funcs().indices()) {
+        FuncGenerator fg(analyzed_package, i);
         rmod.add(fg.generate());
     }
     for (const auto& ufunc : analyzed_package.ir_package->used_funcs()) {
