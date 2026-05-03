@@ -18,6 +18,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/TargetParser/Host.h>
 
+#include <cassert>
 #include <stdexcept>
 #include <string_view>
 
@@ -196,10 +197,12 @@ public:
         : generator(&generator),
           ir_func(&ir_func),
           llvm_func(&llvm_func),
-          builder_(*generator.context_) {}
+          builder_(*generator.context_),
+          local_types_(ir_func.locals().size(), LocalType::Unknown) {}
 
     void generate() {
         if (ir_func->blocks().empty()) return;
+        set_local_types();
 
         blocks_.reserve(ir_func->blocks().size());
         for (auto i : ir_func->blocks().indices()) {
@@ -211,14 +214,11 @@ public:
                 )
             );
         }
-
-        auto* entry = llvm::BasicBlock::Create(
-            *generator->context_, "entry", llvm_func, blocks_[{0}]
-        );
-        builder_.SetInsertPoint(entry);
+        builder_.SetInsertPoint(blocks_[{0}]);
 
         local_values_.resize(ir_func->locals().size());
         for (auto i : ir_func->locals().indices()) {
+            if (local_types_[i] == LocalType::Operand) continue;
             const auto& local = ir_func->local(i);
             local_values_[i] = builder_.CreateAlloca(
                 get_rep_type(local.type), nullptr, local.name
@@ -226,12 +226,15 @@ public:
         }
 
         for (auto i : ir_func->params().indices()) {
-            builder_.CreateStore(
-                llvm_func->getArg(i.index),
-                local_values_[refanal::ir::LocalRef {i.index}]
-            );
+            if (local_types_[i] == LocalType::Operand) {
+                local_values_[i] = llvm_func->getArg(i.index);
+            } else {
+                builder_.CreateStore(
+                    llvm_func->getArg(i.index),
+                    local_values_[refanal::ir::LocalRef {i.index}]
+                );
+            }
         }
-        builder_.CreateBr(blocks_[{0}]);
 
         for (auto b_idx : ir_func->blocks().indices()) {
             builder_.SetInsertPoint(blocks_[b_idx]);
@@ -248,6 +251,93 @@ public:
     }
 
 private:
+    void set_local_types() {
+        for (const auto& block : ir_func->blocks()) {
+            auto process_operand = [&](refanal::ir::OperandRef ref) {
+                const auto& operand = ir_func->operand(ref);
+                if (auto place = operand.data.get_if<refanal::ir::Place>()) {
+                    auto type = ir_func->local(place->local).type;
+                    types::SpecType operand_type = {
+                        .type = type.type, .specifier = operand.specifier
+                    };
+                    if (place->projections.empty() &&
+                        (is_ref(operand_type) && is_ref(type) ||
+                         !is_ref(operand_type)) &&
+                        local_types_[place->local] != LocalType::Alloca) {
+                        local_types_[place->local] = LocalType::Operand;
+                    } else {
+                        local_types_[place->local] = LocalType::Alloca;
+                    }
+                }
+            };
+            for (auto ref : block.statements) {
+                const auto& statement = ir_func->statement(ref);
+                if (auto assign =
+                        statement.data
+                            .get_if<refanal::ir::Statement::Assign>()) {
+                    // todo: при генерации отладочной информации нужно оставлять
+                    // alloca для переменных (local с названием)
+                    if (!assign->place.projections.empty() ||
+                        local_types_[assign->place.local] !=
+                            LocalType::Unknown) {
+                        local_types_[assign->place.local] = LocalType::Alloca;
+                    } else {
+                        local_types_[assign->place.local] = LocalType::Operand;
+                    }
+                    assign->rvalue.data.visit(
+                        [&](const refanal::ir::RValue::Use u) {
+                            process_operand(u.operand);
+                        },
+                        [&](const refanal::ir::RValue::Unary u) {
+                            process_operand(u.operand);
+                        },
+                        [&](const refanal::ir::RValue::Binary& b) {
+                            process_operand(b.left);
+                            process_operand(b.right);
+                        },
+                        [&](const refanal::ir::RValue::Comparison& c) {
+                            process_operand(c.left);
+                            process_operand(c.right);
+                        },
+                        [&](const refanal::ir::RValue::Call& c) {
+                            process_operand(c.callee);
+                            for (auto op : ir_func->operands(c.args)) {
+                                process_operand(op);
+                            }
+                        },
+                        [&](const refanal::ir::RValue::AddressOf a) {
+                            local_types_[a.place.local] = LocalType::Alloca;
+                        },
+                        [&](const refanal::ir::RValue::Cast c) {
+                            process_operand(c.operand);
+                        },
+                        [&](const refanal::ir::RValue::CreateStruct& c) {
+                            for (auto op : ir_func->operands(c.args)) {
+                                process_operand(op);
+                            }
+                        },
+                        [&](const refanal::ir::RValue::Array& a) {
+                            for (auto op : ir_func->operands(a.items)) {
+                                process_operand(op);
+                            }
+                        }
+                    );
+                }
+            }
+            block.terminator->data.visit(
+                [&](const refanal::ir::Terminator::Branch& b) {
+                    process_operand(b.condition);
+                },
+                [&](const refanal::ir::Terminator::Return& r) {
+                    if (r.value) {
+                        process_operand(*r.value);
+                    }
+                },
+                [&](const auto) {}
+            );
+        }
+    }
+    
     void generate_statement(const refanal::ir::Statement& stmt) {
         stmt.data.visit(
             [&](const refanal::ir::Statement::Assign& a) {
@@ -255,8 +345,13 @@ private:
                     a.place, generator->ir_module_->types()
                 );
                 llvm::Value* val = generate_rvalue(a.rvalue, type);
-                llvm::Value* ptr = generate_place_ptr(a.place);
-                builder_.CreateStore(val, ptr);
+                if (local_types_[a.place.local] == LocalType::Operand) {
+                    assert(a.place.projections.empty());
+                    local_values_[a.place.local] = val;
+                } else {
+                    llvm::Value* ptr = generate_place_ptr(a.place);
+                    builder_.CreateStore(val, ptr);
+                }
             },
             [&](const refanal::ir::Statement::Nop&) {}
         );
@@ -413,8 +508,8 @@ private:
                 auto s_args = ir_func->operands(c.args);
                 std::vector<llvm::Value*> args;
                 args.reserve(s_args.size());
-                for (size_t i = 0; i < s_args.size(); i++) {
-                    args.push_back(get_operand_value(s_args[i]));
+                for (auto s_arg : s_args) {
+                    args.push_back(get_operand_value(s_arg));
                 }
 
                 std::vector<llvm::Type*> param_types;
@@ -624,10 +719,26 @@ private:
                 return value;
             },
             [&](const refanal::ir::Place& p) -> llvm::Value* {
+                if (local_types_[p.local] == LocalType::Operand) {
+                    assert(p.projections.empty());
+                    auto type = ir_func->local(p.local).type;
+                    types::SpecType load_type = {
+                        .type = type.type, .specifier = op.specifier
+                    };
+                    if (is_ref(load_type) == is_ref(type)) {
+                        return local_values_[p.local];
+                    }
+                    assert(is_ref(type) && !is_ref(load_type));
+                    return builder_.CreateLoad(
+                        get_rep_type(load_type), local_values_[p.local]
+                    );
+                }
                 llvm::Value* ptr = generate_place_ptr(p);
                 auto type =
                     ir_func->place_type(p, generator->ir_module_->types());
-                types::SpecType load_type = {.type = type.type, .specifier = op.specifier};
+                types::SpecType load_type = {
+                    .type = type.type, .specifier = op.specifier
+                };
                 bool load_type_is_ref = is_ref(load_type);
                 bool place_type_is_ref = is_ref(type);
                 if (load_type_is_ref == place_type_is_ref) {
@@ -700,6 +811,8 @@ private:
     llvm::IRBuilder<> builder_;
     IndexVector<llvm::Value*, refanal::ir::LocalRef> local_values_;
     IndexVector<llvm::BasicBlock*, refanal::ir::BlockRef> blocks_;
+    enum class LocalType : std::uint8_t { Unknown, Operand, Alloca };
+    IndexVector<LocalType, refanal::ir::LocalRef> local_types_;
 };
 
 void Generator::generate_func(

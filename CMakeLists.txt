@@ -4,6 +4,7 @@ project(acu VERSION 0.2.0)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(AUI_VERSION v8.0.0-rc.20)
 # Use AUI.Boot
 file(
@@ -15,7 +16,7 @@ include(${CMAKE_CURRENT_BINARY_DIR}/aui.boot.cmake)
 set(AUIB_VALID_INSTALLATION_PATHS "C:/Program Files/Microsoft Visual Studio/*")
 auib_import(
     LLVM https://github.com/llvm/llvm-project 
-    VERSION llvmorg-22.1.3
+    VERSION llvmorg-22.1.4
     LINK STATIC
     CMAKE_ARGS 
         -DLLVM_INCLUDE_EXAMPLES=OFF
@@ -30,7 +31,9 @@ auib_import(
         # Limit the maximum number of concurrent link jobs to 1. This should fix low amount of memory issue for link.
         -DLLVM_PARALLEL_LINK_JOBS=1
         -DLLVM_INSTALL_PACKAGE_DIR:PATH=share/llvm
-        -DLLVM_TARGETS_TO_BUILD=Native
+        -DLLVM_USE_CRT_RELEASE=MT
+        -DLLVM_USE_CRT_DEBUG=MTd
+        -DLLVM_ENABLE_ZLIB=OFF
     CMAKE_WORKING_DIR llvm
 )
 
@@ -82,15 +85,14 @@ add_executable(acu
 
     src/refanal/generator.cpp
     src/refanal/ir_str.cpp
-    src/refanal/optimizer.cpp
-    src/refanal/check.cpp
+    #src/refanal/optimizer.cpp
+    #src/refanal/check.cpp
 
     src/refanal/ir.cpp
 
     src/codegen/generator.cpp
     src/codegen/jit.cpp
 )
-set_property(TARGET acu PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Set include directories
 target_include_directories(acu SYSTEM PRIVATE
