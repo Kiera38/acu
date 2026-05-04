@@ -80,6 +80,7 @@ add_executable(acu
     src/semanal/resolver.cpp
     src/semanal/resolve_inst.cpp
     src/semanal/type_analyze.cpp
+    src/semanal/type_utils.cpp
     src/semanal/ir_str.cpp
     src/semanal/ir.cpp
 

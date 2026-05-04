@@ -9,275 +9,13 @@
 #include "ir.h"
 #include "semanal/ir.h"
 #include "semanal/semanal.h"
+#include "semanal/type_utils.h"
 #include "semanal/types.h"
 #include "source.h"
 
+
 namespace acu::semanal {
 namespace {
-bool can_convert(
-    types::TypeId from, types::TypeId to, const types::TypePool& pool
-) {
-    if (from == to || from == types::Nothing) {
-        return true;
-    }
-
-    const auto& from_data = pool.get(from).data;
-    const auto& to_data = pool.get(to).data;
-
-    if (auto f_int = from_data.get_if<types::Type::Int>()) {
-        if (auto t_int = to_data.get_if<types::Type::Int>()) {
-            if (f_int->is_signed == t_int->is_signed) {
-                return f_int->bits <= t_int->bits;
-            }
-            if (!f_int->is_signed && t_int->is_signed) {
-                return f_int->bits < t_int->bits;
-            }
-            if (f_int->is_signed && !t_int->is_signed) {
-                return t_int->bits > f_int->bits;
-            }
-        }
-        if (to_data.is<types::Type::Bool>() ||
-            to_data.is<types::Type::Float>()) {
-            return true;
-        }
-    }
-
-    if (auto f_uint = from_data.get_if<types::Type::Int>();
-        f_uint && !f_uint->is_signed) {
-        if (to_data.is<types::Type::Bool>() ||
-            to_data.is<types::Type::Float>()) {
-            return true;
-        }
-    }
-
-    if (auto f_float = from_data.get_if<types::Type::Float>()) {
-        if (auto t_float = to_data.get_if<types::Type::Float>()) {
-            return static_cast<uint8_t>(*f_float) <=
-                   static_cast<uint8_t>(*t_float);
-        }
-    }
-
-    return false;
-}
-
-bool can_cast(
-    types::TypeId from, types::TypeId to, const types::TypePool& pool
-) {
-    if (can_convert(from, to, pool)) {
-        return true;
-    }
-
-    const auto& from_tp = pool.get(from);
-    const auto& to_tp = pool.get(to);
-
-    if (from_tp.data.is<types::Type::Int>() &&
-        to_tp.data.is<types::Type::Int>()) {
-        return true;
-    }
-
-    if (from_tp.data.is<types::Type::Float>() &&
-        to_tp.data.is<types::Type::Float>()) {
-        return true;
-    }
-
-    if (from_tp.data.is<types::Type::Int>() &&
-        to_tp.data.is<types::Type::Ptr>()) {
-        return true;
-    }
-    if (from_tp.data.is<types::Type::Ptr>() &&
-        to_tp.data.is<types::Type::Int>()) {
-        return true;
-    }
-
-    if (auto at = from_tp.data.get_if<types::Type::Array>()) {
-        if (auto pt = to_tp.data.get_if<types::Type::Ptr>()) {
-            if (at->item == pt->type) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-std::optional<types::TypeId> unify(
-    types::TypeId type1, types::TypeId type2, const types::TypePool& pool
-) {
-    if (type1 == type2) {
-        return type1;
-    }
-    if (can_convert(type1, type2, pool)) {
-        return type2;
-    }
-    if (can_convert(type2, type1, pool)) {
-        return type1;
-    }
-    return std::nullopt;
-}
-
-struct TypeVar {
-    std::optional<types::SpecType> type;
-    std::optional<Location> define_loc;
-    bool locked = false;
-    bool locked_spec = false;
-
-    types::TypeId add_type(
-        types::SpecType tp,
-        Location loc,
-        const Source& source,
-        const types::TypePool& pool,
-        ErrorHandler& err_handler
-    ) {
-        if (locked) {
-            if (type.has_value() && type->type != tp.type) {
-                if (!can_convert(tp.type, type->type, pool)) {
-                    report_error(
-                        tp.type, type->type, loc, source, pool, err_handler,
-                        false
-                    );
-                }
-            }
-        } else {
-            if (type.has_value()) {
-                auto unified = unify(type->type, tp.type, pool);
-                if (!unified.has_value()) {
-                    report_error(
-                        tp.type, type->type, loc, source, pool, err_handler, true
-                    );
-                } else {
-                    type->type = *unified;
-                }
-            } else {
-                type = tp;
-                define_loc = loc;
-            }
-        }
-
-        if (!locked_spec && tp.specifier != types::Specifier::None) {
-            if (type->specifier == types::Specifier::None) {
-                type->specifier = tp.specifier;
-            } else if (
-                tp.specifier == types::Specifier::Var &&
-                type->specifier == types::Specifier::Let
-            ) {
-                type->specifier = types::Specifier::Var;
-            } else if (
-                tp.specifier == types::Specifier::Val &&
-                type->specifier != types::Specifier::Val
-            ) {
-                type->specifier = types::Specifier::Val;
-            }
-        }
-
-        return type->type;
-    }
-
-    void lock(
-        types::SpecType tp,
-        Location loc,
-        const Source& source,
-        const types::TypePool& pool,
-        ErrorHandler& err_handler
-    ) {
-        if (locked) {
-            err_handler.error(
-                source,
-                loc,
-                std::format("Internal error: Type variable already locked")
-            );
-            return;
-        }
-        if (type.has_value() && !can_convert(type->type, tp.type, pool)) {
-            report_error(
-                tp.type, type->type, loc, source, pool, err_handler, false
-            );
-        }
-        type = tp;
-        locked = true;
-        if (tp.specifier != types::Specifier::None) {
-            locked_spec = true;
-        }
-        if (!define_loc.has_value()) {
-            define_loc = loc;
-        }
-    }
-
-    void lock(
-        types::TypeId tp,
-        Location loc,
-        const Source& source,
-        const types::TypePool& pool,
-        ErrorHandler& err_handler
-    ) {
-        lock(
-            {.type = tp, .specifier = types::Specifier::None},
-            loc,
-            source,
-            pool,
-            err_handler
-        );
-    }
-
-    types::TypeId union_tp(
-        const TypeVar& other,
-        Location loc,
-        const Source& source,
-        const types::TypePool& pool,
-        ErrorHandler& err_handler
-    ) {
-        if (other.type.has_value()) {
-            return add_type(*other.type, loc, source, pool, err_handler);
-        }
-        return type.has_value() ? type->type : types::None;
-    }
-
-    [[nodiscard]] bool defined() const { return type.has_value(); }
-
-    [[nodiscard]] types::SpecType get() const {
-        if (!type.has_value()) {
-            return {.type = types::None, .specifier = types::Specifier::None};
-        }
-        return *type;
-    }
-
-private:
-    void report_error(
-        types::TypeId from,
-        types::TypeId to,
-        Location loc,
-        const Source& source,
-        const types::TypePool& pool,
-        ErrorHandler& err_handler,
-        bool is_unification
-    ) const {
-        std::string hint = "";
-        if (can_cast(from, to, pool)) {
-            hint = std::format(
-                "use 'as {}' for explicit conversion", pool.to_string(to)
-            );
-        }
-        std::vector<Label> labels;
-        if (define_loc.has_value()) {
-            labels.push_back({
-                .source = &source,
-                .location = *define_loc,
-                .message = std::format(
-                    "type established here as {}", pool.to_string(to)
-                ),
-            });
-        }
-        std::string message = is_unification
-                                  ? std::format(
-                                        "Type mismatch: cannot unify {} and {}",
-                                        pool.to_string(from), pool.to_string(to)
-                                    )
-                                  : std::format(
-                                        "Type mismatch: cannot convert {} to {}",
-                                        pool.to_string(from), pool.to_string(to)
-                                    );
-        err_handler.error(source, loc, std::move(message), hint, std::move(labels));
-    }
-};
 
 class TypeAnalyzer {
 public:
@@ -467,231 +205,38 @@ private:
         const auto& inst = package_->inst(ref);
         inst.data.visit(
             [&](const ir::Inst::Const& data) {
-                auto type = data.value.visit(
-                    [&](bool) { return types::Bool; },
-                    [&](std::int64_t) { return types::Int; },
-                    [&](double) { return types::Float; },
-                    [&](char32_t) { return types::UInt32; },
-                    [&](std::string_view v) {
-                        return type_pool_->add_array(
-                            {
-                                .type = types::UInt8,
-                                .specifier = types::Specifier::Val,
-                            },
-                            v.size() + 1
-                        );
-                    },
-                    [&](ir::FuncRef func_ref) {
-                        return package_->func_type(func_ref);
-                    },
-                    [&](ir::UsedFuncRef func_ref) {
-                        auto used_func = package_->used_func(func_ref);
-                        return used_func.type;
-                    },
-                    [&](types::TypeId type_id) { return types::Const; }
-                );
-                if (data.value.is<std::string_view>()) {
-                    lock_type(
-                        ref,
-                        {.type = type, .specifier = types::Specifier::Var},
-                        inst.location
-                    );
-                } else {
-                    lock_type(
-                        ref,
-                        {.type = type, .specifier = types::Specifier::Val},
-                        inst.location
-                    );
-                }
+                handle_const(ref, data, inst.location);
             },
             [&](const ir::Inst::VarDecl& data) {
-                if (data.type.has_value()) {
-                    lock_type(ref, *data.type, inst.location);
-                } else {
-                    add_type(
-                        ref,
-                        {.type = types::Nothing,
-                         .specifier = types::Specifier::Let},
-                        inst.location
-                    );
-                }
+                handle_var_decl(ref, data, inst.location);
             },
             [&](const ir::Inst::LoadVar& data) {
-                if (type_vars_[data.var].defined()) {
-                    copy_type(data.var, ref, inst.location);
-                }
+                handle_load_var(ref, data, inst.location);
             },
             [&](const ir::Inst::LoadParam& data) {
-                auto param_type = get_func_type().params[data.param.index];
-                lock_type(ref, param_type.type, inst.location);
+                handle_load_param(ref, data, inst.location);
             },
             [&](const ir::Inst::Store& data) {
-                copy_type(data.value, data.var, inst.location);
-                lock_type(ref, types::None, inst.location);
+                handle_store(ref, data, inst.location);
             },
             [&](const ir::Inst::Binary& data) {
-                auto left = type_vars_[data.left].type;
-                auto right = type_vars_[data.right].type;
-                if (left && right) {
-                    auto unified = unify(left->type, right->type, *type_pool_);
-                    if (unified) {
-                        bool ok = false;
-                        if (data.op == ir::Inst::BinaryOp::Add ||
-                            data.op == ir::Inst::BinaryOp::Sub ||
-                            data.op == ir::Inst::BinaryOp::Mul ||
-                            data.op == ir::Inst::BinaryOp::Div) {
-                            ok = type_pool_->is_int(*unified) ||
-                                 type_pool_->is_float(*unified);
-                        } else {
-                            ok = type_pool_->is_int(*unified);
-                        }
-
-                        if (!ok) {
-                            error(
-                                inst.location,
-                                std::format(
-                                    "Type mismatch: binary operation "
-                                    "not supported for type '{}'",
-                                    type_pool_->to_string(*unified)
-                                )
-                            );
-                        }
-                        add_type(
-                            ref,
-                            {.type = *unified,
-                             .specifier = types::Specifier::Val},
-                            inst.location
-                        );
-                    }
-                }
+                handle_binary(ref, data, inst.location);
             },
             [&](const ir::Inst::Logical& data) {
-                propagate_range(data.right);
-
-                auto left_tp = type_vars_[data.left].type;
-                if (left_tp &&
-                    !can_convert(left_tp->type, types::Bool, *type_pool_)) {
-                    error(
-                        inst.location,
-                        std::format(
-                            "Type mismatch: cannot convert '{}' to Bool",
-                            type_pool_->to_string(*left_tp)
-                        )
-                    );
-                }
-                auto right_tp = type_vars_[data.right.end].type;
-                if (right_tp &&
-                    !can_convert(right_tp->type, types::Bool, *type_pool_)) {
-                    error(
-                        inst.location,
-                        std::format(
-                            "Type mismatch: cannot convert '{}' to Bool",
-                            type_pool_->to_string(*right_tp)
-                        )
-                    );
-                }
-                add_type(
-                    ref,
-                    {.type = types::Bool, .specifier = types::Specifier::Val},
-                    inst.location
-                );
+                handle_logical(ref, data, inst.location);
             },
             [&](const ir::Inst::Unary& data) {
-                if (data.op == ir::Inst::UnaryOp::Not) {
-                    auto val_tp = type_vars_[data.value].type;
-                    if (val_tp &&
-                        !can_convert(val_tp->type, types::Bool, *type_pool_)) {
-                        error(
-                            inst.location,
-                            std::format(
-                                "Type mismatch: cannot convert '{}' to Bool",
-                                type_pool_->to_string(*val_tp)
-                            )
-                        );
-                    }
-                    add_type(
-                        ref,
-                        {.type = types::Bool,
-                         .specifier = types::Specifier::Val},
-                        inst.location
-                    );
-                } else {
-                    copy_type(data.value, ref, inst.location);
-                }
+                handle_unary(ref, data, inst.location);
             },
             [&](const ir::Inst::Comparison& data) {
-                lock_type(
-                    ref,
-                    {.type = types::Bool, .specifier = types::Specifier::Val},
-                    inst.location
-                );
-                auto current_left = data.left;
-                auto comparators = package_->comparators(data.comparators);
-
-                for (auto& comparator : comparators) {
-                    propagate_range(comparator.value);
-                    ir::InstRef operand_ref = comparator.value.end;
-                    auto& left_tv = type_vars_[current_left];
-                    auto& right_tv = type_vars_[operand_ref];
-                    if (left_tv.defined() && right_tv.defined()) {
-                        auto unified = unify(
-                            left_tv.get().type, right_tv.get().type, *type_pool_
-                        );
-                        if (unified) {
-                            comparator.type = *unified;
-                        }
-                    }
-                    current_left = operand_ref;
-                }
+                handle_comparison(ref, data, inst.location);
             },
-            [&](const ir::Inst::Call& data) {
-                auto func_tp = type_vars_[data.value].type;
-                if (func_tp.has_value()) {
-                    const auto& type = type_pool_->get(func_tp->type);
-                    if (auto ft = type.data.get_if<types::Type::Func>()) {
-                        check_func(ref, inst, *ft);
-                    } else if (type.data.get_if<types::Type::Const>()) {
-                        if (auto id = package_->inst(data.value)
-                                          .data.get<ir::Inst::Const>()
-                                          .value.get_if<types::TypeId>()) {
-                            lock_type(
-                                ref,
-                                {.type = *id,
-                                 .specifier = types::Specifier::Val},
-                                inst.location
-                            );
-                        }
-                    } else {
-                        error(
-                            inst.location,
-                            "expression is not a function or a struct and "
-                            "cannot be called"
-                        );
-                    }
-                }
-            },
+            [&](const ir::Inst::Call& data) { handle_call(ref, inst, data); },
             [&](const ir::Inst::Loop& data) {
-                propagate_range(data.block);
-                lock_type(ref, types::None, inst.location);
+                handle_loop(ref, data, inst.location);
             },
             [&](const ir::Inst::If& data) {
-                propagate_range(data.then_block);
-                if (data.else_block) {
-                    propagate_range(*data.else_block);
-                }
-
-                auto cond_tp = type_vars_[data.value].type;
-                if (cond_tp &&
-                    !can_convert(cond_tp->type, types::Bool, *type_pool_)) {
-                    error(
-                        inst.location,
-                        std::format(
-                            "Type mismatch: cannot convert '{}' to Bool",
-                            type_pool_->to_string(*cond_tp)
-                        )
-                    );
-                }
-                lock_type(ref, types::None, inst.location);
+                handle_if(ref, data, inst.location);
             },
             [&](const ir::Inst::Break&) {
                 lock_type(ref, types::Nothing, inst.location);
@@ -700,146 +245,439 @@ private:
                 lock_type(ref, types::Nothing, inst.location);
             },
             [&](const ir::Inst::Return& data) {
-                if (data.value.has_value()) {
-                    auto& func_type = get_func_type();
-                    if (func_type.return_type.specifier ==
-                        types::Specifier::Var) {
-                        require_var(*data.value, inst.location, "return value");
-                    }
-                    add_type(*data.value, func_type.return_type, inst.location);
-                }
-                lock_type(ref, types::Nothing, inst.location);
+                handle_return(ref, data, inst.location);
             },
             [&](const ir::Inst::AddressOf& data) {
-                auto tp = type_vars_[data.value].type;
-                if (tp.has_value()) {
-                    add_type(
-                        ref,
-                        {.type = type_pool_->add_ptr(*tp),
-                         .specifier = types::Specifier::Val},
-                        inst.location
-                    );
-                }
+                handle_address_of(ref, data, inst.location);
             },
             [&](const ir::Inst::Deref& data) {
-                auto tp = type_vars_[data.value].type;
-                if (tp.has_value()) {
-                    const auto& type = type_pool_->get(tp->type);
-                    if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(ref, pt->type, inst.location);
-                    }
-                }
+                handle_deref(ref, data, inst.location);
             },
             [&](const ir::Inst::GetItem& data) {
-                auto tp = type_vars_[data.value].type;
-                if (tp.has_value()) {
-                    const auto& type = type_pool_->get(tp->type);
-                    if (auto at = type.data.get_if<types::Type::Array>()) {
-                        add_type(ref, at->item, inst.location);
-                    } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(ref, pt->type, inst.location);
-                    }
-                }
+                handle_get_item(ref, data, inst.location);
             },
             [&](const ir::Inst::SetItem& data) {
-                auto var_tp = type_vars_[data.var].type;
-                if (var_tp.has_value()) {
-                    const auto& type = type_pool_->get(var_tp->type);
-                    if (auto at = type.data.get_if<types::Type::Array>()) {
-                        add_type(data.value, at->item, inst.location);
-                    } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
-                        add_type(data.value, pt->type, inst.location);
-                    }
-                }
-                require_var(data.var, inst.location, "item assignment");
-                lock_type(ref, types::None, inst.location);
+                handle_set_item(ref, data, inst.location);
             },
             [&](const ir::Inst::GetAttr& data) {
-                auto tp = type_vars_[data.value].type;
-                if (tp.has_value()) {
-                    const auto& type = type_pool_->get(tp->type);
-                    if (auto st = type.data.get_if<types::Type::Struct>()) {
-                        for (const auto& field : st->fields) {
-                            if (field.name == data.name) {
-                                lock_type(ref, field.type, inst.location);
-                                break;
-                            }
-                        }
-                    }
-                }
+                handle_get_attr(ref, data, inst.location);
             },
             [&](const ir::Inst::SetAttr& data) {
-                auto var_tp = type_vars_[data.var].type;
-                if (var_tp.has_value()) {
-                    const auto& type = type_pool_->get(var_tp->type);
-                    if (auto st = type.data.get_if<types::Type::Struct>()) {
-                        for (const auto& field : st->fields) {
-                            if (field.name == data.name) {
-                                add_type(data.value, field.type, inst.location);
-                                break;
-                            }
-                        }
-                    }
-                }
-                require_var(data.var, inst.location, "attribute assignment");
-                lock_type(ref, types::None, inst.location);
+                handle_set_attr(ref, data, inst.location);
             },
             [&](const ir::Inst::Array& data) {
-                auto items = package_->inst_refs(data.items);
-                if (items.empty()) {
-                    return;
-                }
-
-                std::optional<types::TypeId> common_tp;
-                for (auto item_ref : items) {
-                    auto item_tp = type_vars_[item_ref].type;
-                    if (!item_tp) {
-                        common_tp = std::nullopt;
-                        break;
-                    }
-                    if (!common_tp) {
-                        common_tp = item_tp->type;
-                    } else {
-                        common_tp =
-                            unify(*common_tp, item_tp->type, *type_pool_);
-                        if (!common_tp) {
-                            break;
-                        }
-                    }
-                }
-
-                if (common_tp.has_value() && !type_vars_[ref].locked) {
-                    lock_type(
-                        ref,
-                        {.type = type_pool_->add_array(
-                             {.type = *common_tp,
-                              .specifier = types::Specifier::Let},
-                             items.size()
-                         ),
-                         .specifier = types::Specifier::Val},
-                        inst.location
-                    );
-                }
+                handle_array(ref, data, inst.location);
             },
             [&](const ir::Inst::As& data) {
-                lock_type(ref, data.type, inst.location);
-                auto from_tp = type_vars_[data.value].type;
-                if (from_tp.has_value() &&
-                    !can_cast(from_tp->type, data.type.type, *type_pool_)) {
-                    error(
-                        inst.location,
-                        std::format(
-                            "Type mismatch: cannot explicitly cast {} to {}",
-                            type_pool_->to_string(*from_tp),
-                            type_pool_->to_string(data.type)
-                        )
-                    );
-                }
+                handle_as(ref, data, inst.location);
             },
-            [&](const auto& i) {
+            [&](const auto&) {
                 error(inst.location, "Internal error: Unknown instruction");
             }
         );
+    }
+
+    void handle_const(
+        ir::InstRef ref, const ir::Inst::Const& data, Location loc
+    ) {
+        auto type = data.value.visit(
+            [&](bool) { return types::Bool; },
+            [&](std::int64_t) { return types::Int; },
+            [&](double) { return types::Float; },
+            [&](char32_t) { return types::UInt32; },
+            [&](std::string_view v) {
+                return type_pool_->add_array(
+                    {
+                        .type = types::UInt8,
+                        .specifier = types::Specifier::Val,
+                    },
+                    v.size() + 1
+                );
+            },
+            [&](ir::FuncRef func_ref) { return package_->func_type(func_ref); },
+            [&](ir::UsedFuncRef func_ref) {
+                auto used_func = package_->used_func(func_ref);
+                return used_func.type;
+            },
+            [&](types::TypeId type_id) { return types::Const; }
+        );
+        if (data.value.is<std::string_view>()) {
+            lock_type(
+                ref, {.type = type, .specifier = types::Specifier::Var}, loc
+            );
+        } else {
+            lock_type(
+                ref, {.type = type, .specifier = types::Specifier::Val}, loc
+            );
+        }
+    }
+
+    void handle_var_decl(
+        ir::InstRef ref, const ir::Inst::VarDecl& data, Location loc
+    ) {
+        if (data.type.has_value()) {
+            lock_type(ref, *data.type, loc);
+        } else {
+            add_type(
+                ref,
+                {.type = types::Nothing, .specifier = types::Specifier::Let},
+                loc
+            );
+        }
+    }
+
+    void handle_load_var(
+        ir::InstRef ref, const ir::Inst::LoadVar& data, Location loc
+    ) {
+        if (type_vars_[data.var].defined()) {
+            copy_type(data.var, ref, loc);
+        }
+    }
+
+    void handle_load_param(
+        ir::InstRef ref, const ir::Inst::LoadParam& data, Location loc
+    ) {
+        auto param_type = get_func_type().params[data.param.index];
+        lock_type(ref, param_type.type, loc);
+    }
+
+    void handle_store(
+        ir::InstRef ref, const ir::Inst::Store& data, Location loc
+    ) {
+        copy_type(data.value, data.var, loc);
+        lock_type(ref, types::None, loc);
+    }
+
+    void handle_binary(
+        ir::InstRef ref, const ir::Inst::Binary& data, Location loc
+    ) {
+        auto left = type_vars_[data.left].type;
+        auto right = type_vars_[data.right].type;
+        if (left && right) {
+            auto unified = unify(left->type, right->type, *type_pool_);
+            if (unified) {
+                bool ok = false;
+                if (data.op == ir::Inst::BinaryOp::Add ||
+                    data.op == ir::Inst::BinaryOp::Sub ||
+                    data.op == ir::Inst::BinaryOp::Mul ||
+                    data.op == ir::Inst::BinaryOp::Div) {
+                    ok = type_pool_->is_int(*unified) ||
+                         type_pool_->is_float(*unified);
+                } else {
+                    ok = type_pool_->is_int(*unified);
+                }
+
+                if (!ok) {
+                    error(
+                        loc,
+                        std::format(
+                            "Type mismatch: binary operation "
+                            "not supported for type '{}'",
+                            type_pool_->to_string(*unified)
+                        )
+                    );
+                }
+                add_type(
+                    ref,
+                    {.type = *unified, .specifier = types::Specifier::Val},
+                    loc
+                );
+            }
+        }
+    }
+
+    void handle_logical(
+        ir::InstRef ref, const ir::Inst::Logical& data, Location loc
+    ) {
+        propagate_range(data.right);
+
+        auto left_tp = type_vars_[data.left].type;
+        if (left_tp && !can_convert(left_tp->type, types::Bool, *type_pool_)) {
+            error(
+                loc,
+                std::format(
+                    "Type mismatch: cannot convert '{}' to Bool",
+                    type_pool_->to_string(*left_tp)
+                )
+            );
+        }
+        auto right_tp = type_vars_[data.right.end].type;
+        if (right_tp &&
+            !can_convert(right_tp->type, types::Bool, *type_pool_)) {
+            error(
+                loc,
+                std::format(
+                    "Type mismatch: cannot convert '{}' to Bool",
+                    type_pool_->to_string(*right_tp)
+                )
+            );
+        }
+        add_type(
+            ref, {.type = types::Bool, .specifier = types::Specifier::Val}, loc
+        );
+    }
+
+    void handle_unary(
+        ir::InstRef ref, const ir::Inst::Unary& data, Location loc
+    ) {
+        if (data.op == ir::Inst::UnaryOp::Not) {
+            auto val_tp = type_vars_[data.value].type;
+            if (val_tp &&
+                !can_convert(val_tp->type, types::Bool, *type_pool_)) {
+                error(
+                    loc,
+                    std::format(
+                        "Type mismatch: cannot convert '{}' to Bool",
+                        type_pool_->to_string(*val_tp)
+                    )
+                );
+            }
+            add_type(
+                ref,
+                {.type = types::Bool, .specifier = types::Specifier::Val},
+                loc
+            );
+        } else {
+            copy_type(data.value, ref, loc);
+        }
+    }
+
+    void handle_comparison(
+        ir::InstRef ref, const ir::Inst::Comparison& data, Location loc
+    ) {
+        lock_type(
+            ref, {.type = types::Bool, .specifier = types::Specifier::Val}, loc
+        );
+        auto current_left = data.left;
+        auto comparators = package_->comparators(data.comparators);
+
+        for (auto& comparator : comparators) {
+            propagate_range(comparator.value);
+            ir::InstRef operand_ref = comparator.value.end;
+            auto& left_tv = type_vars_[current_left];
+            auto& right_tv = type_vars_[operand_ref];
+            if (left_tv.defined() && right_tv.defined()) {
+                auto unified =
+                    unify(left_tv.get().type, right_tv.get().type, *type_pool_);
+                if (unified) {
+                    comparator.type = *unified;
+                }
+            }
+            current_left = operand_ref;
+        }
+    }
+
+    void handle_call(
+        ir::InstRef ref, const ir::Inst& inst, const ir::Inst::Call& data
+    ) {
+        auto func_tp = type_vars_[data.value].type;
+        if (func_tp.has_value()) {
+            const auto& type = type_pool_->get(func_tp->type);
+            if (auto ft = type.data.get_if<types::Type::Func>()) {
+                check_func(ref, inst, *ft);
+            } else if (type.data.get_if<types::Type::Const>()) {
+                if (auto id = package_->inst(data.value)
+                                  .data.get<ir::Inst::Const>()
+                                  .value.get_if<types::TypeId>()) {
+                    lock_type(
+                        ref,
+                        {.type = *id, .specifier = types::Specifier::Val},
+                        inst.location
+                    );
+                }
+            } else {
+                error(
+                    inst.location,
+                    "expression is not a function or a struct and "
+                    "cannot be called"
+                );
+            }
+        }
+    }
+
+    void handle_loop(
+        ir::InstRef ref, const ir::Inst::Loop& data, Location loc
+    ) {
+        propagate_range(data.block);
+        lock_type(ref, types::None, loc);
+    }
+
+    void handle_if(ir::InstRef ref, const ir::Inst::If& data, Location loc) {
+        propagate_range(data.then_block);
+        if (data.else_block) {
+            propagate_range(*data.else_block);
+        }
+
+        auto cond_tp = type_vars_[data.value].type;
+        if (cond_tp && !can_convert(cond_tp->type, types::Bool, *type_pool_)) {
+            error(
+                loc,
+                std::format(
+                    "Type mismatch: cannot convert '{}' to Bool",
+                    type_pool_->to_string(*cond_tp)
+                )
+            );
+        }
+        lock_type(ref, types::None, loc);
+    }
+
+    void handle_return(
+        ir::InstRef ref, const ir::Inst::Return& data, Location loc
+    ) {
+        if (data.value.has_value()) {
+            auto& func_type = get_func_type();
+            if (func_type.return_type.specifier == types::Specifier::Var) {
+                require_var(*data.value, loc, "return value");
+            }
+            add_type(*data.value, func_type.return_type, loc);
+        }
+        lock_type(ref, types::Nothing, loc);
+    }
+
+    void handle_address_of(
+        ir::InstRef ref, const ir::Inst::AddressOf& data, Location loc
+    ) {
+        auto tp = type_vars_[data.value].type;
+        if (tp.has_value()) {
+            add_type(
+                ref,
+                {.type = type_pool_->add_ptr(*tp),
+                 .specifier = types::Specifier::Val},
+                loc
+            );
+        }
+    }
+
+    void handle_deref(
+        ir::InstRef ref, const ir::Inst::Deref& data, Location loc
+    ) {
+        auto tp = type_vars_[data.value].type;
+        if (tp.has_value()) {
+            const auto& type = type_pool_->get(tp->type);
+            if (auto pt = type.data.get_if<types::Type::Ptr>()) {
+                add_type(ref, pt->type, loc);
+            }
+        }
+    }
+
+    void handle_get_item(
+        ir::InstRef ref, const ir::Inst::GetItem& data, Location loc
+    ) {
+        auto tp = type_vars_[data.value].type;
+        if (tp.has_value()) {
+            const auto& type = type_pool_->get(tp->type);
+            if (auto at = type.data.get_if<types::Type::Array>()) {
+                add_type(ref, at->item, loc);
+            } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
+                add_type(ref, pt->type, loc);
+            }
+        }
+    }
+
+    void handle_set_item(
+        ir::InstRef ref, const ir::Inst::SetItem& data, Location loc
+    ) {
+        auto var_tp = type_vars_[data.var].type;
+        if (var_tp.has_value()) {
+            const auto& type = type_pool_->get(var_tp->type);
+            if (auto at = type.data.get_if<types::Type::Array>()) {
+                add_type(data.value, at->item, loc);
+            } else if (auto pt = type.data.get_if<types::Type::Ptr>()) {
+                add_type(data.value, pt->type, loc);
+            }
+        }
+        require_var(data.var, loc, "item assignment");
+        lock_type(ref, types::None, loc);
+    }
+
+    void handle_get_attr(
+        ir::InstRef ref, const ir::Inst::GetAttr& data, Location loc
+    ) {
+        auto tp = type_vars_[data.value].type;
+        if (tp.has_value()) {
+            const auto& type = type_pool_->get(tp->type);
+            if (auto st = type.data.get_if<types::Type::Struct>()) {
+                for (const auto& field : st->fields) {
+                    if (field.name == data.name) {
+                        lock_type(ref, field.type, loc);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    void handle_set_attr(
+        ir::InstRef ref, const ir::Inst::SetAttr& data, Location loc
+    ) {
+        auto var_tp = type_vars_[data.var].type;
+        if (var_tp.has_value()) {
+            const auto& type = type_pool_->get(var_tp->type);
+            if (auto st = type.data.get_if<types::Type::Struct>()) {
+                for (const auto& field : st->fields) {
+                    if (field.name == data.name) {
+                        add_type(data.value, field.type, loc);
+                        break;
+                    }
+                }
+            }
+        }
+        require_var(data.var, loc, "attribute assignment");
+        lock_type(ref, types::None, loc);
+    }
+
+    void handle_array(
+        ir::InstRef ref, const ir::Inst::Array& data, Location loc
+    ) {
+        auto items = package_->inst_refs(data.items);
+        if (items.empty()) {
+            return;
+        }
+
+        std::optional<types::TypeId> common_tp;
+        for (auto item_ref : items) {
+            auto item_tp = type_vars_[item_ref].type;
+            if (!item_tp) {
+                common_tp = std::nullopt;
+                break;
+            }
+            if (!common_tp) {
+                common_tp = item_tp->type;
+            } else {
+                common_tp = unify(*common_tp, item_tp->type, *type_pool_);
+                if (!common_tp) {
+                    break;
+                }
+            }
+        }
+
+        if (common_tp.has_value() && !type_vars_[ref].locked) {
+            lock_type(
+                ref,
+                {.type = type_pool_->add_array(
+                     {.type = *common_tp, .specifier = types::Specifier::Let},
+                     items.size()
+                 ),
+                 .specifier = types::Specifier::Val},
+                loc
+            );
+        }
+    }
+
+    void handle_as(ir::InstRef ref, const ir::Inst::As& data, Location loc) {
+        lock_type(ref, data.type, loc);
+        auto from_tp = type_vars_[data.value].type;
+        if (from_tp.has_value() &&
+            !can_cast(from_tp->type, data.type.type, *type_pool_)) {
+            error(
+                loc,
+                std::format(
+                    "Type mismatch: cannot explicitly cast {} to {}",
+                    type_pool_->to_string(*from_tp),
+                    type_pool_->to_string(data.type)
+                )
+            );
+        }
     }
 
     void check_func(
@@ -853,7 +691,8 @@ private:
                 std::format(
                     "too many arguments: function has {} "
                     "parameters but {} were provided",
-                    ft.params.size(), data.args.size + data.named_args.size
+                    ft.params.size(),
+                    data.args.size + data.named_args.size
                 )
             );
         }
@@ -862,7 +701,8 @@ private:
                 inst.location,
                 std::format(
                     "too few arguments: expected at least {}, but got {}",
-                    ft.min_pos_args, data.args.size
+                    ft.min_pos_args,
+                    data.args.size
                 )
             );
         }
@@ -871,7 +711,8 @@ private:
                 inst.location,
                 std::format(
                     "too many arguments: expected at most {}, but got {}",
-                    ft.max_pos_args, data.args.size
+                    ft.max_pos_args,
+                    data.args.size
                 )
             );
         }
@@ -918,7 +759,8 @@ private:
                         std::format(
                             "named argument '{}' was already provided as "
                             "positional argument {}",
-                            named_arg.name, result - search_params.begin()
+                            named_arg.name,
+                            result - search_params.begin()
                         )
                     );
                     return std::nullopt;
