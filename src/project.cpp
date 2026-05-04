@@ -24,25 +24,26 @@
 namespace acu {
 
 acu::Source read_file(
-    const std::filesystem::path& path, const std::string& package_name
+    const std::filesystem::path& path, std::string_view package_name
 ) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        std::cerr << "Error: could not open file: " << path << "\n";
-        throw std::runtime_error("");
+        throw std::runtime_error(
+            std::format("could not open file: {}", path.string())
+        );
     }
 
     std::stringstream ss;
     ss << file.rdbuf();
     std::string module_name = path.stem().string();
     if (module_name == "package") {
-        module_name = package_name;
+        module_name = std::string(package_name);
     } else if (!package_name.empty()) {
-        module_name = package_name + '.' + module_name;
+        module_name = std::format("{}.{}", package_name, module_name);
     }
 
     return acu::Source {
-        .module_name = module_name, .path = path.string(), .content = ss.str()
+        .module_name = std::move(module_name), .path = path, .content = ss.str()
     };
 }
 
@@ -108,53 +109,41 @@ void create_package(
     std::vector<ModuleRef> module_refs;
     for (const auto& entry : std::filesystem::directory_iterator(path)) {
         if (entry.is_directory()) {
-            std::string sub_package_name;
-            if (package_name.empty()) {
-                sub_package_name = entry.path().stem().string();
-            } else {
-                sub_package_name =
-                    package_name + '.' + entry.path().stem().string();
-            }
+            std::string sub_package_name =
+                package_name.empty()
+                    ? entry.path().stem().string()
+                    : std::format(
+                          "{}.{}", package_name, entry.path().stem().string()
+                      );
             create_package(
                 entry.path(), std::move(sub_package_name), packages, modules
             );
             continue;
-        } else if (!entry.is_regular_file()) {
+        }
+
+        if (!entry.is_regular_file() || entry.path().extension() != ".acu") {
             continue;
         }
-        const auto& path = entry.path();
-        if (path.extension().string() != ".acu") {
-            continue;
-        }
-        Module module {.source = read_file(path, package_name)};
-        module_refs.push_back(
-            modules.emplace_back(read_file(path, package_name), nullptr)
-        );
+
+        auto source = read_file(entry.path(), package_name);
+        source.name = split_name(source.module_name);
+        module_refs.push_back(modules.emplace_back(std::move(source), nullptr));
     }
+
     if (module_refs.empty()) return;
-    auto package = Package {
-        .package_name = std::move(package_name),
-        .modules = std::move(module_refs)
-    };
-    packages.push_back(std::move(package));
+
+    auto name = split_name(package_name);
+    packages.emplace_back(
+        std::move(package_name), std::move(name), std::move(module_refs)
+    );
 }
 
 Project::Project(const std::filesystem::path& input_path) {
-    auto [package_path, package_name] =
-        [&] -> std::pair<std::filesystem::path, std::string> {
-        if (std::filesystem::is_directory(input_path)) {
-            return {input_path, ""};
-        } else {
-            return {input_path.parent_path(), ""};
-        }
-    }();
-    create_package(package_path, package_name, packages_, modules_);
-    for (auto& module : modules_) {
-        module.source.name = split_name(module.source.module_name);
-    }
-    for (auto& package : packages_) {
-        package.name = split_name(package.package_name);
-    }
+    std::filesystem::path package_path =
+        std::filesystem::is_directory(input_path) ? input_path
+                                                  : input_path.parent_path();
+
+    create_package(package_path, "", packages_, modules_);
 }
 
 void Project::parse(bool show_ast) {
@@ -172,7 +161,9 @@ void Project::semanal(bool show_semanal) {
     Packages context(*this);
     if (err_handler_.has_errors()) {
         err_handler_.emit_all();
-        throw std::runtime_error("");
+        throw std::runtime_error(
+            "semantic analysis failed due to previous errors"
+        );
     }
     sorted_packages_ = context.sort();
     for (auto ref : sorted_packages_) {
@@ -187,13 +178,9 @@ void refanal_package(
     Package& package, acu::ErrorHandler& err_handler, bool show_refanal
 ) {
     package.refanal_module = acu::refanal::generate(package.analyzed);
-    // acu::refanal::optimize(
-    //     package.refanal_module, package.analyzed, err_handler
-    // );
-
     if (err_handler.has_errors()) {
         err_handler.emit_all();
-        throw std::runtime_error("");
+        throw std::runtime_error("reference analysis failed");
     }
 
     if (show_refanal) {
@@ -209,6 +196,10 @@ void Project::refanal(bool show_refanal) {
     for (auto ref : sorted_packages_) {
         auto& package = packages_[ref];
         refanal_package(package, err_handler_, show_refanal);
+    }
+    if (err_handler_.has_errors()) {
+        err_handler_.emit_all();
+        throw std::runtime_error("reference analysis failed");
     }
 }
 
@@ -238,27 +229,6 @@ std::unique_ptr<llvm::Module> generate_llvm(
     return llvm_module;
 }
 
-void codegen_package(
-    const Package& package,
-    const Project& project,
-    bool show_llvm_ir,
-    bool show_opt_llvm_ir,
-    llvm::OptimizationLevel opt,
-    const std::filesystem::path& output_path
-) {
-    auto context = std::make_unique<llvm::LLVMContext>();
-    auto llvm_module = generate_llvm(
-        *context,
-        package,
-        project,
-        opt,
-        std::nullopt,
-        show_llvm_ir,
-        show_opt_llvm_ir
-    );
-    acu::codegen::emit_object_file(*llvm_module, output_path.string());
-}
-
 void Project::codegen(
     bool show_llvm_ir,
     bool show_opt_llvm_ir,
@@ -268,18 +238,25 @@ void Project::codegen(
     if (!std::filesystem::exists(output_path)) {
         std::filesystem::create_directories(output_path);
     }
+
+    llvm::LLVMContext context;
     for (auto ref : sorted_packages_) {
         const auto& package = packages_[ref];
         std::string file_name = package.package_name.empty()
                                     ? "package.o"
                                     : std::format("{}.o", package.package_name);
-        codegen_package(
+
+        auto llvm_module = generate_llvm(
+            context,
             package,
             *this,
-            show_llvm_ir,
-            show_opt_llvm_ir,
             opt,
-            output_path / file_name
+            std::nullopt,
+            show_llvm_ir,
+            show_opt_llvm_ir
+        );
+        acu::codegen::emit_object_file(
+            *llvm_module, (output_path / file_name).string()
         );
     }
 }
@@ -290,26 +267,32 @@ void Project::run_jit(
     std::cout << "\nJIT EXECUTION\n";
     auto jit = acu::codegen::JIT::create();
     if (!jit) {
-        std::cerr << "Failed to create JIT\n";
-        throw std::runtime_error("");
+        throw std::runtime_error("failed to create JIT");
     }
+
+    auto ts_context =
+        llvm::orc::ThreadSafeContext(std::make_unique<llvm::LLVMContext>());
     for (auto ref : sorted_packages_) {
         const auto& package = packages_[ref];
-        auto context = std::make_unique<llvm::LLVMContext>();
-        auto llvm_module = generate_llvm(
-            *context,
-            package,
-            *this,
-            opt,
-            jit->get_data_layout(),
-            show_llvm_ir,
-            show_opt_llvm_ir
-        );
-        if (auto err =
-                jit->add_module(std::move(llvm_module), std::move(context))) {
-            std::cerr << "Failed to add module to JIT\n";
-            throw std::runtime_error("");
-        }
+        ts_context.withContextDo([&](llvm::LLVMContext* context) {
+            auto llvm_module = generate_llvm(
+                *context,
+                package,
+                *this,
+                opt,
+                jit->get_data_layout(),
+                show_llvm_ir,
+                show_opt_llvm_ir
+            );
+
+            if (auto err = jit->add_module(
+                    llvm::orc::ThreadSafeModule(
+                        std::move(llvm_module), ts_context
+                    )
+                )) {
+                throw std::runtime_error("failed to add module to JIT");
+            }
+        });
     }
 
     auto main_func = jit->get_main();
@@ -318,8 +301,7 @@ void Project::run_jit(
         int result = (*main_func)();
         std::cout << "main() returned: " << result << "\n";
     } else {
-        std::cerr << "Failed to find main function in JIT\n";
-        throw std::runtime_error("");
+        throw std::runtime_error("failed to find main function in JIT");
     }
 }
 

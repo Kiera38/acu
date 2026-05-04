@@ -12,6 +12,7 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
@@ -21,6 +22,7 @@
 #include <cassert>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 
 #include "index.h"
 #include "llvm/IR/Constants.h"
@@ -51,6 +53,8 @@ public:
 
         functions_.clear();
         functions_.reserve(ir_module_->funcs().size());
+        function_types_.clear();
+        function_types_.reserve(ir_module_->funcs().size());
         for (const auto& ir_func : ir_module_->funcs()) {
             std::vector<llvm::Type*> param_types;
             for (const auto& param : ir_func.params())
@@ -58,6 +62,7 @@ public:
             llvm::FunctionType* func_type = llvm::FunctionType::get(
                 get_rep_type(ir_func.return_type()), param_types, false
             );
+            function_types_.push_back(func_type);
             functions_.push_back(
                 llvm::Function::Create(
                     func_type,
@@ -67,6 +72,11 @@ public:
                 )
             );
         }
+
+        used_funcs_.clear();
+        used_funcs_.reserve(ir_module_->used_funcs().size());
+        used_function_types_.clear();
+        used_function_types_.reserve(ir_module_->used_funcs().size());
         for (const auto& ir_func : ir_module_->used_funcs()) {
             std::vector<llvm::Type*> param_types;
             for (const auto& param : ir_func.params(*project_))
@@ -74,6 +84,7 @@ public:
             llvm::FunctionType* func_type = llvm::FunctionType::get(
                 get_rep_type(ir_func.return_type(*project_)), param_types, false
             );
+            used_function_types_.push_back(func_type);
             used_funcs_.push_back(
                 llvm::Function::Create(
                     func_type,
@@ -167,10 +178,8 @@ private:
     bool is_small(llvm::Type* type) {
         if (type->isVoidTy()) return true;
         if (!type->isSized()) return false;
-        if (type->isArrayTy())
-            return false;  // todo: нужно ли это (убирает копии маленьких
-                           // массивов)
-        return layout_->getTypeAllocSize(type) <= 16;
+        if (type->isArrayTy()) return false;
+        return layout_->getTypeAllocSize(type) <= kSmallTypeThreshold;
     }
 
     bool is_ref(types::SpecType st) {
@@ -179,12 +188,18 @@ private:
                 !is_small(get_base_type(st.type)));
     }
 
+    static constexpr uint64_t kSmallTypeThreshold = 16;
+
     llvm::LLVMContext* context_;
     const refanal::ir::Module* ir_module_;
     const Project* project_;
     const llvm::DataLayout* layout_;
     std::unique_ptr<llvm::Module> llvm_module_;
+
+    std::unordered_map<std::string_view, llvm::Constant*> string_literals_;
+    IndexVector<llvm::FunctionType*, refanal::ir::FuncRef> function_types_;
     IndexVector<llvm::Function*, refanal::ir::FuncRef> functions_;
+    IndexVector<llvm::FunctionType*, refanal::ir::UsedFuncRef> used_function_types_;
     IndexVector<llvm::Function*, refanal::ir::UsedFuncRef> used_funcs_;
 
     friend class FuncGenerator;
@@ -256,23 +271,6 @@ public:
 private:
     void set_local_types() {
         for (const auto& block : ir_func->blocks()) {
-            auto process_operand = [&](refanal::ir::OperandRef ref) {
-                const auto& operand = ir_func->operand(ref);
-                if (auto place = operand.data.get_if<refanal::ir::Place>()) {
-                    auto type = ir_func->local(place->local).type;
-                    types::SpecType operand_type = {
-                        .type = type.type, .specifier = operand.specifier
-                    };
-                    if (place->projections.empty() &&
-                        (is_ref(operand_type) && is_ref(type) ||
-                         !is_ref(operand_type)) &&
-                        local_types_[place->local] != LocalType::Alloca) {
-                        local_types_[place->local] = LocalType::Operand;
-                    } else {
-                        local_types_[place->local] = LocalType::Alloca;
-                    }
-                }
-            };
             for (auto ref : block.statements) {
                 const auto& statement = ir_func->statement(ref);
                 if (auto assign =
@@ -287,57 +285,85 @@ private:
                     } else {
                         local_types_[assign->place.local] = LocalType::Operand;
                     }
-                    assign->rvalue.data.visit(
-                        [&](const refanal::ir::RValue::Use u) {
-                            process_operand(u.operand);
-                        },
-                        [&](const refanal::ir::RValue::Unary u) {
-                            process_operand(u.operand);
-                        },
-                        [&](const refanal::ir::RValue::Binary& b) {
-                            process_operand(b.left);
-                            process_operand(b.right);
-                        },
-                        [&](const refanal::ir::RValue::Comparison& c) {
-                            process_operand(c.left);
-                            process_operand(c.right);
-                        },
-                        [&](const refanal::ir::RValue::Call& c) {
-                            process_operand(c.callee);
-                            for (auto op : ir_func->operands(c.args)) {
-                                process_operand(op);
-                            }
-                        },
-                        [&](const refanal::ir::RValue::AddressOf a) {
-                            local_types_[a.place.local] = LocalType::Alloca;
-                        },
-                        [&](const refanal::ir::RValue::Cast c) {
-                            process_operand(c.operand);
-                        },
-                        [&](const refanal::ir::RValue::CreateStruct& c) {
-                            for (auto op : ir_func->operands(c.args)) {
-                                process_operand(op);
-                            }
-                        },
-                        [&](const refanal::ir::RValue::Array& a) {
-                            for (auto op : ir_func->operands(a.items)) {
-                                process_operand(op);
-                            }
-                        }
-                    );
+                    process_rvalue_operands(assign->rvalue);
                 }
             }
-            block.terminator->data.visit(
-                [&](const refanal::ir::Terminator::Branch& b) {
-                    process_operand(b.condition);
-                },
-                [&](const refanal::ir::Terminator::Return& r) {
-                    if (r.value) {
-                        process_operand(*r.value);
-                    }
-                },
-                [&](const auto) {}
-            );
+            if (block.terminator) {
+                process_terminator_operands(*block.terminator);
+            }
+        }
+    }
+
+    void process_rvalue_operands(const refanal::ir::RValue& rv) {
+        rv.data.visit(
+            [&](const refanal::ir::RValue::Use u) {
+                process_operand(u.operand);
+            },
+            [&](const refanal::ir::RValue::Unary u) {
+                process_operand(u.operand);
+            },
+            [&](const refanal::ir::RValue::Binary& b) {
+                process_operand(b.left);
+                process_operand(b.right);
+            },
+            [&](const refanal::ir::RValue::Comparison& c) {
+                process_operand(c.left);
+                process_operand(c.right);
+            },
+            [&](const refanal::ir::RValue::Call& c) {
+                process_operand(c.callee);
+                for (auto op : ir_func->operands(c.args)) {
+                    process_operand(op);
+                }
+            },
+            [&](const refanal::ir::RValue::AddressOf a) {
+                local_types_[a.place.local] = LocalType::Alloca;
+            },
+            [&](const refanal::ir::RValue::Cast c) {
+                process_operand(c.operand);
+            },
+            [&](const refanal::ir::RValue::CreateStruct& c) {
+                for (auto op : ir_func->operands(c.args)) {
+                    process_operand(op);
+                }
+            },
+            [&](const refanal::ir::RValue::Array& a) {
+                for (auto op : ir_func->operands(a.items)) {
+                    process_operand(op);
+                }
+            }
+        );
+    }
+
+    void process_terminator_operands(const refanal::ir::Terminator& term) {
+        term.data.visit(
+            [&](const refanal::ir::Terminator::Branch& b) {
+                process_operand(b.condition);
+            },
+            [&](const refanal::ir::Terminator::Return& r) {
+                if (r.value) {
+                    process_operand(*r.value);
+                }
+            },
+            [&](const auto&) {}
+        );
+    }
+
+    void process_operand(refanal::ir::OperandRef ref) {
+        const auto& operand = ir_func->operand(ref);
+        if (auto place = operand.data.get_if<refanal::ir::Place>()) {
+            auto type = ir_func->local(place->local).type;
+            types::SpecType operand_type = {
+                .type = type.type, .specifier = operand.specifier
+            };
+            if (place->projections.empty() &&
+                (is_ref(operand_type) == is_ref(type) ||
+                 !is_ref(operand_type)) &&
+                local_types_[place->local] != LocalType::Alloca) {
+                local_types_[place->local] = LocalType::Operand;
+            } else {
+                local_types_[place->local] = LocalType::Alloca;
+            }
         }
     }
 
@@ -403,17 +429,17 @@ private:
                     case refanal::ir::UnaryOp::BitNot:
                         return builder_.CreateNot(v);
                 }
-                return nullptr;
+                llvm_unreachable("invalid unary op");
             },
             [&](const refanal::ir::RValue::Binary& b) -> llvm::Value* {
                 llvm::Value* l = get_operand_value(b.left);
                 llvm::Value* r = get_operand_value(b.right);
                 bool f = l->getType()->isFloatingPointTy();
-                bool is_signed = true;
-                if (auto* i = get_type(get_operand_type(b.left).type)
-                                  .data.get_if<types::Type::Int>()) {
-                    is_signed = i->is_signed;
-                }
+                const auto& l_type = get_type(get_operand_type(b.left).type);
+                bool is_signed = l_type.data.visit(
+                    [](const types::Type::Int& i) { return i.is_signed; },
+                    [](const auto&) { return false; }
+                );
 
                 switch (b.op) {
                     case refanal::ir::BinaryOp::Add:
@@ -445,17 +471,17 @@ private:
                     case refanal::ir::BinaryOp::BitXor:
                         return builder_.CreateXor(l, r);
                 }
-                return nullptr;
+                llvm_unreachable("invalid unary op");
             },
             [&](const refanal::ir::RValue::Comparison& c) -> llvm::Value* {
                 llvm::Value* l = get_operand_value(c.left);
                 llvm::Value* r = get_operand_value(c.right);
                 bool f = l->getType()->isFloatingPointTy();
-                bool is_signed = true;
-                if (auto* i = get_type(get_operand_type(c.left).type)
-                                  .data.get_if<types::Type::Int>()) {
-                    is_signed = i->is_signed;
-                }
+                const auto& l_type = get_type(get_operand_type(c.left).type);
+                bool is_signed = l_type.data.visit(
+                    [](const types::Type::Int& i) { return i.is_signed; },
+                    [](const auto&) { return false; }
+                );
 
                 if (f) {
                     switch (c.op) {
@@ -492,7 +518,7 @@ private:
                             return builder_.CreateICmpNE(l, r);
                     }
                 }
-                return nullptr;
+                llvm_unreachable("invalid unary op");
             },
             [&](const refanal::ir::RValue::Call& c) -> llvm::Value* {
                 llvm::Value* callee = get_operand_value(c.callee);
@@ -506,7 +532,7 @@ private:
                                          .get(p->type.type)
                                          .data.get_if<types::Type::Func>();
                 }
-                if (!func_type_info) return nullptr;
+                if (!func_type_info) llvm_unreachable("invalid callee type");
 
                 auto s_args = ir_func->operands(c.args);
                 std::vector<llvm::Value*> args;
@@ -515,16 +541,29 @@ private:
                     args.push_back(get_operand_value(s_arg));
                 }
 
-                std::vector<llvm::Type*> param_types;
-                param_types.reserve(func_type_info->params.size());
-                for (const auto& p : func_type_info->params) {
-                    param_types.push_back(get_rep_type(p.type));
+                llvm::FunctionType* llvm_func_type = nullptr;
+                const auto& callee_op = ir_func->operand(c.callee);
+                if (auto* cv = callee_op.data.get_if<refanal::ir::Const>()) {
+                    if (auto* fr = cv->value.get_if<refanal::ir::FuncRef>()) {
+                        llvm_func_type = generator->function_types_[*fr];
+                    } else if (auto* ufr =
+                                   cv->value.get_if<refanal::ir::UsedFuncRef>()) {
+                        llvm_func_type = generator->used_function_types_[*ufr];
+                    }
                 }
-                llvm::FunctionType* llvm_func_type = llvm::FunctionType::get(
-                    get_rep_type(func_type_info->return_type),
-                    param_types,
-                    false
-                );
+
+                if (!llvm_func_type) {
+                    std::vector<llvm::Type*> param_types;
+                    param_types.reserve(func_type_info->params.size());
+                    for (const auto& p : func_type_info->params) {
+                        param_types.push_back(get_rep_type(p.type));
+                    }
+                    llvm_func_type = llvm::FunctionType::get(
+                        get_rep_type(func_type_info->return_type),
+                        param_types,
+                        false
+                    );
+                }
 
                 return builder_.CreateCall(llvm_func_type, callee, args);
             },
@@ -617,11 +656,7 @@ private:
             },
             [&](const refanal::ir::RValue::Array& a) -> llvm::Value* {
                 auto s_items = ir_func->operands(a.items);
-                if (s_items.empty()) return nullptr;
-                llvm::Type* item_type =
-                    get_operand_value(s_items[0])->getType();
-                llvm::Type* at =
-                    llvm::ArrayType::get(item_type, s_items.size());
+                llvm::Type* at = get_rep_type(type);
                 llvm::Value* av = llvm::UndefValue::get(at);
                 for (uint32_t i = 0; i < s_items.size(); ++i) {
                     av = builder_.CreateInsertValue(
@@ -749,7 +784,7 @@ private:
                         builder_.CreateLoad(get_rep_type(type), ptr)
                     );
                 }
-                throw std::runtime_error("internal error");
+                llvm_unreachable("internal error in get_operand_value");
             }
         );
     }
@@ -776,7 +811,11 @@ private:
             },
             [&](char32_t ch) -> llvm::Value* { return builder_.getInt32(ch); },
             [&](std::string_view s) -> llvm::Value* {
-                return builder_.CreateGlobalString(s);
+                auto& cached = generator->string_literals_[s];
+                if (!cached) {
+                    cached = builder_.CreateGlobalString(s);
+                }
+                return cached;
             },
             [&](refanal::ir::FuncRef f) -> llvm::Value* {
                 return generator->functions_[f];

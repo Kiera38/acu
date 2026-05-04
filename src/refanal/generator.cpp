@@ -26,9 +26,8 @@ class FuncGenerator {
     };
 
     struct Value {
-        utils::
-            Variant<std::monostate, ir::Const, ir::LocalRef, ir::PlaceBuilder>
-                value;
+        utils::Variant<std::monostate, ir::Const, ir::LocalRef, ir::PlaceBuilder>
+            value;
 
         Value() = default;
         Value(ir::Const c) : value(c) {}
@@ -57,7 +56,7 @@ class FuncGenerator {
         ) const {
             return value.visit(
                 [&](std::monostate) {
-                    return builder.build_place(ir::LocalRef {0});
+                    return builder.build_place(builder.add_local(type));
                 },
                 [&](const ir::Const& c) {
                     return builder.build_place(builder.assign_use(
@@ -73,7 +72,7 @@ class FuncGenerator {
             ir::Builder& builder, types::SpecType type, Location loc
         ) const {
             return value.visit(
-                [&](std::monostate) { return ir::LocalRef {0}; },
+                [&](std::monostate) { return builder.add_local(type); },
                 [&](const ir::Const& c) {
                     return builder.assign_use(
                         type, builder.op(c, type.specifier), loc
@@ -228,12 +227,38 @@ private:
             .as_operand(builder_, expected_type, loc);
     }
 
-    uint32_t get_field_index(types::TypeId struct_type, std::string_view name) {
-        const auto& type_def = apackage_->ir_package->types().get(struct_type);
-        const auto& s = type_def.data.get<types::Type::Struct>();
-        for (uint32_t i = 0; i < s.fields.size(); ++i) {
-            if (s.fields[i].name == name) return i;
+    const types::Type::StructField& get_field(
+        types::TypeId struct_type, std::string_view name
+    ) {
+        const auto& type = apackage_->ir_package->types().get(struct_type);
+        std::span<const types::Type::StructField> fields;
+        if (auto s = type.data.get_if<types::Type::Struct>()) {
+            fields = s->fields;
+        } else {
+            fields = type.data.get<types::Type::UsedStruct>().fields();
         }
+
+        for (uint32_t i = 0; i < fields.size(); ++i) {
+            if (fields[i].name == name) return fields[i];
+        }
+        assert(false && "Field not found");
+        static types::Type::StructField empty;
+        return empty;
+    }
+
+    uint32_t get_field_index(types::TypeId struct_type, std::string_view name) {
+        const auto& type = apackage_->ir_package->types().get(struct_type);
+        std::span<const types::Type::StructField> fields;
+        if (auto s = type.data.get_if<types::Type::Struct>()) {
+            fields = s->fields;
+        } else {
+            fields = type.data.get<types::Type::UsedStruct>().fields();
+        }
+
+        for (uint32_t i = 0; i < fields.size(); ++i) {
+            if (fields[i].name == name) return i;
+        }
+        assert(false && "Field not found");
         return 0;
     }
 
@@ -314,42 +339,73 @@ private:
                     types::SpecType comp_type = {
                         .type = comp.type, .specifier = types::Specifier::Val
                     };
-                    auto l =
-                        get_operand_cast(inst.left, comp_type, sinst.location);
+                    auto l = get_operand_cast(
+                        inst.left, comp_type, sinst.location
+                    );
                     visit_block(comp.value);
                     auto r = get_operand_cast(
                         comp.value.end, comp_type, sinst.location
                     );
                     values_[sref] = Value {builder_.assign_comp(
-                        comp_type,
+                        type,
                         static_cast<ir::ComparisonOp>(comp.op),
                         l,
                         r,
                         sinst.location
                     )};
-                } else {
-                    auto& comp = comparators[0];
+                    return;
+                }
+
+                auto res_local = builder_.add_local(type);
+                auto merge_block = builder_.add_block();
+                auto current_left_ref = inst.left;
+
+                for (size_t i = 0; i < comparators.size(); ++i) {
+                    auto& comp = comparators[i];
                     types::SpecType comp_type = {
                         .type = comp.type, .specifier = types::Specifier::Val
                     };
-                    auto l =
-                        get_operand_cast(inst.left, comp_type, sinst.location);
+
+                    auto l = get_operand_cast(
+                        current_left_ref, comp_type, sinst.location
+                    );
                     visit_block(comp.value);
                     auto r = get_operand_cast(
                         comp.value.end, comp_type, sinst.location
                     );
-                    auto res = builder_.assign_comp(
-                        comp_type,
+
+                    auto cmp_res = builder_.assign_comp(
+                        type,
                         static_cast<ir::ComparisonOp>(comp.op),
                         l,
                         r,
                         sinst.location
                     );
-                    values_[sref] = Value {res};
-                    for (size_t i = 1; i < comparators.size(); ++i) {
-                        visit_block(comparators[i].value);
+
+                    builder_.assign(
+                        builder_.place(res_local),
+                        builder_.r_use(
+                            builder_.op(cmp_res, types::Specifier::Val)
+                        ),
+                        sinst.location
+                    );
+
+                    if (i < comparators.size() - 1) {
+                        auto next_block = builder_.add_block();
+                        builder_.branch(
+                            builder_.op(cmp_res, types::Specifier::Val),
+                            next_block,
+                            merge_block,
+                            sinst.location
+                        );
+                        builder_.set_block(next_block);
                     }
+                    current_left_ref = comp.value.end;
                 }
+
+                builder_.jump(merge_block);
+                builder_.set_block(merge_block);
+                values_[sref] = Value {res_local};
             },
             [&](const SemInst::Call& inst) {
                 const auto& callee_inst =
@@ -477,16 +533,16 @@ private:
             },
             [&](const SemInst::SetAttr& inst) {
                 auto type = apackage_->inst_types[inst.var];
-                auto pb = values_[inst.value].as_place_builder(
+                auto pb = values_[inst.var].as_place_builder(
                     builder_, type, sinst.location
                 );
-                auto p =
-                    pb.field(get_field_index(type.type, inst.name)).build();
+                const auto& field = get_field(type.type, inst.name);
+                auto p = pb.field(get_field_index(type.type, inst.name)).build();
                 builder_.assign(
                     p,
-                    builder_.r_use(
-                        get_operand_cast(inst.value, type, sinst.location)
-                    ),
+                    builder_.r_use(get_operand_cast(
+                        inst.value, field.type, sinst.location
+                    )),
                     sinst.location
                 );
             },
@@ -508,10 +564,10 @@ private:
                 auto item_type =
                     get_item_type(apackage_->inst_types[inst.var].type);
                 builder_.assign(
-                    values_[inst.value]
+                    values_[inst.var]
                         .as_place_builder(
                             builder_,
-                            apackage_->inst_types[inst.value],
+                            apackage_->inst_types[inst.var],
                             sinst.location
                         )
                         .index(get_operand_cast(
