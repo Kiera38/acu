@@ -18,7 +18,6 @@
 #include "parser/parser.h"
 #include "refanal/generator.h"
 #include "refanal/ir_str.h"
-#include "refanal/optimizer.h"
 #include "semanal/ir.h"
 #include "semanal/semanal.h"
 

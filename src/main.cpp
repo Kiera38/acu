@@ -116,7 +116,7 @@ std::optional<Config> parse_args(std::span<char*> argv) {
         if(std::filesystem::is_directory(config.input_path)) {
             config.output_path = config.input_path;
         } else {
-            config.output_path = config.input_path.parent_path();
+            config.output_path = std::filesystem::absolute(config.input_path).parent_path();
         }
     }
     return config;
