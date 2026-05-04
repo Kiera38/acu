@@ -140,6 +140,24 @@ public:
         return types_[type].data.is<Type::Int>();
     }
 
+    [[nodiscard]] bool is_signed_int(TypeId type) const {
+        if (auto it = types_[type].data.get_if<Type::Int>()) {
+            return it->is_signed;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool is_unsigned_int(TypeId type) const {
+        if (auto it = types_[type].data.get_if<Type::Int>()) {
+            return !it->is_signed;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool is_float(TypeId type) const {
+        return types_[type].data.is<Type::Float>();
+    }
+
     [[nodiscard]] const Type& get(TypeId id) const { return types_[id]; }
     [[nodiscard]] size_t type_count() const { return types_.size(); }
 

@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <deque>
 #include <format>
 #include <optional>
 #include <string>
@@ -15,52 +14,46 @@
 
 namespace acu::semanal {
 namespace {
-bool is_int(types::TypeId id) {
-    return id.index >= types::Int8.index && id.index <= types::Int64.index;
-}
-
-bool is_uint(types::TypeId id) {
-    return id.index >= types::UInt8.index && id.index <= types::UInt64.index;
-}
-
-bool is_float(types::TypeId id) {
-    return id.index >= types::Float32.index && id.index <= types::Float64.index;
-}
-
-bool can_convert(types::TypeId from, types::TypeId to) {
-    if (from == to) {
+bool can_convert(
+    types::TypeId from, types::TypeId to, const types::TypePool& pool
+) {
+    if (from == to || from == types::Nothing) {
         return true;
     }
 
-    if (from == types::Nothing) {
-        return true;
-    }
+    const auto& from_data = pool.get(from).data;
+    const auto& to_data = pool.get(to).data;
 
-    if (is_int(from)) {
-        if (is_int(to)) {
-            return from.index <= to.index;
+    if (auto f_int = from_data.get_if<types::Type::Int>()) {
+        if (auto t_int = to_data.get_if<types::Type::Int>()) {
+            if (f_int->is_signed == t_int->is_signed) {
+                return f_int->bits <= t_int->bits;
+            }
+            if (!f_int->is_signed && t_int->is_signed) {
+                return f_int->bits < t_int->bits;
+            }
+            if (f_int->is_signed && !t_int->is_signed) {
+                return t_int->bits > f_int->bits;
+            }
         }
-        if (is_uint(to)) {
-            return (to.index - types::UInt8.index) >
-                   (from.index - types::Int8.index);
-        }
-        if (to == types::Bool || is_float(to)) {
+        if (to_data.is<types::Type::Bool>() ||
+            to_data.is<types::Type::Float>()) {
             return true;
         }
     }
 
-    if (is_uint(from)) {
-        if (is_uint(to)) {
-            return from.index <= to.index;
-        }
-        if (to == types::Bool || is_float(to)) {
+    if (auto f_uint = from_data.get_if<types::Type::Int>();
+        f_uint && !f_uint->is_signed) {
+        if (to_data.is<types::Type::Bool>() ||
+            to_data.is<types::Type::Float>()) {
             return true;
         }
     }
 
-    if (is_float(from)) {
-        if (is_float(to)) {
-            return from.index <= to.index;
+    if (auto f_float = from_data.get_if<types::Type::Float>()) {
+        if (auto t_float = to_data.get_if<types::Type::Float>()) {
+            return static_cast<uint8_t>(*f_float) <=
+                   static_cast<uint8_t>(*t_float);
         }
     }
 
@@ -68,27 +61,31 @@ bool can_convert(types::TypeId from, types::TypeId to) {
 }
 
 bool can_cast(
-    types::TypeId from, types::TypeId to, const types::TypePool& type_pool
+    types::TypeId from, types::TypeId to, const types::TypePool& pool
 ) {
-    if (can_convert(from, to)) {
+    if (can_convert(from, to, pool)) {
         return true;
     }
 
-    if ((is_int(from) || is_uint(from)) && (is_int(to) || is_uint(to))) {
+    const auto& from_tp = pool.get(from);
+    const auto& to_tp = pool.get(to);
+
+    if (from_tp.data.is<types::Type::Int>() &&
+        to_tp.data.is<types::Type::Int>()) {
         return true;
     }
 
-    if (is_float(from) && is_float(to)) {
+    if (from_tp.data.is<types::Type::Float>() &&
+        to_tp.data.is<types::Type::Float>()) {
         return true;
     }
 
-    const auto& from_tp = type_pool.get(from);
-    const auto& to_tp = type_pool.get(to);
-
-    if ((is_int(from) || is_uint(from)) && to_tp.data.is<types::Type::Ptr>()) {
+    if (from_tp.data.is<types::Type::Int>() &&
+        to_tp.data.is<types::Type::Ptr>()) {
         return true;
     }
-    if (from_tp.data.is<types::Type::Ptr>() && (is_int(to) || is_uint(to))) {
+    if (from_tp.data.is<types::Type::Ptr>() &&
+        to_tp.data.is<types::Type::Int>()) {
         return true;
     }
 
@@ -103,14 +100,16 @@ bool can_cast(
     return false;
 }
 
-std::optional<types::TypeId> unify(types::TypeId type1, types::TypeId type2) {
+std::optional<types::TypeId> unify(
+    types::TypeId type1, types::TypeId type2, const types::TypePool& pool
+) {
     if (type1 == type2) {
         return type1;
     }
-    if (can_convert(type1, type2)) {
+    if (can_convert(type1, type2, pool)) {
         return type2;
     }
-    if (can_convert(type2, type1)) {
+    if (can_convert(type2, type1, pool)) {
         return type1;
     }
     return std::nullopt;
@@ -131,49 +130,19 @@ struct TypeVar {
     ) {
         if (locked) {
             if (type.has_value() && type->type != tp.type) {
-                if (!can_convert(tp.type, type->type)) {
-                    std::string hint = "";
-                    if (can_cast(tp.type, type->type, pool)) {
-                        hint = std::format(
-                            "use 'as {}' for explicit conversion",
-                            pool.to_string(type->type)
-                        );
-                    }
-                    std::vector<Label> labels;
-                    if (define_loc.has_value()) {
-                        labels.push_back({&source, *define_loc, std::format("expected because of this definition, which has type {}", pool.to_string(type->type))});
-                    }
-                    err_handler.error(
-                        source,
-                        loc,
-                        std::format(
-                            "Type mismatch: cannot convert {} to {}",
-                            pool.to_string(tp.type),
-                            pool.to_string(type->type)
-                        ),
-                        hint,
-                        std::move(labels)
+                if (!can_convert(tp.type, type->type, pool)) {
+                    report_error(
+                        tp.type, type->type, loc, source, pool, err_handler,
+                        false
                     );
                 }
             }
         } else {
             if (type.has_value()) {
-                auto unified = unify(type->type, tp.type);
+                auto unified = unify(type->type, tp.type, pool);
                 if (!unified.has_value()) {
-                    std::vector<Label> labels;
-                    if (define_loc.has_value()) {
-                        labels.push_back({&source, *define_loc, std::format("this expression has type {}", pool.to_string(type->type))});
-                    }
-                    err_handler.error(
-                        source,
-                        loc,
-                        std::format(
-                            "Type mismatch: cannot unify {} and {}",
-                            pool.to_string(tp.type),
-                            pool.to_string(type->type)
-                        ),
-                        "",
-                        std::move(labels)
+                    report_error(
+                        tp.type, type->type, loc, source, pool, err_handler, true
                     );
                 } else {
                     type->type = *unified;
@@ -187,11 +156,15 @@ struct TypeVar {
         if (!locked_spec && tp.specifier != types::Specifier::None) {
             if (type->specifier == types::Specifier::None) {
                 type->specifier = tp.specifier;
-            } else if (tp.specifier == types::Specifier::Var &&
-                       type->specifier == types::Specifier::Let) {
+            } else if (
+                tp.specifier == types::Specifier::Var &&
+                type->specifier == types::Specifier::Let
+            ) {
                 type->specifier = types::Specifier::Var;
-            } else if (tp.specifier == types::Specifier::Val &&
-                       type->specifier != types::Specifier::Val) {
+            } else if (
+                tp.specifier == types::Specifier::Val &&
+                type->specifier != types::Specifier::Val
+            ) {
                 type->specifier = types::Specifier::Val;
             }
         }
@@ -214,28 +187,9 @@ struct TypeVar {
             );
             return;
         }
-        if (type.has_value() && !can_convert(type->type, tp.type)) {
-            std::string hint = "";
-            if (can_cast(type->type, tp.type, pool)) {
-                hint = std::format(
-                    "use 'as {}' for explicit conversion",
-                    pool.to_string(tp.type)
-                );
-            }
-            std::vector<Label> labels;
-            if (define_loc.has_value()) {
-                labels.push_back({&source, *define_loc, std::format("type established here as {}", pool.to_string(type->type))});
-            }
-            err_handler.error(
-                source,
-                loc,
-                std::format(
-                    "Type mismatch: cannot convert {} to {}",
-                    pool.to_string(tp.type),
-                    pool.to_string(type->type)
-                ),
-                hint,
-                std::move(labels)
+        if (type.has_value() && !can_convert(type->type, tp.type, pool)) {
+            report_error(
+                tp.type, type->type, loc, source, pool, err_handler, false
             );
         }
         type = tp;
@@ -285,6 +239,44 @@ struct TypeVar {
         }
         return *type;
     }
+
+private:
+    void report_error(
+        types::TypeId from,
+        types::TypeId to,
+        Location loc,
+        const Source& source,
+        const types::TypePool& pool,
+        ErrorHandler& err_handler,
+        bool is_unification
+    ) const {
+        std::string hint = "";
+        if (can_cast(from, to, pool)) {
+            hint = std::format(
+                "use 'as {}' for explicit conversion", pool.to_string(to)
+            );
+        }
+        std::vector<Label> labels;
+        if (define_loc.has_value()) {
+            labels.push_back({
+                .source = &source,
+                .location = *define_loc,
+                .message = std::format(
+                    "type established here as {}", pool.to_string(to)
+                ),
+            });
+        }
+        std::string message = is_unification
+                                  ? std::format(
+                                        "Type mismatch: cannot unify {} and {}",
+                                        pool.to_string(from), pool.to_string(to)
+                                    )
+                                  : std::format(
+                                        "Type mismatch: cannot convert {} to {}",
+                                        pool.to_string(from), pool.to_string(to)
+                                    );
+        err_handler.error(source, loc, std::move(message), hint, std::move(labels));
+    }
 };
 
 class TypeAnalyzer {
@@ -305,7 +297,7 @@ public:
 
     bool propagate() {
         changed_ = false;
-        current_inst_ = 0;
+        current_inst_ = func_->insts.start;
         propagate_range(
             ir::Block {.end = {func_->insts.start + func_->insts.size - 1}}
         );
@@ -541,17 +533,17 @@ private:
                 auto left = type_vars_[data.left].type;
                 auto right = type_vars_[data.right].type;
                 if (left && right) {
-                    auto unified = unify(left->type, right->type);
+                    auto unified = unify(left->type, right->type, *type_pool_);
                     if (unified) {
                         bool ok = false;
                         if (data.op == ir::Inst::BinaryOp::Add ||
                             data.op == ir::Inst::BinaryOp::Sub ||
                             data.op == ir::Inst::BinaryOp::Mul ||
                             data.op == ir::Inst::BinaryOp::Div) {
-                            ok = is_int(*unified) || is_uint(*unified) ||
-                                 is_float(*unified);
+                            ok = type_pool_->is_int(*unified) ||
+                                 type_pool_->is_float(*unified);
                         } else {
-                            ok = is_int(*unified) || is_uint(*unified);
+                            ok = type_pool_->is_int(*unified);
                         }
 
                         if (!ok) {
@@ -577,7 +569,8 @@ private:
                 propagate_range(data.right);
 
                 auto left_tp = type_vars_[data.left].type;
-                if (left_tp && !can_convert(left_tp->type, types::Bool)) {
+                if (left_tp &&
+                    !can_convert(left_tp->type, types::Bool, *type_pool_)) {
                     error(
                         inst.location,
                         std::format(
@@ -587,7 +580,8 @@ private:
                     );
                 }
                 auto right_tp = type_vars_[data.right.end].type;
-                if (right_tp && !can_convert(right_tp->type, types::Bool)) {
+                if (right_tp &&
+                    !can_convert(right_tp->type, types::Bool, *type_pool_)) {
                     error(
                         inst.location,
                         std::format(
@@ -605,7 +599,8 @@ private:
             [&](const ir::Inst::Unary& data) {
                 if (data.op == ir::Inst::UnaryOp::Not) {
                     auto val_tp = type_vars_[data.value].type;
-                    if (val_tp && !can_convert(val_tp->type, types::Bool)) {
+                    if (val_tp &&
+                        !can_convert(val_tp->type, types::Bool, *type_pool_)) {
                         error(
                             inst.location,
                             std::format(
@@ -639,8 +634,9 @@ private:
                     auto& left_tv = type_vars_[current_left];
                     auto& right_tv = type_vars_[operand_ref];
                     if (left_tv.defined() && right_tv.defined()) {
-                        auto unified =
-                            unify(left_tv.get().type, right_tv.get().type);
+                        auto unified = unify(
+                            left_tv.get().type, right_tv.get().type, *type_pool_
+                        );
                         if (unified) {
                             comparator.type = *unified;
                         }
@@ -666,7 +662,11 @@ private:
                             );
                         }
                     } else {
-                        error(inst.location, "is not function or struct");
+                        error(
+                            inst.location,
+                            "expression is not a function or a struct and "
+                            "cannot be called"
+                        );
                     }
                 }
             },
@@ -681,7 +681,8 @@ private:
                 }
 
                 auto cond_tp = type_vars_[data.value].type;
-                if (cond_tp && !can_convert(cond_tp->type, types::Bool)) {
+                if (cond_tp &&
+                    !can_convert(cond_tp->type, types::Bool, *type_pool_)) {
                     error(
                         inst.location,
                         std::format(
@@ -799,7 +800,8 @@ private:
                     if (!common_tp) {
                         common_tp = item_tp->type;
                     } else {
-                        common_tp = unify(*common_tp, item_tp->type);
+                        common_tp =
+                            unify(*common_tp, item_tp->type, *type_pool_);
                         if (!common_tp) {
                             break;
                         }
@@ -849,10 +851,9 @@ private:
             error(
                 inst.location,
                 std::format(
-                    "argument count mismatch: function has {} "
-                    "parameters but call arguments {}",
-                    ft.params.size(),
-                    data.args.size + data.named_args.size
+                    "too many arguments: function has {} "
+                    "parameters but {} were provided",
+                    ft.params.size(), data.args.size + data.named_args.size
                 )
             );
         }
@@ -860,10 +861,8 @@ private:
             error(
                 inst.location,
                 std::format(
-                    "функция ожидает не меньше {} позиционных аргументов, но "
-                    "передано {}",
-                    ft.min_pos_args,
-                    data.args.size
+                    "too few arguments: expected at least {}, but got {}",
+                    ft.min_pos_args, data.args.size
                 )
             );
         }
@@ -871,17 +870,17 @@ private:
             error(
                 inst.location,
                 std::format(
-                    "функция ожидает не больше {} позиционных аргументов, но "
-                    "передано {}",
-                    ft.min_pos_args,
-                    data.args.size
+                    "too many arguments: expected at most {}, but got {}",
+                    ft.max_pos_args, data.args.size
                 )
             );
         }
         auto args = package_->inst_refs(data.args);
         for (size_t i = 0; i < args.size(); ++i) {
             auto arg_tp = type_vars_[args[i]].type;
-            if (arg_tp && !can_convert(arg_tp->type, ft.params[i].type.type)) {
+            if (arg_tp && !can_convert(
+                              arg_tp->type, ft.params[i].type.type, *type_pool_
+                          )) {
                 error(
                     inst.location,
                     std::format(
@@ -917,10 +916,9 @@ private:
                     error(
                         inst.location,
                         std::format(
-                            "argument with name {} already "
-                            "passed as {} argument",
-                            named_arg.name,
-                            result - search_params.begin()
+                            "named argument '{}' was already provided as "
+                            "positional argument {}",
+                            named_arg.name, result - search_params.begin()
                         )
                     );
                     return std::nullopt;
@@ -928,14 +926,14 @@ private:
                 error(
                     inst.location,
                     std::format(
-                        "argument with name {} not found", named_arg.name
+                        "function has no parameter named '{}'", named_arg.name
                     )
                 );
                 return std::nullopt;
             }();
             auto arg_tp = type_vars_[named_arg.value].type;
             if (param && arg_tp &&
-                !can_convert(arg_tp->type, param->type.type)) {
+                !can_convert(arg_tp->type, param->type.type, *type_pool_)) {
                 error(
                     inst.location,
                     std::format(
@@ -1043,22 +1041,18 @@ ir::AnalyzedPackage type_analyze(
 ) {
     ir::AnalyzedPackage result(&package);
     IndexVector<TypeVar, ir::InstRef> type_vars(package.last_inst().index + 1);
-    std::deque<TypeAnalyzer> analyzers;
+
     for (auto func_ref : package.funcs().indices()) {
         if (package.func(func_ref).is_extern) {
             continue;
         }
-        analyzers.emplace_back(
-            package, type_vars.data(), func_ref, err_handler
-        );
-    }
-    while (!analyzers.empty()) {
-        auto analyzer = analyzers.front();
-        analyzers.pop_front();
-        if (analyzer.propagate()) {
-            analyzers.push_back(analyzer);
+
+        TypeAnalyzer analyzer(package, type_vars.data(), func_ref, err_handler);
+        while (analyzer.propagate()) {
+            // Internal fixed-point iteration for the function
         }
     }
+
     result.inst_types = get_types(type_vars.data());
     return result;
 }
