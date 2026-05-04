@@ -207,7 +207,7 @@ std::unique_ptr<llvm::Module> generate_llvm(
     llvm::LLVMContext& context,
     const Package& package,
     const Project& project,
-    llvm::OptimizationLevel opt_level,
+    acu::OptimizationLevel opt_level,
     const std::optional<llvm::DataLayout>& layout,
     bool show_llvm,
     bool show_opt_llvm
@@ -221,7 +221,18 @@ std::unique_ptr<llvm::Module> generate_llvm(
         llvm_module->print(llvm::outs(), nullptr);
     }
 
-    acu::codegen::optimize(*llvm_module, opt_level);
+    auto llvm_opt_level = [&] {
+        switch (opt_level) {
+            case acu::OptimizationLevel::O0: return llvm::OptimizationLevel::O0;
+            case acu::OptimizationLevel::O1: return llvm::OptimizationLevel::O1;
+            case acu::OptimizationLevel::O2: return llvm::OptimizationLevel::O2;
+            case acu::OptimizationLevel::O3: return llvm::OptimizationLevel::O3;
+            case acu::OptimizationLevel::Os: return llvm::OptimizationLevel::Os;
+            case acu::OptimizationLevel::Oz: return llvm::OptimizationLevel::Oz;
+        }
+    }();
+
+    acu::codegen::optimize(*llvm_module, llvm_opt_level);
     if (show_opt_llvm) {
         std::cout << "\nOPTIMIZED LLVM IR\n";
         llvm_module->print(llvm::outs(), nullptr);
@@ -232,7 +243,7 @@ std::unique_ptr<llvm::Module> generate_llvm(
 void Project::codegen(
     bool show_llvm_ir,
     bool show_opt_llvm_ir,
-    llvm::OptimizationLevel opt,
+    acu::OptimizationLevel opt,
     const std::filesystem::path& output_path
 ) {
     if (!std::filesystem::exists(output_path)) {
@@ -262,7 +273,7 @@ void Project::codegen(
 }
 
 void Project::run_jit(
-    bool show_llvm_ir, bool show_opt_llvm_ir, llvm::OptimizationLevel opt
+    bool show_llvm_ir, bool show_opt_llvm_ir, acu::OptimizationLevel opt
 ) {
     std::cout << "\nJIT EXECUTION\n";
     auto jit = acu::codegen::JIT::create();

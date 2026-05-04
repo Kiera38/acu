@@ -1,6 +1,4 @@
 #pragma once
-#include <llvm/Passes/OptimizationLevel.h>
-
 #include <filesystem>
 #include <string>
 
@@ -12,7 +10,6 @@
 #include "refanal/ir.h"
 #include "semanal/ir.h"
 #include "source.h"
-
 
 namespace acu {
 
@@ -32,6 +29,8 @@ struct Package {
 };
 
 using PackageRef = Ref<Package>;
+
+enum class OptimizationLevel : std::uint8_t { O0, O1, O2, O3, Os, Oz };
 
 class Project {
 public:
@@ -55,11 +54,11 @@ public:
     void codegen(
         bool show_llvm_ir,
         bool show_opt_llvm_ir,
-        llvm::OptimizationLevel opt,
+        OptimizationLevel opt,
         const std::filesystem::path& output_path
     );
     void run_jit(
-        bool show_llvm_ir, bool show_opt_llvm_ir, llvm::OptimizationLevel opt
+        bool show_llvm_ir, bool show_opt_llvm_ir, OptimizationLevel opt
     );
 
 private:

@@ -1,5 +1,3 @@
-#include <llvm/IR/LLVMContext.h>
-
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -12,7 +10,7 @@ enum class RunMode : std::uint8_t { Jit, Compile };
 struct Config {
     std::filesystem::path input_path;
     std::filesystem::path output_path;
-    llvm::OptimizationLevel opt_level = llvm::OptimizationLevel::O0;
+    acu::OptimizationLevel opt_level = acu::OptimizationLevel::O0;
     bool show_ast = false;
     bool show_semanal = false;
     bool show_refanal = false;
@@ -67,17 +65,17 @@ std::optional<Config> parse_args(std::span<char*> argv) {
                 return std::nullopt;
             }
         } else if (arg == "-O0") {
-            config.opt_level = llvm::OptimizationLevel::O0;
+            config.opt_level = acu::OptimizationLevel::O0;
         } else if (arg == "-O1") {
-            config.opt_level = llvm::OptimizationLevel::O1;
+            config.opt_level = acu::OptimizationLevel::O1;
         } else if (arg == "-O2") {
-            config.opt_level = llvm::OptimizationLevel::O2;
+            config.opt_level = acu::OptimizationLevel::O2;
         } else if (arg == "-O3") {
-            config.opt_level = llvm::OptimizationLevel::O3;
+            config.opt_level = acu::OptimizationLevel::O3;
         } else if (arg == "-Os") {
-            config.opt_level = llvm::OptimizationLevel::Os;
+            config.opt_level = acu::OptimizationLevel::Os;
         } else if (arg == "-Oz") {
-            config.opt_level = llvm::OptimizationLevel::Oz;
+            config.opt_level = acu::OptimizationLevel::Oz;
         } else if (arg == "--emit-ast") {
             config.show_ast = true;
         } else if (arg == "--emit-semanal") {
@@ -113,10 +111,11 @@ std::optional<Config> parse_args(std::span<char*> argv) {
     }
 
     if (config.mode == RunMode::Compile && config.output_path.empty()) {
-        if(std::filesystem::is_directory(config.input_path)) {
+        if (std::filesystem::is_directory(config.input_path)) {
             config.output_path = config.input_path;
         } else {
-            config.output_path = std::filesystem::absolute(config.input_path).parent_path();
+            config.output_path =
+                std::filesystem::absolute(config.input_path).parent_path();
         }
     }
     return config;
