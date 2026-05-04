@@ -17,88 +17,82 @@ std::uint8_t as_uint8(
     return result;
 }
 }
+types::SpecType Resolver::resolve_builtin_type(
+    std::string_view name, Location location
+) {
+    if (name.starts_with("Int")) {
+        if (name == "Int") return {.type = types::Int};
+        auto bits = as_uint8(
+            name.substr(3), context_->source(), location, *err_handler_
+        );
+        switch (bits) {
+            case 8: return {.type = types::Int8};
+            case 16: return {.type = types::Int16};
+            case 32: return {.type = types::Int32};
+            case 64: return {.type = types::Int64};
+            default:
+                err_handler_->error(
+                    context_->source(), location, "unsupported integer size"
+                );
+                return {.type = types::None};
+        }
+    } else if (name.starts_with("UInt")) {
+        if (name == "UInt") return {.type = types::UInt};
+        auto bits = as_uint8(
+            name.substr(4), context_->source(), location, *err_handler_
+        );
+        switch (bits) {
+            case 8: return {.type = types::UInt8};
+            case 16: return {.type = types::UInt16};
+            case 32: return {.type = types::UInt32};
+            case 64: return {.type = types::UInt64};
+            default:
+                err_handler_->error(
+                    context_->source(), location, "unsupported integer size"
+                );
+                return {.type = types::None};
+        }
+    } else if (name.starts_with("Float")) {
+        if (name == "Float") return {.type = types::Float};
+        auto bits = as_uint8(
+            name.substr(5), context_->source(), location, *err_handler_
+        );
+        switch (bits) {
+            case 32: return {.type = types::Float32};
+            case 64: return {.type = types::Float64};
+            default:
+                err_handler_->error(
+                    context_->source(), location, "unsupported float size"
+                );
+                return {.type = types::None};
+        }
+    } else if (name == "Bool") {
+        return {.type = types::Bool};
+    } else if (name == "None") {
+        return {.type = types::None};
+    } else if (name == "Nothing") {
+        return {.type = types::Nothing};
+    }
+    return {.type = types::None};
+}
+
 types::SpecType Resolver::resolve_type(const nodes::Expr& expr) {
     auto res = expr.value.visit(
         [&](const nodes::Expr::Name& name) -> types::SpecType {
             if (auto type = context_->find(name.name)) {
                 return {.type = type->data.get<types::TypeId>()};
-            } else {
-                if (name.name.starts_with("Int")) {
-                    if (name.name == "Int") return {.type = types::Int};
-                    auto bits = as_uint8(
-                        name.name.substr(3),
-                        context_->source(),
-                        expr.location,
-                        *err_handler_
-                    );
-                    switch (bits) {
-                        case 8: return {.type = types::Int8};
-                        case 16: return {.type = types::Int16};
-                        case 32: return {.type = types::Int32};
-                        case 64: return {.type = types::Int64};
-                        default:
-                            err_handler_->error(
-                                context_->source(),
-                                expr.location,
-                                "unsupported integer size"
-                            );
-                            return {.type = types::None};
-                    }
-                } else if (name.name.starts_with("UInt")) {
-                    if (name.name == "UInt") return {.type = types::UInt};
-                    auto bits = as_uint8(
-                        name.name.substr(4),
-                        context_->source(),
-                        expr.location,
-                        *err_handler_
-                    );
-                    switch (bits) {
-                        case 8: return {.type = types::UInt8};
-                        case 16: return {.type = types::UInt16};
-                        case 32: return {.type = types::UInt32};
-                        case 64: return {.type = types::UInt64};
-                        default:
-                            err_handler_->error(
-                                context_->source(),
-                                expr.location,
-                                "unsupported integer size"
-                            );
-                            return {.type = types::None};
-                    }
-                } else if (name.name.starts_with("Float")) {
-                    if (name.name == "Float") return {.type = types::Float};
-                    auto bits = as_uint8(
-                        name.name.substr(5),
-                        context_->source(),
-                        expr.location,
-                        *err_handler_
-                    );
-                    switch (bits) {
-                        case 32: return {.type = types::Float32};
-                        case 64: return {.type = types::Float64};
-                        default:
-                            err_handler_->error(
-                                context_->source(),
-                                expr.location,
-                                "unsupported float size"
-                            );
-                            return {.type = types::None};
-                    }
-                } else if (name.name == "Bool") {
-                    return {.type = types::Bool};
-                } else if (name.name == "None") {
-                    return {.type = types::None};
-                } else if (name.name == "Nothing") {
-                    return {.type = types::Nothing};
-                }
-                err_handler_->error(
-                    context_->source(),
-                    expr.location,
-                    std::format("name '{}' not found", name.name),
-                    context_->suggest_similar_name(name.name)
-                );
-                return {.type = types::None};
             }
+            auto builtin = resolve_builtin_type(name.name, expr.location);
+            if (builtin.type != types::None) {
+                return builtin;
+            }
+            err_handler_->error(
+                context_->source(),
+                expr.location,
+                std::format("name '{}' not found", name.name),
+                context_->suggest_similar_name(name.name)
+            );
+            return {.type = types::None};
         },
         [&](const nodes::Expr::GetItem& node) -> types::SpecType {
             const auto& name = node.value->value.get<nodes::Expr::Name>();
@@ -202,14 +196,10 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
                 .location = stmt.location,
             });
 
-            if (auto existing = context_->add(data.name, {var_ref, stmt.location})) {
-                err_handler_->error(
-                    context_->source(),
-                    stmt.location,
-                    std::format("redefinition of '{}'", data.name),
-                    "",
-                    {{&context_->source(), existing->location, "previous definition is here"}}
-                );
+            if (auto existing = context_->add(
+                    data.name, {.data = var_ref, .location = stmt.location}
+                )) {
+                report_redefinition(data.name, stmt.location, *existing);
             }
             if (data.init) {
                 auto value_ref = resolve_expr(*data.init, func);
@@ -258,9 +248,7 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
                     .location = stmt.location,
                 });
                 ir_package_.set_if_blocks(
-                    if_ref,
-                    then_block,
-                    ir::Block {.end = break_ref}
+                    if_ref, then_block, ir::Block {.end = break_ref}
                 );
             });
             ir_package_.set_loop_block(loop_ref, loop_block);
@@ -352,23 +340,22 @@ ir::InstRef Resolver::convert_store(
 ) {
     return expr.value.visit(
         [&](const nodes::Expr::Name& node) {
+            ir::InstRef var_ref;
             if (auto var = context_->find(node.name)) {
-                auto ref = var->data.get<ir::InstRef>();
-                return ir_package_.add({
-                    .data = ir::Inst::Store {.var = ref, .value = value},
-                    .location = expr.location,
-                });
+                var_ref = var->data.get<ir::InstRef>();
             } else {
-                auto var_ref = ir_package_.add({
+                var_ref = ir_package_.add({
                     .data = ir::Inst::VarDecl {.name = node.name},
                     .location = expr.location,
                 });
-                context_->add(node.name, {var_ref, expr.location});
-                return ir_package_.add({
-                    .data = ir::Inst::Store {.var = var_ref, .value = value},
-                    .location = expr.location,
-                });
+                context_->add(
+                    node.name, {.data = var_ref, .location = expr.location}
+                );
             }
+            return ir_package_.add({
+                .data = ir::Inst::Store {.var = var_ref, .value = value},
+                .location = expr.location,
+            });
         },
         [&](const nodes::Expr::GetItem& node) {
             return ir_package_.add({
@@ -419,44 +406,26 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
         [&](const nodes::Expr::Name& node) {
             auto entry = context_->find(node.name);
             if (entry != nullptr) {
-                return ir_package_.add(entry->data.visit(
-                    [&](ir::InstRef var_ref) -> ir::Inst {
-                        return {
-                            .data = ir::Inst::LoadVar {.var = var_ref},
-                            .location = expr.location
-                        };
+                ir::Inst inst {.location = expr.location};
+                entry->data.visit(
+                    [&](ir::InstRef var_ref) {
+                        inst.data = ir::Inst::LoadVar {.var = var_ref};
                     },
-                    [&](ir::ParamRef param_ref) -> ir::Inst {
-                        return {
-                            .data = ir::Inst::LoadParam {.param = param_ref},
-                            .location = expr.location
-                        };
+                    [&](ir::ParamRef param_ref) {
+                        inst.data = ir::Inst::LoadParam {.param = param_ref};
                     },
-                    [&](ir::FuncRef func_ref) -> ir::Inst {
-                        return {
-                            .data = ir::Inst::Const {.value = func_ref},
-                            .location = expr.location
-                        };
+                    [&](ir::FuncRef func_ref) {
+                        inst.data = ir::Inst::Const {.value = func_ref};
                     },
-                    [&](ir::UsedFuncRef func_ref) -> ir::Inst {
-                        return {
-                            .data = ir::Inst::Const {.value = func_ref},
-                            .location = expr.location
-                        };
+                    [&](ir::UsedFuncRef func_ref) {
+                        inst.data = ir::Inst::Const {.value = func_ref};
                     },
-                    [&](types::TypeId struct_ref) -> ir::Inst {
-                        return {
-                            .data = ir::Inst::Const {.value = struct_ref},
-                            .location = expr.location
-                        };
+                    [&](types::TypeId struct_ref) {
+                        inst.data = ir::Inst::Const {.value = struct_ref};
                     },
-                    [&](const auto&) -> ir::Inst {
-                        return {
-                            .data = ir::Inst::Const {false},
-                            .location = expr.location
-                        };
-                    }
-                ));
+                    [&](const auto&) { inst.data = ir::Inst::Const {false}; }
+                );
+                return ir_package_.add(inst);
             } else {
                 err_handler_->error(
                     context_->source(),
@@ -619,7 +588,6 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
                             };
                         },
                         [&](const auto&) -> ir::Inst {
-                            throw std::runtime_error("");
                             return {
                                 .data = ir::Inst::Const {false},
                                 .location = expr.location

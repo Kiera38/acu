@@ -106,6 +106,12 @@ private:
 
     ir::UsedFuncRef get_used_func(ir::PackageRef package_ref, ir::FuncRef ref);
 
+    void report_redefinition(
+        std::string_view name, Location location, const Context::ScopeEntry& existing
+    );
+
+    types::SpecType resolve_builtin_type(std::string_view name, Location location);
+
     types::SpecType resolve_type(const nodes::Expr& expr);
 
     std::int64_t get_int_const(const nodes::Expr& expr);

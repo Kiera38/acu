@@ -6,23 +6,23 @@
 namespace acu::semanal {
 namespace {
 std::size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
-    if (s1.empty()) return s2.size();
+    if (s1.size() < s2.size()) return levenshtein_distance(s2, s1);
     if (s2.empty()) return s1.size();
 
-    std::vector<std::uint32_t> v0(s2.size() + 1);
-    std::vector<std::uint32_t> v1(s2.size() + 1);
+    std::vector<std::size_t> v(s2.size() + 1);
+    for (std::size_t i = 0; i <= s2.size(); ++i) v[i] = i;
 
-    for (std::uint32_t i = 0; i <= s2.size(); i++) v0[i] = i;
-
-    for (std::uint32_t i = 0; i < s1.size(); i++) {
-        v1[0] = i + 1;
-        for (std::uint32_t j = 0; j < s2.size(); j++) {
-            std::uint32_t cost = (s1[i] == s2[j]) ? 0 : 1;
-            v1[j + 1] = std::min({v1[j] + 1, v0[j + 1] + 1, v0[j] + cost});
+    for (std::size_t i = 0; i < s1.size(); ++i) {
+        std::size_t prev_v_j = v[0];
+        v[0] = i + 1;
+        for (std::size_t j = 0; j < s2.size(); ++j) {
+            std::size_t next_v_j = v[j + 1];
+            std::size_t cost = (s1[i] == s2[j]) ? 0 : 1;
+            v[j + 1] = std::min({v[j] + 1, v[j + 1] + 1, prev_v_j + cost});
+            prev_v_j = next_v_j;
         }
-        std::swap(v0, v1);
     }
-    return v0[s2.size()];
+    return v[s2.size()];
 }
 }
 
@@ -104,17 +104,22 @@ Resolver::Resolver(
 ir::Package Resolver::resolve() {
     for (auto ref : modules_) {
         const auto& mod = project_context_->module(ref);
+        const bool is_root =
+            mod.source->name.size() == ir_package_.name().size();
 
-        auto& module = [&] -> ir::Module& {
-            if (ir_package_.name().size() == mod.source->name.size()) {
+        ir::Module& module =
+            is_root ? [&] {
                 root_context_ = Context(*mod.source);
-                return ir_package_.root_module();
-            } else {
-                auto module_name = mod.source->name.back();
-                module_contexts_.insert({module_name, Context(*mod.source)});
-                return ir_package_.add_module(module_name);
-            }
-        }();
+                return std::ref(ir_package_.root_module());
+            }()
+                    : [&] {
+                          auto module_name = mod.source->name.back();
+                          module_contexts_.emplace(
+                              module_name, Context(*mod.source)
+                          );
+                          return std::ref(ir_package_.add_module(module_name));
+                      }();
+
         set_context(mod.source->name);
 
         for (const auto& item : mod.items) {
@@ -166,33 +171,49 @@ void Resolver::set_context(PackageNameRef module_name) {
     }
 }
 
+void Resolver::report_redefinition(
+    std::string_view name,
+    Location location,
+    const Context::ScopeEntry& existing
+) {
+    err_handler_->error(
+        context_->source(),
+        location,
+        std::format("redefinition of '{}'", name),
+        "",
+        {{.source = &context_->source(),
+          .location = existing.location,
+          .message = "previous definition is here"}}
+    );
+}
+
 utils::Variant<Context*, UsedModule> Resolver::get_module_context(
     PackageNameRef module_name, Location location
 ) {
-    if (module_name.size() < ir_package_.name().size()) {
-        auto used = project_context_->module_package(module_name);
-        return UsedModule {.package = used.first, .module = used.second};
-    }
-    for (const auto& [package_name, using_name] :
-         std::views::zip(ir_package_.name(), module_name)) {
-        if (package_name != using_name) {
-            auto used = project_context_->module_package(module_name);
-            return UsedModule {.package = used.first, .module = used.second};
+    const auto& current_package = ir_package_.name();
+
+    bool is_internal =
+        module_name.size() >= current_package.size() &&
+        std::equal(
+            current_package.begin(), current_package.end(), module_name.begin()
+        );
+
+    if (is_internal) {
+        auto relative_path =
+            std::span(module_name).subspan(current_package.size());
+
+        if (relative_path.empty()) {
+            if (root_context_) return &*root_context_;
+        } else if (relative_path.size() == 1) {
+            if (auto it = module_contexts_.find(relative_path[0]);
+                it != module_contexts_.end()) {
+                return &it->second;
+            }
         }
     }
-    auto name = std::span(module_name).subspan(ir_package_.name().size());
-    if (name.empty()) {
-        if (root_context_.has_value()) {
-            return &*root_context_;
-        }
-    } else if (name.size() == 1) {
-        if (auto it = module_contexts_.find(name[0]);
-            it != module_contexts_.end()) {
-            return &it->second;
-        }
-    }
-    auto used = project_context_->module_package(module_name);
-    return UsedModule {.package = used.first, .module = used.second};
+
+    auto [pkg_ref, mod_ptr] = project_context_->module_package(module_name);
+    return UsedModule {.package = pkg_ref, .module = mod_ptr};
 }
 
 bool Resolver::flatten_module_path(const nodes::Expr& expr, PackageName& path) {
@@ -228,12 +249,12 @@ std::optional<Context::ScopeEntry> Resolver::find_in_module_item(
                 },
                 [&](ir::FuncRef ref) -> std::optional<Context::ScopeEntry> {
                     return Context::ScopeEntry {
-                        get_used_func(module.package, ref)
+                        .data = get_used_func(module.package, ref)
                     };
                 },
                 [&](types::TypeId type) -> std::optional<Context::ScopeEntry> {
                     return Context::ScopeEntry {
-                        ir_package_.types().add_used_struct(
+                        .data = ir_package_.types().add_used_struct(
                             types::Type::UsedStruct {
                                 .pool =
                                     &project_context_->package(module.package)
@@ -252,30 +273,24 @@ std::optional<Context::ScopeEntry> Resolver::find_in_imported_module_chain(
     PackageNameRef path
 ) {
     std::optional<Context::ScopeEntry> result;
-    size_t best_match = 0;
+    size_t best_match_size = 0;
 
     for (const auto& imported : imported_modules_) {
-        if (imported.path.size() >= path.size()) {
+        if (imported.path.size() >= path.size() ||
+            imported.path.size() < best_match_size) {
             continue;
         }
-        if (!std::equal(
+
+        if (std::equal(
                 imported.path.begin(), imported.path.end(), path.begin()
             )) {
-            continue;
-        }
-
-        auto remaining = std::span(path).subspan(imported.path.size());
-        if (remaining.empty()) {
-            continue;
-        }
-        if (imported.path.size() < best_match) {
-            continue;
-        }
-
-        if (auto entry = find_in_module_item(imported.module, remaining[0])) {
-            if (remaining.size() == 1) {
-                result = *entry;
-                best_match = imported.path.size();
+            auto remaining = std::span(path).subspan(imported.path.size());
+            if (auto entry =
+                    find_in_module_item(imported.module, remaining[0])) {
+                if (remaining.size() == 1) {
+                    result = *entry;
+                    best_match_size = imported.path.size();
+                }
             }
         }
     }
@@ -311,13 +326,12 @@ void Resolver::resolve_using(const nodes::FromUse& use, Location location) {
                 for (const auto& item : use.items) {
                     if (auto entry = module_context->find(item.name)) {
                         auto alias = item.alias.value_or(item.name);
-                        if (auto existing = context_->add(alias, {entry->data, item.location})) {
-                            err_handler_->error(
-                                context_->source(),
-                                item.location,
-                                std::format("redefinition of '{}'", alias),
-                                "",
-                                {{&context_->source(), existing->location, "previous definition is here"}}
+                        if (auto existing = context_->add(
+                                alias,
+                                {.data = entry->data, .location = item.location}
+                            )) {
+                            report_redefinition(
+                                alias, item.location, *existing
                             );
                         }
                     } else {
@@ -350,32 +364,32 @@ void Resolver::resolve_using(const nodes::FromUse& use, Location location) {
                     },
                     [&](ir::FuncRef ref) {
                         auto alias = item.alias.value_or(item.name);
-                        if (auto existing = context_->add(alias, {get_used_func(module.package, ref), item.location})) {
-                             err_handler_->error(
-                                context_->source(),
-                                item.location,
-                                std::format("redefinition of '{}'", alias),
-                                "",
-                                {{&context_->source(), existing->location, "previous definition is here"}}
+                        if (auto existing = context_->add(
+                                alias,
+                                {.data = get_used_func(module.package, ref),
+                                 .location = item.location}
+                            )) {
+                            report_redefinition(
+                                alias, item.location, *existing
                             );
                         }
                     },
                     [&](types::TypeId type) {
                         auto alias = item.alias.value_or(item.name);
-                        if (auto existing = context_->add(alias, {ir_package_.types().add_used_struct(
-                                types::Type::UsedStruct {
-                                    .pool = &project_context_
-                                                 ->package(module.package)
-                                                 .types(),
-                                    .type = type
-                                }
-                            ), item.location})) {
-                             err_handler_->error(
-                                context_->source(),
-                                item.location,
-                                std::format("redefinition of '{}'", alias),
-                                "",
-                                {{&context_->source(), existing->location, "previous definition is here"}}
+                        if (auto existing = context_->add(
+                                alias,
+                                {.data = ir_package_.types().add_used_struct(
+                                     types::Type::UsedStruct {
+                                         .pool = &project_context_
+                                                      ->package(module.package)
+                                                      .types(),
+                                         .type = type
+                                     }
+                                 ),
+                                 .location = item.location}
+                            )) {
+                            report_redefinition(
+                                alias, item.location, *existing
                             );
                         }
                     }
@@ -394,33 +408,93 @@ types::TypeId Resolver::create_struct_def(
         .location = location,
     });
     if (auto existing = context_->add(struct_node.name, {type_id, location})) {
-        err_handler_->error(
-            context_->source(),
-            location,
-            std::format("redefinition of '{}'", struct_node.name),
-            "",
-            {{&context_->source(), existing->location, "previous definition is here"}}
-        );
+        report_redefinition(struct_node.name, location, *existing);
     }
     return type_id;
 }
 
 void Resolver::resolve_struct_def(const nodes::Struct& struct_node) {
-    auto type_id_it = context_->find(struct_node.name);
-    if (type_id_it != nullptr) {
-        if (auto* type_id_ptr = type_id_it->data.get_if<types::TypeId>()) {
-            auto type_id = *type_id_ptr;
-            std::vector<types::Type::StructField> fields;
-            fields.reserve(struct_node.fields.size());
-            for (const auto& field : struct_node.fields) {
-                auto field_type = resolve_type(*field.type);
-                if (field_type.specifier == types::Specifier::None) {
-                    field_type.specifier = types::Specifier::Val;
-                }
-                fields.push_back({.name = field.name, .type = field_type});
-            }
-            ir_package_.types().set_struct_fields(type_id, std::move(fields));
+    auto entry = context_->find(struct_node.name);
+    if (!entry || !entry->data.is<types::TypeId>()) return;
+
+    auto type_id = entry->data.get<types::TypeId>();
+    std::vector<types::Type::StructField> fields;
+    fields.reserve(struct_node.fields.size());
+
+    for (const auto& field : struct_node.fields) {
+        auto field_type = resolve_type(*field.type);
+        if (field_type.specifier == types::Specifier::None) {
+            field_type.specifier = types::Specifier::Val;
         }
+        fields.push_back({.name = field.name, .type = field_type});
+    }
+    ir_package_.types().set_struct_fields(type_id, std::move(fields));
+}
+
+void Resolver::resolve_func_def(const nodes::Func& func_node) {
+    auto* entry = context_->find(func_node.name);
+    if (!entry || !entry->data.is<ir::FuncRef>()) return;
+
+    ir::Func& ir_func = ir_package_.func(entry->data.get<ir::FuncRef>());
+    std::vector<ir::Param> ir_params;
+    ir_params.reserve(func_node.args.size());
+
+    for (const auto& arg : func_node.args) {
+        auto param_type = resolve_type(*arg.type);
+        if (func_node.is_extern) {
+            if (param_type.specifier != types::Specifier::None &&
+                param_type.specifier != types::Specifier::Val) {
+                err_handler_->error(
+                    context_->source(),
+                    arg.location,
+                    "in extern function all parameters must have 'val' "
+                    "specifier"
+                );
+            }
+            param_type.specifier = types::Specifier::Val;
+        } else if (param_type.specifier == types::Specifier::None) {
+            param_type.specifier = types::Specifier::Let;
+        }
+        ir_params.push_back({.name = arg.name, .type = param_type});
+    }
+
+    types::SpecType return_type = {.type = types::None};
+    if (func_node.return_type) {
+        return_type = resolve_type(*func_node.return_type);
+        if (func_node.is_extern) {
+            if (return_type.specifier != types::Specifier::None &&
+                return_type.specifier != types::Specifier::Val) {
+                err_handler_->error(
+                    context_->source(),
+                    func_node.return_type->location,
+                    "in extern function return type must have val specifier"
+                );
+            }
+            return_type.specifier = types::Specifier::Val;
+        } else if (return_type.specifier == types::Specifier::None) {
+            return_type.specifier = types::Specifier::Val;
+        }
+    }
+
+    ir_func.params = ir_package_.add_params(ir_params);
+    ir_func.min_pos_args = func_node.min_pos_args;
+    ir_func.max_pos_args = func_node.max_pos_args;
+    ir_func.return_type = return_type;
+
+    if (!func_node.is_extern && func_node.body) {
+        context_->push();
+        for (size_t i = 0; i < ir_params.size(); ++i) {
+            context_->add(
+                func_node.args[i].name,
+                {.data = {ir::ParamRef {static_cast<std::uint32_t>(i)}},
+                 .location = func_node.args[i].location}
+            );
+        }
+        ir_func.insts.start = ir_package_.last_inst().index + 1;
+        resolve_stmt(*func_node.body, ir_func);
+        ir_func.insts.size =
+            ir_package_.last_inst().index + 1 - ir_func.insts.start;
+        context_->pop();
     }
 }
 
@@ -435,79 +509,9 @@ ir::FuncRef Resolver::create_func_def(
     };
     auto func_ref = ir_package_.add(ir_func);
     if (auto existing = context_->add(func_node.name, {func_ref, location})) {
-        err_handler_->error(
-            context_->source(),
-            location,
-            std::format("redefinition of '{}'", func_node.name),
-            "",
-            {{&context_->source(), existing->location, "previous definition is here"}}
-        );
+        report_redefinition(func_node.name, location, *existing);
     }
     return func_ref;
-}
-
-void Resolver::resolve_func_def(const nodes::Func& func_node) {
-    auto* entry = context_->find(func_node.name);
-    if (entry && entry->data.is<ir::FuncRef>()) {
-        ir::Func& ir_func = ir_package_.func(entry->data.get<ir::FuncRef>());
-        std::vector<ir::Param> ir_params;
-        ir_params.reserve(func_node.args.size());
-        for (const auto& arg : func_node.args) {
-            auto param_type = resolve_type(*arg.type);
-            if (func_node.is_extern) {
-                if (param_type.specifier != types::Specifier::None &&
-                    param_type.specifier != types::Specifier::Val) {
-                    err_handler_->error(
-                        context_->source(),
-                        arg.location,
-                        "in extern function all parameters must have 'val' "
-                        "specifier"
-                    );
-                }
-                param_type.specifier = types::Specifier::Val;
-            } else if (param_type.specifier == types::Specifier::None) {
-                param_type.specifier = types::Specifier::Let;
-            }
-            ir_params.push_back({.name = arg.name, .type = param_type});
-        }
-        types::SpecType return_type = {.type = types::None};
-        if (func_node.return_type) {
-            return_type = resolve_type(*func_node.return_type);
-            if (func_node.is_extern) {
-                if (return_type.specifier != types::Specifier::None &&
-                    return_type.specifier != types::Specifier::Val) {
-                    err_handler_->error(
-                        context_->source(),
-                        func_node.return_type->location,
-                        "in extern function return type must have val "
-                        "specifier"
-                    );
-                }
-                return_type.specifier = types::Specifier::Val;
-            } else if (return_type.specifier == types::Specifier::None) {
-                return_type.specifier = types::Specifier::Val;
-            }
-        }
-        ir_func.params = ir_package_.add_params(ir_params);
-        ir_func.min_pos_args = func_node.min_pos_args;
-        ir_func.max_pos_args = func_node.max_pos_args;
-        ir_func.return_type = return_type;
-
-        if (!func_node.is_extern && func_node.body) {
-            context_->push();
-            for (size_t i = 0; i < ir_params.size(); ++i) {
-                context_->add(
-                    func_node.args[i].name,
-                    {{ir::ParamRef {static_cast<std::uint32_t>(i)}}, func_node.args[i].location}
-                );
-            }
-            ir_func.insts.start = ir_package_.last_inst().index + 1;
-            resolve_stmt(*func_node.body, ir_func);
-            ir_func.insts.size =
-                ir_package_.last_inst().index + 1 - ir_func.insts.start;
-            context_->pop();
-        }
-    }
 }
 
 ir::UsedFuncRef Resolver::get_used_func(
