@@ -468,9 +468,9 @@ public:
             [&](std::string_view value) {
                 return types::SpecType {
                     .type = types().add_array(
-                        {.type = types::UInt32,
+                        {.type = types::UInt8,
                          .specifier = types::Specifier::Val},
-                        value.length()
+                        value.length() + 1
                     ),
                     .specifier = types::Specifier::Val
                 };

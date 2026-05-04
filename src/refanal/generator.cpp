@@ -1,6 +1,7 @@
 #include "refanal/generator.h"
 
 #include <cassert>
+#include <string_view>
 
 #include "builder.h"
 #include "ir.h"
@@ -193,12 +194,16 @@ private:
         Location loc
     ) {
         if (actual_type.type != expected_type.type) {
+            const auto& type =
+                apackage_->ir_package->types().get(actual_type.type);
             v = Value {builder_.assign_cast(
                 expected_type,
                 v.as_operand(
                     builder_,
                     {.type = actual_type.type,
-                     .specifier = types::Specifier::Val},
+                     .specifier = type.data.is<types::Type::Array>()
+                                      ? types::Specifier::Let
+                                      : types::Specifier::Val},
                     loc
                 ),
                 loc

@@ -2,6 +2,7 @@
 #include <deque>
 #include <format>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "errors.h"
@@ -175,15 +176,11 @@ struct TypeVar {
         if (!locked_spec && tp.specifier != types::Specifier::None) {
             if (type->specifier == types::Specifier::None) {
                 type->specifier = tp.specifier;
-            } else if (
-                tp.specifier == types::Specifier::Var &&
-                type->specifier == types::Specifier::Let
-            ) {
+            } else if (tp.specifier == types::Specifier::Var &&
+                       type->specifier == types::Specifier::Let) {
                 type->specifier = types::Specifier::Var;
-            } else if (
-                tp.specifier == types::Specifier::Val &&
-                type->specifier != types::Specifier::Val
-            ) {
+            } else if (tp.specifier == types::Specifier::Val &&
+                       type->specifier != types::Specifier::Val) {
                 type->specifier = types::Specifier::Val;
             }
         }
@@ -485,11 +482,19 @@ private:
                     },
                     [&](types::TypeId type_id) { return types::Const; }
                 );
-                lock_type(
-                    ref,
-                    {.type = type, .specifier = types::Specifier::Val},
-                    inst.location
-                );
+                if (data.value.is<std::string_view>()) {
+                    lock_type(
+                        ref,
+                        {.type = type, .specifier = types::Specifier::Var},
+                        inst.location
+                    );
+                } else {
+                    lock_type(
+                        ref,
+                        {.type = type, .specifier = types::Specifier::Val},
+                        inst.location
+                    );
+                }
             },
             [&](const ir::Inst::VarDecl& data) {
                 if (data.type.has_value()) {

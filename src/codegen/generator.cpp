@@ -167,6 +167,9 @@ private:
     bool is_small(llvm::Type* type) {
         if (type->isVoidTy()) return true;
         if (!type->isSized()) return false;
+        if (type->isArrayTy())
+            return false;  // todo: нужно ли это (убирает копии маленьких
+                           // массивов)
         return layout_->getTypeAllocSize(type) <= 16;
     }
 
@@ -337,7 +340,7 @@ private:
             );
         }
     }
-    
+
     void generate_statement(const refanal::ir::Statement& stmt) {
         stmt.data.visit(
             [&](const refanal::ir::Statement::Assign& a) {
@@ -533,19 +536,9 @@ private:
                 const auto& src_type = get_type(op_type.type);
                 const auto& dst_type = get_type(type.type);
 
-                // Handle Array-to-Pointer decay specially to avoid loading the
-                // array вообще нужно src брать как let Array, а не val Array и
-                // тогда таких особенностей делать не нужно
                 if (src_type.data.is<types::Type::Array>() &&
                     dst_type.data.is<types::Type::Ptr>()) {
-                    if (auto* p = ir_func->operand(c.operand)
-                                      .data.get_if<refanal::ir::Place>()) {
-                        auto* ptr = generate_place_ptr(*p);
-                        // Pointer to first element: GEP [0, 0]
-                        return builder_.CreateConstInBoundsGEP2_32(
-                            get_rep_type(op_type), ptr, 0, 0
-                        );
-                    }
+                    return get_operand_value(c.operand);
                 }
 
                 llvm::Value* val = get_operand_value(c.operand);
@@ -712,8 +705,11 @@ private:
                     return temp;
                 }
                 if (c.value.is<std::string_view>()) {
-                    auto temp = builder_.CreateAlloca(get_rep_type(type));
-                    builder_.CreateStore(value, temp);
+                    auto rep_type = get_rep_type(type);
+                    auto temp = builder_.CreateAlloca(rep_type);
+                    builder_.CreateStore(
+                        builder_.CreateLoad(rep_type, value), temp
+                    );
                     return temp;
                 }
                 return value;

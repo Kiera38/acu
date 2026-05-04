@@ -2,7 +2,10 @@
 
 #include <format>
 #include <string>
+
 #include "refanal/ir.h"
+#include "semanal/types.h"
+
 
 namespace acu::refanal {
 
@@ -20,7 +23,9 @@ std::string to_string(const ir::Const::Value& value) {
         [&](char32_t v) { return std::to_string(v); },
         [&](std::string_view v) { return std::string(v); },
         [&](ir::FuncRef func) { return std::format("func {}", func.index); },
-        [&](ir::UsedFuncRef func) { return std::format("used func {}", func.index); }
+        [&](ir::UsedFuncRef func) {
+            return std::format("used func {}", func.index);
+        }
     );
 }
 
@@ -77,19 +82,30 @@ std::string to_string(const ir::Place& place, const ir::Func& func) {
             [&](ir::Projection::Field f) {
                 return std::format("({}).{}", str, f.field);
             },
-            [&](ir::Projection::Deref) {
-                return std::format("*({})", str);
-            }
+            [&](ir::Projection::Deref) { return std::format("*({})", str); }
         );
     }
     return str;
 }
 
+std::string_view to_string(types::Specifier spec) {
+    switch (spec) {
+        case types::Specifier::Let: return "let";
+        case types::Specifier::Var: return "var";
+        case types::Specifier::Val: return "val";
+        case types::Specifier::None: return "none";
+    }
+}
+
 std::string to_string(const ir::Operand& operand, const ir::Func& func) {
-    return operand.data.visit(
+    std::string result = operand.data.visit(
         [&](const ir::Const& c) { return to_string(c.value); },
         [&](const ir::Place& p) { return to_string(p, func); }
     );
+    if (operand.specifier == types::Specifier::None) {
+        return result;
+    }
+    return std::format("({} as {})", result, to_string(operand.specifier));
 }
 
 std::string to_string(ir::OperandRef ref, const ir::Func& func) {
@@ -121,7 +137,8 @@ std::string to_string(const ir::RValue& rvalue, const ir::Func& func) {
             );
         },
         [&](const ir::RValue::Call& v) {
-            std::string str = std::format("call {}(", to_string(v.callee, func));
+            std::string str =
+                std::format("call {}(", to_string(v.callee, func));
             auto args = func.operands(v.args);
             for (size_t i = 0; i < args.size(); ++i) {
                 if (i > 0) str += ", ";
@@ -226,8 +243,6 @@ std::string to_string(
     }
     return str;
 }
-
-
 
 std::string to_string(
     const ir::Module& module, const acu::ir::AnalyzedPackage& analyzed
