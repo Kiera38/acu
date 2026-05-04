@@ -23,6 +23,7 @@ public:
             UsedModule,
             ir::UsedFuncRef>
             data;
+        Location location;
     };
 
     [[nodiscard]] const Source& source() const { return *source_; }
@@ -33,8 +34,14 @@ public:
 
     [[nodiscard]] const ScopeEntry* find(std::string_view name) const;
 
-    void add(std::string_view name, ScopeEntry entry) {
-        scopes_stack_.back()[name] = entry;
+    /// @return Pointer to existing entry if redefinition, nullptr otherwise.
+    const ScopeEntry* add(std::string_view name, ScopeEntry entry) {
+        auto& current_scope = scopes_stack_.back();
+        if (auto it = current_scope.find(name); it != current_scope.end()) {
+            return &it->second;
+        }
+        current_scope[name] = entry;
+        return nullptr;
     }
 
     [[nodiscard]] std::vector<std::string_view> get_all_names() const;

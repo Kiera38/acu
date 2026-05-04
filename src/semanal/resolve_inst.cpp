@@ -202,7 +202,15 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
                 .location = stmt.location,
             });
 
-            context_->add(data.name, {var_ref});
+            if (auto existing = context_->add(data.name, {var_ref, stmt.location})) {
+                err_handler_->error(
+                    context_->source(),
+                    stmt.location,
+                    std::format("redefinition of '{}'", data.name),
+                    "",
+                    {{&context_->source(), existing->location, "previous definition is here"}}
+                );
+            }
             if (data.init) {
                 auto value_ref = resolve_expr(*data.init, func);
                 ir_package_.add({
@@ -355,7 +363,7 @@ ir::InstRef Resolver::convert_store(
                     .data = ir::Inst::VarDecl {.name = node.name},
                     .location = expr.location,
                 });
-                context_->add(node.name, {var_ref});
+                context_->add(node.name, {var_ref, expr.location});
                 return ir_package_.add({
                     .data = ir::Inst::Store {.var = var_ref, .value = value},
                     .location = expr.location,

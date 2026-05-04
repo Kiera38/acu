@@ -139,6 +139,10 @@ struct TypeVar {
                             pool.to_string(type->type)
                         );
                     }
+                    std::vector<Label> labels;
+                    if (define_loc.has_value()) {
+                        labels.push_back({&source, *define_loc, std::format("expected because of this definition, which has type {}", pool.to_string(type->type))});
+                    }
                     err_handler.error(
                         source,
                         loc,
@@ -147,7 +151,8 @@ struct TypeVar {
                             pool.to_string(tp.type),
                             pool.to_string(type->type)
                         ),
-                        hint
+                        hint,
+                        std::move(labels)
                     );
                 }
             }
@@ -155,6 +160,10 @@ struct TypeVar {
             if (type.has_value()) {
                 auto unified = unify(type->type, tp.type);
                 if (!unified.has_value()) {
+                    std::vector<Label> labels;
+                    if (define_loc.has_value()) {
+                        labels.push_back({&source, *define_loc, std::format("this expression has type {}", pool.to_string(type->type))});
+                    }
                     err_handler.error(
                         source,
                         loc,
@@ -162,7 +171,9 @@ struct TypeVar {
                             "Type mismatch: cannot unify {} and {}",
                             pool.to_string(tp.type),
                             pool.to_string(type->type)
-                        )
+                        ),
+                        "",
+                        std::move(labels)
                     );
                 } else {
                     type->type = *unified;
@@ -211,6 +222,10 @@ struct TypeVar {
                     pool.to_string(tp.type)
                 );
             }
+            std::vector<Label> labels;
+            if (define_loc.has_value()) {
+                labels.push_back({&source, *define_loc, std::format("type established here as {}", pool.to_string(type->type))});
+            }
             err_handler.error(
                 source,
                 loc,
@@ -219,7 +234,8 @@ struct TypeVar {
                     pool.to_string(tp.type),
                     pool.to_string(type->type)
                 ),
-                hint
+                hint,
+                std::move(labels)
             );
         }
         type = tp;

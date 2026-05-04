@@ -10,12 +10,19 @@ namespace acu {
 
 enum class Severity : std::uint8_t { Note, Warning, Error, Fatal };
 
+struct Label {
+    const Source* source;
+    Location location;
+    std::string message;
+};
+
 struct Error {
     Severity severity;
     const Source* source;
     Location location;
     std::string message;
     std::string hint;
+    std::vector<Label> labels;
 };
 
 class ErrorHandler {
@@ -25,7 +32,8 @@ public:
         const Source& source,
         Location location,
         std::string message,
-        std::string hint = ""
+        std::string hint = "",
+        std::vector<Label> labels = {}
     ) {
         errors_.push_back({
             .severity = severity,
@@ -33,6 +41,7 @@ public:
             .location = location,
             .message = std::move(message),
             .hint = std::move(hint),
+            .labels = std::move(labels),
         });
         if (severity == Severity::Error || severity == Severity::Fatal) {
             has_errors_ = true;
@@ -43,14 +52,16 @@ public:
         const Source& source,
         Location location,
         std::string message,
-        std::string hint = ""
+        std::string hint = "",
+        std::vector<Label> labels = {}
     ) {
         report(
             Severity::Error,
             source,
             location,
             std::move(message),
-            std::move(hint)
+            std::move(hint),
+            std::move(labels)
         );
     }
 
@@ -58,14 +69,16 @@ public:
         const Source& source,
         Location location,
         std::string message,
-        std::string hint = ""
+        std::string hint = "",
+        std::vector<Label> labels = {}
     ) {
         report(
             Severity::Warning,
             source,
             location,
             std::move(message),
-            std::move(hint)
+            std::move(hint),
+            std::move(labels)
         );
     }
 
@@ -73,14 +86,16 @@ public:
         const Source& source,
         Location location,
         std::string message,
-        std::string hint = ""
+        std::string hint = "",
+        std::vector<Label> labels = {}
     ) {
         report(
             Severity::Note,
             source,
             location,
             std::move(message),
-            std::move(hint)
+            std::move(hint),
+            std::move(labels)
         );
     }
 
