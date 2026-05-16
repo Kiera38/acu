@@ -15,7 +15,7 @@ struct PackageNameRef : std::span<const std::string_view> {
         : std::span<const std::string_view>(n) {}
 
     [[nodiscard]] std::string join() const {
-        if(empty()) {
+        if (empty()) {
             return "package";
         }
         return *this | std::views::join_with('.') |
@@ -23,9 +23,21 @@ struct PackageNameRef : std::span<const std::string_view> {
     }
 };
 struct PackageName : std::vector<std::string_view> {
+    using std::vector<std::string_view>::vector;
+    PackageName(PackageNameRef ref) { append_range(ref); }
+
+    PackageName(std::string_view package_name) {
+        if (package_name.empty()) {
+            return;
+        }
+        for (auto name_part : package_name | std::views::split('.')) {
+            emplace_back(name_part);
+        }
+    }
+
     operator PackageNameRef() const {
         auto name = std::span(*this);
-        return {name}; 
+        return {name};
     }
 
     [[nodiscard]] std::string join() const {

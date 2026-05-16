@@ -72,7 +72,7 @@ public:
     }
 
 private:
-    const Source* source_;
+    Source* source_;
     ErrorHandler* err_handler_;
     std::vector<Token> tokens_;
     std::size_t current_ = 0;

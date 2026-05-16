@@ -62,17 +62,6 @@ acu::nodes::Module parse_module(
     return module;
 }
 
-PackageName split_name(const std::string& package_name) {
-    if (package_name.empty()) {
-        return {};
-    }
-    PackageName name;
-    for (auto name_part : package_name | std::views::split('.')) {
-        name.emplace_back(name_part);
-    }
-    return name;
-}
-
 void semanal_package(
     const std::string& package_name,
     Package& package,
@@ -81,7 +70,7 @@ void semanal_package(
     bool show_semanal
 ) {
     package.ir_package = acu::semanal::resolve(
-        split_name(package_name), package.modules, context, err_handler
+        PackageName(package_name), package.modules, context, err_handler
     );
     if (err_handler.has_errors()) {
         err_handler.emit_all();
@@ -126,15 +115,13 @@ void create_package(
         }
 
         auto source = read_file(entry.path(), package_name);
-        source.name = split_name(source.module_name);
         module_refs.push_back(modules.emplace_back(std::move(source), nullptr));
     }
 
     if (module_refs.empty()) return;
 
-    auto name = split_name(package_name);
     packages.emplace_back(
-        std::move(package_name), std::move(name), std::move(module_refs)
+        std::move(package_name), std::move(module_refs)
     );
 }
 
@@ -316,12 +303,12 @@ void Project::run_jit(
     }
 }
 
-PackageNameRef get_package_name(const Module& module) {
+PackageName get_package_name(Module& module) {
     if (module.source.path.filename().string() == "package.acu") {
-        return module.source.name;
+        return module.source.name();
     }
-    return PackageNameRef(module.source.name)
-        .subspan(0, module.source.name.size() - 1);
+    auto name = module.source.name();
+    return {PackageNameRef(PackageNameRef(name).subspan(0, name.size() - 1))};
 }
 
 PackageNameRef Packages::package_name(PackageNameRef module_name) const {
@@ -350,13 +337,13 @@ std::string join_module_name(std::span<const std::string_view> module_name) {
 
 Packages::Packages(Project& project) : project_(&project) {
     for (auto ref : project.modules_.indices()) {
-        modules_.insert({project.modules_[ref].source.name, ref});
+        modules_.insert({project.modules_[ref].source.name(), ref});
     }
     for (auto ref : project.packages_.indices()) {
-        packages_.insert({project.packages_[ref].name, ref});
+        packages_.insert({project.packages_[ref].name(), ref});
     }
     for (auto ref : project.packages_.indices()) {
-        const auto& package = project.packages_[ref];
+        auto& package = project.packages_[ref];
         std::unordered_set<PackageRef, hash<PackageRef>, equal_to<PackageRef>>
             usings;
         for (auto module_ref : project.packages_[ref].modules) {
@@ -367,7 +354,7 @@ Packages::Packages(Project& project) : project_(&project) {
                 if (it != modules_.end()) {
                     auto package_name =
                         get_package_name(project.modules_[it->second]);
-                    if (package_name != package.name) {
+                    if (package_name != package.name()) {
                         usings.emplace(packages_[package_name]);
                     }
                 } else {

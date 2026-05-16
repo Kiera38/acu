@@ -243,7 +243,7 @@ struct Item {
 };
 
 struct Module {
-    const Source* source;
+    Source* source;
     std::vector<Item> items;
 };
 

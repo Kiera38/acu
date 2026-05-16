@@ -103,9 +103,9 @@ Resolver::Resolver(
 
 ir::Package Resolver::resolve() {
     for (auto ref : modules_) {
-        const auto& mod = project_context_->module(ref);
+        auto& mod = project_context_->module(ref);
         const bool is_root =
-            mod.source->name.size() == ir_package_.name().size();
+            mod.source->name().size() == ir_package_.name().size();
 
         ir::Module& module =
             is_root ? [&] {
@@ -113,14 +113,14 @@ ir::Package Resolver::resolve() {
                 return std::ref(ir_package_.root_module());
             }()
                     : [&] {
-                          auto module_name = mod.source->name.back();
+                          auto module_name = mod.source->name().back();
                           module_contexts_.emplace(
                               module_name, Context(*mod.source)
                           );
                           return std::ref(ir_package_.add_module(module_name));
                       }();
 
-        set_context(mod.source->name);
+        set_context(mod.source->name());
 
         for (const auto& item : mod.items) {
             item.data.visit(
@@ -142,7 +142,7 @@ ir::Package Resolver::resolve() {
 
     for (auto ref : modules_) {
         const auto& mod = project_context_->module(ref);
-        set_context(mod.source->name);
+        set_context(mod.source->name());
 
         for (const auto& item : mod.items) {
             item.data.visit(

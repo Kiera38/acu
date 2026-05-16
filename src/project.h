@@ -21,11 +21,18 @@ struct Module {
 using ModuleRef = Ref<Module>;
 struct Package {
     std::string package_name;
-    PackageName name;
     std::vector<ModuleRef> modules;
     ir::Package ir_package;
     ir::AnalyzedPackage analyzed;
     refanal::ir::Module refanal_module;
+    std::optional<PackageName> _name;
+
+    [[nodiscard]] PackageNameRef name() {
+        if (!_name) {
+            _name.emplace(package_name);
+        }
+        return *_name;
+    }
 };
 
 using PackageRef = Ref<Package>;
@@ -73,7 +80,7 @@ class Packages {
 public:
     Packages(Project& project);
     std::vector<PackageRef> sort();
-    [[nodiscard]] const nodes::Module& module(ModuleRef ref) const {
+    [[nodiscard]] nodes::Module& module(ModuleRef ref) const {
         return *project_->modules_[ref].module;
     }
     [[nodiscard]] PackageNameRef package_name(PackageNameRef module_name) const;

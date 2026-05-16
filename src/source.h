@@ -31,10 +31,18 @@ private:
 
 struct Source {
     std::string module_name;
-    PackageName name;
     std::filesystem::path path;
     std::string content;
     Strings strings;
+
+    std::optional<PackageName> _name;
+
+    [[nodiscard]] PackageNameRef name() {
+        if (!_name) {
+            _name.emplace(module_name);
+        }
+        return *_name;
+    }
 };
 
 struct Location {
