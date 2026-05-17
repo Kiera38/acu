@@ -400,9 +400,14 @@ private:
     IndexVector<CallArg> named_args_;
 };
 
+struct AFunc {
+    FuncRef func{};
+    IndexMap<ir::InstRef, types::SpecType> types;
+};
+
 struct AnalyzedPackage {
     Package* ir_package{};
-    IndexVector<types::SpecType, InstRef> inst_types;
+    IndexVector<AFunc, FuncRef> funcs_;
 };
 
 std::string to_string(const Package& package, const Func& func);

@@ -13,7 +13,6 @@
 #include "semanal/types.h"
 #include "source.h"
 
-
 namespace acu::semanal {
 namespace {
 
@@ -26,9 +25,10 @@ public:
         ErrorHandler& err_handler
     )
         : package_(&package),
-          type_vars_(type_vars),
+          type_vars_(package.func(func_ref).insts),
           type_pool_(&package.types()),
           func_(&package.func(func_ref)),
+          func_ref_(func_ref),
           err_handler_(&err_handler) {
         func_type_id_ = package.func_type(func_ref);
     }
@@ -40,6 +40,22 @@ public:
             ir::Block {.end = {func_->insts.start + func_->insts.size - 1}}
         );
         return changed_;
+    }
+
+    [[nodiscard]] ir::AFunc get_types() const {
+        IndexMap<ir::InstRef, types::SpecType> types(func_->insts);
+        for (auto i : type_vars_.indices()) {
+            const auto& var = type_vars_[i];
+            if (!var.defined()) {
+                error(
+                    package_->inst(i).location,
+                    "Type variable not defined (inference failed)"
+                );
+            } else {
+                types[i] = var.get();
+            }
+        }
+        return {.func = func_ref_, .types = std::move(types)};
     }
 
 private:
@@ -834,47 +850,15 @@ private:
     }
 
     ir::Package* package_;
-    IndexSpan<TypeVar, ir::InstRef> type_vars_;
+    IndexMap<ir::InstRef, TypeVar> type_vars_;
     types::TypePool* type_pool_;
     types::TypeId func_type_id_ {};
     ir::Func* func_;
+    ir::FuncRef func_ref_;
     ErrorHandler* err_handler_;
     bool changed_ = false;
     std::uint32_t current_inst_ = 0;
-    const ir::Func* current_func_ = nullptr;
-
-public:
-    void process(const ir::Func& func) {
-        current_func_ = &func;
-        for (auto ref : func.insts) {
-            propagate_inst(ref);
-        }
-        current_func_ = nullptr;
-    }
 };
-
-[[nodiscard]] IndexVector<types::SpecType, ir::InstRef> get_types(
-    IndexSpan<TypeVar, ir::InstRef> type_vars
-) {
-    IndexVector<types::SpecType, ir::InstRef> result;
-    result.reserve(type_vars.size());
-    for (auto i : type_vars.indices()) {
-        const auto& var = type_vars[i];
-        result.push_back(var.get());
-        // if (!var.defined()) {
-        //     error(
-        //         package.inst(i).location,
-        //         "Type variable not defined (inference failed)"
-        //     );
-        //     result.push_back(
-        //         {.type = types::None, .specifier = types::Specifier::None}
-        //     );
-        // } else {
-        //     result.push_back(var.get());
-        // }
-    }
-    return result;
-}
 
 }
 
@@ -886,6 +870,12 @@ ir::AnalyzedPackage type_analyze(
 
     for (auto func_ref : package.funcs().indices()) {
         if (package.func(func_ref).is_extern) {
+            result.funcs_.push_back({
+                .func = func_ref,
+                .types = {RefRange<types::SpecType, ir::InstRef> {
+                    .start = 0, .size = 0
+                }},
+            });
             continue;
         }
 
@@ -893,9 +883,8 @@ ir::AnalyzedPackage type_analyze(
         while (analyzer.propagate()) {
             // Internal fixed-point iteration for the function
         }
+        result.funcs_.push_back(analyzer.get_types());
     }
-
-    result.inst_types = get_types(type_vars.data());
     return result;
 }
 

@@ -16,7 +16,8 @@ using SemInst = acu::ir::Inst;
 
 class FuncGenerator {
     const acu::ir::AnalyzedPackage* apackage_;
-    const ::acu::ir::Func* sfunc_;
+    const acu::ir::Func* sfunc_;
+    const acu::ir::AFunc* afunc_;
     ir::Func rfunc_;
     ir::Builder builder_;
 
@@ -98,6 +99,7 @@ public:
     )
         : apackage_(&apackage),
           sfunc_(&apackage.ir_package->func(sref)),
+          afunc_(&apackage.funcs_[sref]),
           rfunc_(
               sfunc_->name,
               *sfunc_->source,
@@ -215,7 +217,7 @@ private:
     Value get_cast(
         SemInstRef sref, types::SpecType expected_type, Location loc
     ) {
-        auto actual_type = apackage_->inst_types[sref];
+        auto actual_type = afunc_->types[sref];
         Value v = values_[sref];
         return get_cast(v, actual_type, expected_type, loc);
     }
@@ -283,7 +285,7 @@ private:
         if (is_terminated()) return;
 
         const auto& sinst = apackage_->ir_package->inst(sref);
-        const auto& type = apackage_->inst_types[sref];
+        const auto& type = afunc_->types[sref];
 
         sinst.data.visit(
             [&](const SemInst::Const& c) {
@@ -300,11 +302,11 @@ private:
             },
             [&](const SemInst::Store& inst) {
                 auto pb = values_[inst.var].as_place_builder(
-                    builder_, apackage_->inst_types[inst.var], sinst.location
+                    builder_, afunc_->types[inst.var], sinst.location
                 );
                 auto p = pb.build();
                 auto v = get_operand_cast(
-                    inst.value, apackage_->inst_types[inst.var], sinst.location
+                    inst.value, afunc_->types[inst.var], sinst.location
                 );
                 builder_.assign(p, builder_.r_use(v), sinst.location);
             },
@@ -434,7 +436,7 @@ private:
                     }
                 }
 
-                auto func_type = apackage_->inst_types[inst.value];
+                auto func_type = afunc_->types[inst.value];
                 const auto& f_type =
                     apackage_->ir_package->types().get(func_type.type);
                 const auto& defined_func = f_type.data.get<types::Type::Func>();
@@ -524,7 +526,7 @@ private:
                 }
             },
             [&](const SemInst::GetAttr& inst) {
-                auto type = apackage_->inst_types[inst.value];
+                auto type = afunc_->types[inst.value];
                 auto pb = values_[inst.value].as_place_builder(
                     builder_, type, sinst.location
                 );
@@ -532,7 +534,7 @@ private:
                     Value {pb.field(get_field_index(type.type, inst.name))};
             },
             [&](const SemInst::SetAttr& inst) {
-                auto type = apackage_->inst_types[inst.var];
+                auto type = afunc_->types[inst.var];
                 auto pb = values_[inst.var].as_place_builder(
                     builder_, type, sinst.location
                 );
@@ -547,7 +549,7 @@ private:
                 );
             },
             [&](const SemInst::GetItem& inst) {
-                auto type = apackage_->inst_types[inst.value];
+                auto type = afunc_->types[inst.value];
                 auto pb = values_[inst.value].as_place_builder(
                     builder_, type, sinst.location
                 );
@@ -562,12 +564,12 @@ private:
             },
             [&](const SemInst::SetItem& inst) {
                 auto item_type =
-                    get_item_type(apackage_->inst_types[inst.var].type);
+                    get_item_type(afunc_->types[inst.var].type);
                 builder_.assign(
                     values_[inst.var]
                         .as_place_builder(
                             builder_,
-                            apackage_->inst_types[inst.var],
+                            afunc_->types[inst.var],
                             sinst.location
                         )
                         .index(get_operand_cast(
@@ -588,18 +590,18 @@ private:
                     Value {values_[inst.value]
                                .as_place_builder(
                                    builder_,
-                                   apackage_->inst_types[inst.value],
+                                   afunc_->types[inst.value],
                                    sinst.location
                                )
                                .deref()};
             },
             [&](const SemInst::AddressOf& inst) {
-                auto type = apackage_->inst_types[inst.value];
+                auto type = afunc_->types[inst.value];
                 auto pb = values_[inst.value].as_place_builder(
                     builder_, type, sinst.location
                 );
                 values_[sref] = Value {builder_.assign_addr_of(
-                    apackage_->inst_types[sref], pb.build(), sinst.location
+                    afunc_->types[sref], pb.build(), sinst.location
                 )};
             },
             [&](const SemInst::Array& inst) {
