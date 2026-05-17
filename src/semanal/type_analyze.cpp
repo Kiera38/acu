@@ -495,6 +495,8 @@ private:
                 if (auto id = package_->inst(data.value)
                                   .data.get<ir::Inst::Const>()
                                   .value.get_if<types::TypeId>()) {
+                    const auto& type = type_pool_->get(*id).data.get<types::Type::Struct>();
+                    check_struct(ref, inst, type);
                     lock_type(
                         ref,
                         {.type = *id, .specifier = types::Specifier::Val},
@@ -806,6 +808,98 @@ private:
             if (param && param->type.specifier == types::Specifier::Var) {
                 require_var(
                     named_arg.value, inst.location, "named function argument"
+                );
+            }
+        }
+    }
+
+    void check_struct(ir::InstRef ref, const ir::Inst& inst, const types::Type::Struct& type) {
+        const auto& data = inst.data.get<ir::Inst::Call>();
+        if (data.args.size + data.named_args.size > type.fields.size()) {
+            error(
+                inst.location,
+                std::format(
+                    "too many arguments: struct has {} "
+                    "fields but {} were provided",
+                    type.fields.size(),
+                    data.args.size + data.named_args.size
+                )
+            );
+        }
+        auto args = package_->inst_refs(data.args);
+        for (size_t i = 0; i < args.size(); ++i) {
+            auto arg_tp = type_vars_[args[i]].type;
+            if (arg_tp && !can_convert(
+                              arg_tp->type, type.fields[i].type.type, *type_pool_
+                          )) {
+                error(
+                    inst.location,
+                    std::format(
+                        "Type mismatch: cannot convert "
+                        "argument {} from {} to {}",
+                        i,
+                        type_pool_->to_string(*arg_tp),
+                        type_pool_->to_string(type.fields[i].type)
+                    )
+                );
+            }
+            if (type.fields[i].type.specifier == types::Specifier::Var) {
+                require_var(args[i], inst.location, "struct field");
+            }
+        }
+        auto named_args = package_->call_args(data.named_args);
+        for (const auto& named_arg : named_args) {
+            auto param = [&] -> std::optional<types::Type::StructField> {
+                auto search_params = std::span(type.fields).subspan(args.size());
+                auto result =
+                    std::ranges::find_if(search_params, [&](const auto& param) {
+                        return param.name == named_arg.name;
+                    });
+                if (result != search_params.end()) {
+                    return *result;
+                }
+                search_params = std::span(type.fields).subspan(0, args.size());
+                result =
+                    std::ranges::find_if(search_params, [&](const auto& param) {
+                        return param.name == named_arg.name;
+                    });
+                if (result != search_params.end()) {
+                    error(
+                        inst.location,
+                        std::format(
+                            "named argument '{}' was already provided as "
+                            "positional argument {}",
+                            named_arg.name,
+                            result - search_params.begin()
+                        )
+                    );
+                    return std::nullopt;
+                }
+                error(
+                    inst.location,
+                    std::format(
+                        "struct has no field named '{}'", named_arg.name
+                    )
+                );
+                return std::nullopt;
+            }();
+            auto arg_tp = type_vars_[named_arg.value].type;
+            if (param && arg_tp &&
+                !can_convert(arg_tp->type, param->type.type, *type_pool_)) {
+                error(
+                    inst.location,
+                    std::format(
+                        "Type mismatch: cannot convert "
+                        "argument {} from {} to {}",
+                        named_arg.name,
+                        type_pool_->to_string(*arg_tp),
+                        type_pool_->to_string(param->type)
+                    )
+                );
+            }
+            if (param && param->type.specifier == types::Specifier::Var) {
+                require_var(
+                    named_arg.value, inst.location, "named struct field"
                 );
             }
         }
