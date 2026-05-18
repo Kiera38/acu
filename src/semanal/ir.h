@@ -36,6 +36,7 @@ struct Block {
 };
 
 struct Comparator;
+using ComparatorRef = Ref<Comparator>;
 using Comparators = RefRange<Comparator>;
 
 using InstRefs = RefRange<InstRef>;
@@ -232,7 +233,6 @@ enum class ComparisonOp : std::uint8_t {
 struct Comparator {
     Block value;
     ComparisonOp op;
-    types::TypeId type;
 };
 
 struct Func {
@@ -245,6 +245,7 @@ struct Func {
     std::uint32_t max_pos_args;
     types::SpecType return_type;
     Insts insts;
+    Comparators comparators;
 };
 
 class Package;
@@ -378,6 +379,12 @@ public:
     [[nodiscard]] std::span<Comparator> comparators(Comparators comparators) {
         return comparators_.range(comparators);
     }
+    [[nodiscard]] ComparatorRef next_comparator() const {
+        return {static_cast<uint32_t>(comparators_.size() + 1)};
+    }
+    [[nodiscard]] const Comparator& comparator(ComparatorRef ref) const {
+        return comparators_[ref];
+    }
 
     CallArgs add_call_args(std::span<const CallArg> args) {
         return named_args_.append_range(args);
@@ -402,11 +409,13 @@ private:
 
 struct AFunc {
     FuncRef func{};
+    types::TypeId type{};
     IndexMap<ir::InstRef, types::SpecType> types;
+    IndexMap<ComparatorRef, types::TypeId> comparator_types;
 };
 
 struct AnalyzedPackage {
-    Package* ir_package{};
+    Package* ir_package{}; 
     IndexVector<AFunc, FuncRef> funcs_;
 };
 

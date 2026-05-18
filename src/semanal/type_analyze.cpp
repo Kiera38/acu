@@ -26,6 +26,7 @@ public:
     )
         : package_(&package),
           type_vars_(package.func(func_ref).insts),
+          comparator_types_(package.func(func_ref).comparators),
           type_pool_(&package.types()),
           func_(&package.func(func_ref)),
           func_ref_(func_ref),
@@ -42,7 +43,7 @@ public:
         return changed_;
     }
 
-    [[nodiscard]] ir::AFunc get_types() const {
+    [[nodiscard]] ir::AFunc get_types() {
         IndexMap<ir::InstRef, types::SpecType> types(func_->insts);
         for (auto i : type_vars_.indices()) {
             const auto& var = type_vars_[i];
@@ -55,7 +56,12 @@ public:
                 types[i] = var.get();
             }
         }
-        return {.func = func_ref_, .types = std::move(types)};
+        return {
+            .func = func_ref_,
+            .type = func_type_id_,
+            .types = std::move(types),
+            .comparator_types = std::move(comparator_types_)
+        };
     }
 
 private:
@@ -467,7 +473,8 @@ private:
         auto current_left = data.left;
         auto comparators = package_->comparators(data.comparators);
 
-        for (auto& comparator : comparators) {
+        for (auto comp_ref : data.comparators) {
+            const auto& comparator = package_->comparator(comp_ref);
             propagate_range(comparator.value);
             ir::InstRef operand_ref = comparator.value.end;
             auto& left_tv = type_vars_[current_left];
@@ -476,7 +483,7 @@ private:
                 auto unified =
                     unify(left_tv.get().type, right_tv.get().type, *type_pool_);
                 if (unified) {
-                    comparator.type = *unified;
+                    comparator_types_[comp_ref] = *unified;
                 }
             }
             current_left = operand_ref;
@@ -495,7 +502,8 @@ private:
                 if (auto id = package_->inst(data.value)
                                   .data.get<ir::Inst::Const>()
                                   .value.get_if<types::TypeId>()) {
-                    const auto& type = type_pool_->get(*id).data.get<types::Type::Struct>();
+                    const auto& type =
+                        type_pool_->get(*id).data.get<types::Type::Struct>();
                     check_struct(ref, inst, type);
                     lock_type(
                         ref,
@@ -813,7 +821,9 @@ private:
         }
     }
 
-    void check_struct(ir::InstRef ref, const ir::Inst& inst, const types::Type::Struct& type) {
+    void check_struct(
+        ir::InstRef ref, const ir::Inst& inst, const types::Type::Struct& type
+    ) {
         const auto& data = inst.data.get<ir::Inst::Call>();
         if (data.args.size + data.named_args.size > type.fields.size()) {
             error(
@@ -829,9 +839,10 @@ private:
         auto args = package_->inst_refs(data.args);
         for (size_t i = 0; i < args.size(); ++i) {
             auto arg_tp = type_vars_[args[i]].type;
-            if (arg_tp && !can_convert(
-                              arg_tp->type, type.fields[i].type.type, *type_pool_
-                          )) {
+            if (arg_tp &&
+                !can_convert(
+                    arg_tp->type, type.fields[i].type.type, *type_pool_
+                )) {
                 error(
                     inst.location,
                     std::format(
@@ -850,7 +861,8 @@ private:
         auto named_args = package_->call_args(data.named_args);
         for (const auto& named_arg : named_args) {
             auto param = [&] -> std::optional<types::Type::StructField> {
-                auto search_params = std::span(type.fields).subspan(args.size());
+                auto search_params =
+                    std::span(type.fields).subspan(args.size());
                 auto result =
                     std::ranges::find_if(search_params, [&](const auto& param) {
                         return param.name == named_arg.name;
@@ -945,6 +957,7 @@ private:
 
     ir::Package* package_;
     IndexMap<ir::InstRef, TypeVar> type_vars_;
+    IndexMap<ir::ComparatorRef, types::TypeId> comparator_types_;
     types::TypePool* type_pool_;
     types::TypeId func_type_id_ {};
     ir::Func* func_;
@@ -969,6 +982,11 @@ ir::AnalyzedPackage type_analyze(
                 .types = {RefRange<types::SpecType, ir::InstRef> {
                     .start = 0, .size = 0
                 }},
+                .comparator_types = {
+                    RefRange<types::TypeId, ir::ComparatorRef> {
+                        .start = 0, .size = 0
+                    }
+                },
             });
             continue;
         }

@@ -118,6 +118,8 @@ struct RefRange {
     iterator end() const { return iterator {start + size}; }
 
     [[nodiscard]] bool empty() const { return size == 0; }
+
+    I operator[](size_t i) const {return {start + i};}
 };
 
 template <typename T, Index I = Ref<T>>

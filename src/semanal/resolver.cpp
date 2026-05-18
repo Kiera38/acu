@@ -491,9 +491,12 @@ void Resolver::resolve_func_def(const nodes::Func& func_node) {
             );
         }
         ir_func.insts.start = ir_package_.last_inst().index + 1;
+        ir_func.comparators.start = ir_package_.next_comparator().index;
         resolve_stmt(*func_node.body, ir_func);
         ir_func.insts.size =
             ir_package_.last_inst().index + 1 - ir_func.insts.start;
+        ir_func.comparators.size =
+            ir_package_.next_comparator().index - ir_func.comparators.start;
         context_->pop();
     }
 }

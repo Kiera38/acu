@@ -27,8 +27,9 @@ class FuncGenerator {
     };
 
     struct Value {
-        utils::Variant<std::monostate, ir::Const, ir::LocalRef, ir::PlaceBuilder>
-            value;
+        utils::
+            Variant<std::monostate, ir::Const, ir::LocalRef, ir::PlaceBuilder>
+                value;
 
         Value() = default;
         Value(ir::Const c) : value(c) {}
@@ -332,18 +333,16 @@ private:
                 )};
             },
             [&](const SemInst::Comparison& inst) {
-                auto comparators =
-                    apackage_->ir_package->comparators(inst.comparators);
-                if (comparators.empty()) return;
-
-                if (comparators.size() == 1) {
-                    auto& comp = comparators[0];
+                if (inst.comparators.size == 1) {
+                    auto& comp =
+                        apackage_->ir_package->comparator(inst.comparators[0]);
                     types::SpecType comp_type = {
-                        .type = comp.type, .specifier = types::Specifier::Val
+                        .type =
+                            afunc_->comparator_types[{inst.comparators.start}],
+                        .specifier = types::Specifier::Val
                     };
-                    auto l = get_operand_cast(
-                        inst.left, comp_type, sinst.location
-                    );
+                    auto l =
+                        get_operand_cast(inst.left, comp_type, sinst.location);
                     visit_block(comp.value);
                     auto r = get_operand_cast(
                         comp.value.end, comp_type, sinst.location
@@ -362,15 +361,18 @@ private:
                 auto merge_block = builder_.add_block();
                 auto current_left_ref = inst.left;
 
-                for (size_t i = 0; i < comparators.size(); ++i) {
-                    auto& comp = comparators[i];
+                for (size_t i = 0; i < inst.comparators.size; ++i) {
+                    auto comp_ref = inst.comparators[i];
                     types::SpecType comp_type = {
-                        .type = comp.type, .specifier = types::Specifier::Val
+                        .type = afunc_->comparator_types[comp_ref],
+                        .specifier = types::Specifier::Val
                     };
 
                     auto l = get_operand_cast(
                         current_left_ref, comp_type, sinst.location
                     );
+                    const auto& comp =
+                        apackage_->ir_package->comparator(comp_ref);
                     visit_block(comp.value);
                     auto r = get_operand_cast(
                         comp.value.end, comp_type, sinst.location
@@ -392,7 +394,7 @@ private:
                         sinst.location
                     );
 
-                    if (i < comparators.size() - 1) {
+                    if (i < inst.comparators.size - 1) {
                         auto next_block = builder_.add_block();
                         builder_.branch(
                             builder_.op(cmp_res, types::Specifier::Val),
@@ -539,12 +541,13 @@ private:
                     builder_, type, sinst.location
                 );
                 const auto& field = get_field(type.type, inst.name);
-                auto p = pb.field(get_field_index(type.type, inst.name)).build();
+                auto p =
+                    pb.field(get_field_index(type.type, inst.name)).build();
                 builder_.assign(
                     p,
-                    builder_.r_use(get_operand_cast(
-                        inst.value, field.type, sinst.location
-                    )),
+                    builder_.r_use(
+                        get_operand_cast(inst.value, field.type, sinst.location)
+                    ),
                     sinst.location
                 );
             },
@@ -563,14 +566,11 @@ private:
                 )};
             },
             [&](const SemInst::SetItem& inst) {
-                auto item_type =
-                    get_item_type(afunc_->types[inst.var].type);
+                auto item_type = get_item_type(afunc_->types[inst.var].type);
                 builder_.assign(
                     values_[inst.var]
                         .as_place_builder(
-                            builder_,
-                            afunc_->types[inst.var],
-                            sinst.location
+                            builder_, afunc_->types[inst.var], sinst.location
                         )
                         .index(get_operand_cast(
                             inst.index,
@@ -586,14 +586,13 @@ private:
                 );
             },
             [&](const SemInst::Deref& inst) {
-                values_[sref] =
-                    Value {values_[inst.value]
-                               .as_place_builder(
-                                   builder_,
-                                   afunc_->types[inst.value],
-                                   sinst.location
-                               )
-                               .deref()};
+                values_[sref] = Value {
+                    values_[inst.value]
+                        .as_place_builder(
+                            builder_, afunc_->types[inst.value], sinst.location
+                        )
+                        .deref()
+                };
             },
             [&](const SemInst::AddressOf& inst) {
                 auto type = afunc_->types[inst.value];
