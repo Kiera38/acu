@@ -408,16 +408,22 @@ private:
     IndexVector<CallArg> named_args_;
 };
 
+struct AFunc;
+using AFuncRef = Ref<AFunc>;
+using OptionalAFuncRef = OptionalRef<AFunc>;
+
 struct AFunc {
     FuncRef func{};
     types::TypeId type{};
     IndexMap<ir::InstRef, types::SpecType> types;
     IndexMap<ComparatorRef, types::TypeId> comparator_types;
+    std::unordered_map<ir::InstRef, AFuncRef, hash<ir::InstRef>, equal_to<ir::InstRef>> call_funcs;
 };
 
 struct AnalyzedPackage {
     Package* ir_package{}; 
-    IndexVector<AFunc, FuncRef> funcs_;
+    IndexVector<AFunc, AFuncRef> funcs_;
+    std::unordered_map<FuncRef, AFuncRef, hash<FuncRef>, equal_to<FuncRef>> public_funcs;
 };
 
 std::string to_string(const Package& package, const Func& func);

@@ -16,8 +16,8 @@ using SemInst = acu::ir::Inst;
 
 class FuncGenerator {
     const acu::ir::AnalyzedPackage* apackage_;
-    const acu::ir::Func* sfunc_;
     const acu::ir::AFunc* afunc_;
+    const acu::ir::Func* sfunc_;
     ir::Func rfunc_;
     ir::Builder builder_;
 
@@ -96,18 +96,18 @@ class FuncGenerator {
 
 public:
     FuncGenerator(
-        const acu::ir::AnalyzedPackage& apackage, acu::ir::FuncRef sref
+        const acu::ir::AnalyzedPackage& apackage, acu::ir::AFuncRef aref
     )
         : apackage_(&apackage),
-          sfunc_(&apackage.ir_package->func(sref)),
-          afunc_(&apackage.funcs_[sref]),
+          afunc_(&apackage.funcs_[aref]),
+          sfunc_(&apackage.ir_package->func(afunc_->func)),
           rfunc_(
               sfunc_->name,
               *sfunc_->source,
               sfunc_->location,
               sfunc_->is_extern,
               sfunc_->is_public,
-              apackage.ir_package->func_type(sref),
+              afunc_->type,
               get_params(apackage, *sfunc_),
               sfunc_->return_type
           ),
@@ -673,7 +673,7 @@ ir::Module generate(acu::ir::AnalyzedPackage& analyzed_package) {
         analyzed_package.ir_package->name(),
         analyzed_package.ir_package->types()
     );
-    for (auto i : analyzed_package.ir_package->funcs().indices()) {
+    for (auto i : analyzed_package.funcs_.indices()) {
         FuncGenerator fg(analyzed_package, i);
         rmod.add(fg.generate());
     }

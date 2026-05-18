@@ -1,6 +1,8 @@
 #pragma once
 
 #include <concepts>
+#include <limits>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <vector>
@@ -29,6 +31,31 @@ template <typename T>
 struct Ref {
     std::uint32_t index;
     auto operator<=>(const Ref<T>&) const = default;
+};
+struct NullRefT {};
+constexpr auto NullRef = NullRefT {};
+
+template <typename T>
+class OptionalRef {
+public:
+    OptionalRef() : OptionalRef(NullRef) {}
+    OptionalRef(NullRefT) : index(std::numeric_limits<std::uint32_t>::max()) {}
+    OptionalRef(Ref<T> ref) : index(ref.index) {}
+
+    Ref<T> operator*() const { return {index}; }
+    Ref<T> ref() const {
+        if (!has_value()) {
+            throw std::bad_optional_access {};
+        }
+        return **this;
+    }
+    explicit operator bool() const { return has_value(); }
+    [[nodiscard]] bool has_value() const {
+        return index != std::numeric_limits<std::uint32_t>::max();
+    }
+
+private:
+    std::uint32_t index;
 };
 
 template <Index I>
@@ -119,7 +146,9 @@ struct RefRange {
 
     [[nodiscard]] bool empty() const { return size == 0; }
 
-    I operator[](size_t i) const {return {static_cast<std::uint32_t>(start + i)};}
+    I operator[](size_t i) const {
+        return {static_cast<std::uint32_t>(start + i)};
+    }
 };
 
 template <typename T, Index I = Ref<T>>

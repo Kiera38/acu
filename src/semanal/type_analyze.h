@@ -1,20 +1,40 @@
 #pragma once
 
+#include <deque>
+
+#include "errors.h"
+#include "index.h"
 #include "ir.h"
 #include "type_utils.h"
+#include "types.h"
+#include "variant.h"
 
 namespace acu::semanal {
-
+class PackageAnalyzer;
 class TypeAnalyzer {
 public:
     TypeAnalyzer(
-        ir::Package& package, ir::FuncRef func_ref, ErrorHandler& err_handler
+        PackageAnalyzer& package,
+        ir::FuncRef func_ref,
+        const ir::Func& func,
+        types::TypeId type
     );
 
     bool propagate();
     [[nodiscard]] ir::AFunc get_types();
 
 private:
+    friend class PackageAnalyzer;
+    [[nodiscard]] const ir::Inst& get_inst(ir::InstRef ref) const;
+    [[nodiscard]] const ir::Comparator& get_comparator(
+        ir::ComparatorRef ref
+    ) const;
+    [[nodiscard]] std::span<const ir::InstRef> get_inst_refs(
+        ir::InstRefs refs
+    ) const;
+    [[nodiscard]] std::span<const ir::CallArg> get_call_args(
+        ir::CallArgs args
+    ) const;
     void error(Location location, std::string message) const;
     [[nodiscard]] const types::Type::Func& get_func_type() const;
     void require_var(ir::InstRef ref, Location loc, std::string_view context);
@@ -91,15 +111,44 @@ private:
     void lock_type(ir::InstRef inst, types::TypeId type, Location loc);
     void lock_type(ir::InstRef inst, types::SpecType type, Location loc);
 
-    ir::Package* package_;
+    PackageAnalyzer* package_;
+    types::TypePool* type_pool_;
     IndexMap<ir::InstRef, TypeVar> type_vars_;
     IndexMap<ir::ComparatorRef, types::TypeId> comparator_types_;
-    types::TypePool* type_pool_;
+    std::unordered_map<
+        ir::InstRef,
+        ir::AFuncRef,
+        hash<ir::InstRef>,
+        equal_to<ir::InstRef>>
+        call_funcs_;
     types::TypeId func_type_id_ {};
-    ir::Func* func_;
+    const ir::Func* func_;
     ir::FuncRef func_ref_;
-    ErrorHandler* err_handler_;
     bool changed_ = false;
     std::uint32_t current_inst_ = 0;
 };
+
+class PackageAnalyzer {
+public:
+    PackageAnalyzer(ir::Package& package, ErrorHandler& err_handler);
+    ir::AnalyzedPackage analyze();
+
+private:
+    ir::AFuncRef func(ir::FuncRef ref);
+    types::SpecType func_return_type(ir::AFuncRef ref);
+
+    types::TypeId func_type(ir::AFuncRef ref);
+    types::TypeId used_func_type(ir::UsedFuncRef ref);
+
+    friend class TypeAnalyzer;
+    ir::Package* package_;
+    ErrorHandler* err_handler_;
+    IndexVector<
+        utils::Variant<std::unique_ptr<TypeAnalyzer>, ir::AFunc>,
+        ir::AFuncRef>
+        funcs_;
+    std::deque<ir::AFuncRef> analyze_funcs_;
+    IndexVector<ir::OptionalAFuncRef, ir::FuncRef> func_map_;
+};
+
 }
