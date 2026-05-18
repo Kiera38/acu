@@ -201,6 +201,7 @@ public:
         const Source& source,
         Location location,
         bool is_extern,
+        bool is_public,
         types::TypeId type,
         std::span<const Local> params,
         types::SpecType return_type
@@ -209,6 +210,7 @@ public:
           source_(&source),
           location_(location),
           is_extern_(is_extern),
+          is_public_(is_public),
           type_(type),
           arg_count_(params.size()),
           return_type_(return_type),
@@ -225,6 +227,7 @@ public:
     }
     [[nodiscard]] Location location() const { return location_; }
     [[nodiscard]] bool is_extern() const { return is_extern_; }
+    [[nodiscard]] bool is_public() const { return is_public_; }
     [[nodiscard]] std::uint32_t arg_count() const { return arg_count_; }
     [[nodiscard]] const Local& param(LocalRef ref) const {
         return locals_[ref];
@@ -379,6 +382,7 @@ private:
     Location location_;
     std::string_view name_;
     bool is_extern_ = false;
+    bool is_public_;
     types::TypeId type_;
     std::uint32_t arg_count_ = 0;
     types::SpecType return_type_;

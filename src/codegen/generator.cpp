@@ -66,7 +66,8 @@ public:
             functions_.push_back(
                 llvm::Function::Create(
                     func_type,
-                    llvm::Function::ExternalLinkage,
+                    ir_func.is_public() ? llvm::Function::ExternalLinkage
+                                        : llvm::Function::InternalLinkage,
                     ir_func.mangle_name(),
                     *llvm_module_
                 )
@@ -199,7 +200,8 @@ private:
     std::unordered_map<std::string_view, llvm::Constant*> string_literals_;
     IndexVector<llvm::FunctionType*, refanal::ir::FuncRef> function_types_;
     IndexVector<llvm::Function*, refanal::ir::FuncRef> functions_;
-    IndexVector<llvm::FunctionType*, refanal::ir::UsedFuncRef> used_function_types_;
+    IndexVector<llvm::FunctionType*, refanal::ir::UsedFuncRef>
+        used_function_types_;
     IndexVector<llvm::Function*, refanal::ir::UsedFuncRef> used_funcs_;
 
     friend class FuncGenerator;
@@ -547,7 +549,8 @@ private:
                     if (auto* fr = cv->value.get_if<refanal::ir::FuncRef>()) {
                         llvm_func_type = generator->function_types_[*fr];
                     } else if (auto* ufr =
-                                   cv->value.get_if<refanal::ir::UsedFuncRef>()) {
+                                   cv->value
+                                       .get_if<refanal::ir::UsedFuncRef>()) {
                         llvm_func_type = generator->used_function_types_[*ufr];
                     }
                 }

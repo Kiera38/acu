@@ -240,6 +240,7 @@ struct Func {
     Location location;
     std::string_view name;
     bool is_extern;
+    bool is_public;
     Params params;
     std::uint32_t min_pos_args;
     std::uint32_t max_pos_args;

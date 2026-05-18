@@ -106,6 +106,7 @@ public:
               *sfunc_->source,
               sfunc_->location,
               sfunc_->is_extern,
+              sfunc_->is_public,
               apackage.ir_package->func_type(sref),
               get_params(apackage, *sfunc_),
               sfunc_->return_type

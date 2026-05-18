@@ -119,7 +119,7 @@ struct RefRange {
 
     [[nodiscard]] bool empty() const { return size == 0; }
 
-    I operator[](size_t i) const {return {start + i};}
+    I operator[](size_t i) const {return {static_cast<std::uint32_t>(start + i)};}
 };
 
 template <typename T, Index I = Ref<T>>

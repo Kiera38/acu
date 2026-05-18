@@ -508,7 +508,8 @@ ir::FuncRef Resolver::create_func_def(
         .source = &context_->source(),
         .location = location,
         .name = func_node.name,
-        .is_extern = func_node.is_extern
+        .is_extern = func_node.is_extern,
+        .is_public = func_node.is_public
     };
     auto func_ref = ir_package_.add(ir_func);
     if (auto existing = context_->add(func_node.name, {func_ref, location})) {
