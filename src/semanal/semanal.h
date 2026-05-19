@@ -9,7 +9,6 @@
 #include "project.h"
 #include "semanal/ir.h"
 
-
 namespace acu::semanal {
 
 std::vector<std::pair<PackageNameRef, Location>> get_module_usings(
@@ -24,6 +23,6 @@ ir::Package resolve(
 );
 
 ir::AnalyzedPackage type_analyze(
-    ir::Package& package, ErrorHandler& err_handler
+    const Packages& project, ir::Package& package, ErrorHandler& err_handler
 );
 }

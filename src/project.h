@@ -49,6 +49,12 @@ public:
     [[nodiscard]] ir::Package& package(ir::PackageRef ref) {
         return packages_[PackageRef {ref.index}].ir_package;
     }
+    [[nodiscard]] const ir::AnalyzedPackage& apackage(ir::PackageRef ref) const {
+        return packages_[PackageRef {ref.index}].analyzed;
+    }
+    [[nodiscard]] ir::AnalyzedPackage& apackage(ir::PackageRef ref) {
+        return packages_[PackageRef {ref.index}].analyzed;
+    }
     [[nodiscard]] const refanal::ir::Module& module(
         refanal::ir::ModuleRef ref
     ) const {
@@ -89,6 +95,9 @@ public:
     }
     [[nodiscard]] ir::Package& package(ir::PackageRef ref) const {
         return project_->package(ref);
+    }
+    [[nodiscard]] ir::AnalyzedPackage& apackage(ir::PackageRef ref) const {
+        return project_->apackage(ref);
     }
     [[nodiscard]] std::pair<ir::PackageRef, ir::Module*> module_package(
         PackageNameRef module_name

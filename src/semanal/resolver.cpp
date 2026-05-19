@@ -526,8 +526,6 @@ ir::UsedFuncRef Resolver::get_used_func(
         return it->second;
     }
     auto& package = project_context_->package(package_ref);
-    used_func.type =
-        ir_package_.types().copy(package.types(), package.func_type(ref));
     auto used_func_ref = ir_package_.add(used_func);
     used_funcs_.insert({used_func, used_func_ref});
     return used_func_ref;

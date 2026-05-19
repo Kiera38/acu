@@ -1,16 +1,33 @@
 #include "type_analyze.h"
 
 #include "index.h"
+#include "project.h"
 #include "semanal/ir.h"
 #include "types.h"
 
 namespace acu::semanal {
 PackageAnalyzer::PackageAnalyzer(
-    ir::Package& package, ErrorHandler& err_handler
+    const Packages& project, ir::Package& package, ErrorHandler& err_handler
 )
-    : package_(&package),
+    : project_(&project),
+      package_(&package),
       err_handler_(&err_handler),
-      func_map_(package.funcs().size(), NullRef) {}
+      func_map_(package.funcs().size(), NullRef),
+      used_func_map_(package.used_funcs().size(), NullRef) {}
+
+types::TypeId get_func_type(const ir::Func& func, ir::Package& package) {
+    std::vector<types::Type::FuncParam> param_types;
+    param_types.reserve(func.params.size);
+    for (const auto& param : package.params(func.params)) {
+        param_types.push_back({.name = param.name, .type = param.type});
+    }
+    return package.types().add_func({
+        .params = std::move(param_types),
+        .min_pos_args = func.min_pos_args,
+        .max_pos_args = func.max_pos_args,
+        .return_type = func.return_type,
+    });
+}
 
 ir::AnalyzedPackage PackageAnalyzer::analyze() {
     std::unordered_map<
@@ -25,7 +42,7 @@ ir::AnalyzedPackage PackageAnalyzer::analyze() {
             auto aref = funcs_.emplace_back(
                 ir::AFunc {
                     .func = ref,
-                    .type = package_->func_type(ref),
+                    .type = get_func_type(func, *package_),
                     .types = {RefRange<types::SpecType, ir::InstRef> {}},
                     .comparator_types = {
                         RefRange<types::TypeId, ir::ComparatorRef> {}
@@ -40,9 +57,7 @@ ir::AnalyzedPackage PackageAnalyzer::analyze() {
         }
         if (func.is_public) {
             auto aref = funcs_.emplace_back(
-                std::make_unique<TypeAnalyzer>(
-                    *this, ref, func, package_->func_type(ref)
-                )
+                std::make_unique<TypeAnalyzer>(*this, ref, func)
             );
             analyze_funcs_.push_back(aref);
             func_map_[ref] = aref;
@@ -66,7 +81,8 @@ ir::AnalyzedPackage PackageAnalyzer::analyze() {
     }
     return {
         .ir_package = package_,
-        .funcs_ = std::move(funcs),
+        .funcs = std::move(funcs),
+        .used_funcs = std::move(used_funcs_),
         .public_funcs = std::move(public_funcs)
     };
 }
@@ -76,11 +92,8 @@ ir::AFuncRef PackageAnalyzer::func(ir::FuncRef ref) {
         return *func_map_[ref];
     }
     const auto& func = package_->func(ref);
-    auto aref = funcs_.emplace_back(
-        std::make_unique<TypeAnalyzer>(
-            *this, ref, func, package_->func_type(ref)
-        )
-    );
+    auto aref =
+        funcs_.emplace_back(std::make_unique<TypeAnalyzer>(*this, ref, func));
     analyze_funcs_.push_back(aref);
     func_map_[ref] = aref;
     return aref;
@@ -89,7 +102,7 @@ ir::AFuncRef PackageAnalyzer::func(ir::FuncRef ref) {
 types::SpecType PackageAnalyzer::func_return_type(ir::AFuncRef ref) {
     return funcs_[ref].visit(
         [&](const std::unique_ptr<TypeAnalyzer>& analyzer) {
-            return analyzer->get_func_type().return_type;
+            return analyzer->func_->return_type;
         },
         [&](const ir::AFunc& func) {
             return package_->types()
@@ -103,20 +116,38 @@ types::SpecType PackageAnalyzer::func_return_type(ir::AFuncRef ref) {
 types::TypeId PackageAnalyzer::func_type(ir::AFuncRef ref) {
     return funcs_[ref].visit(
         [&](const std::unique_ptr<TypeAnalyzer>& analyzer) {
-            return analyzer->func_type_id_;
+            return get_func_type(*analyzer->func_, *package_);
         },
         [&](const ir::AFunc& func) { return func.type; }
     );
 }
 
-types::TypeId PackageAnalyzer::used_func_type(ir::UsedFuncRef ref) {
-    return package_->used_func(ref).type;
+ir::AUsedFuncRef PackageAnalyzer::used_func(ir::UsedFuncRef ref) {
+    if (used_func_map_[ref]) {
+        return *used_func_map_[ref];
+    }
+    const auto& func = package_->used_func(ref);
+    const auto& package_types = project_->package(func.package).types();
+    const auto& apackage = project_->apackage(func.package);
+    const auto& aref = apackage.public_funcs.at(func.func);
+    auto type =
+        package_->types().copy(package_types, apackage.funcs[aref].type);
+    auto aused_ref = used_funcs_.push_back({
+        .package = func.package,
+        .func = aref,
+        .type = type,
+    });
+    used_func_map_[ref] = aused_ref;
+    return aused_ref;
+}
+types::TypeId PackageAnalyzer::used_func_type(ir::AUsedFuncRef ref) {
+    return used_funcs_[ref].type;
 }
 
 ir::AnalyzedPackage type_analyze(
-    ir::Package& package, ErrorHandler& err_handler
+    const Packages& project, ir::Package& package, ErrorHandler& err_handler
 ) {
-    PackageAnalyzer analyzer(package, err_handler);
+    PackageAnalyzer analyzer(project, package, err_handler);
     return analyzer.analyze();
 }
 }

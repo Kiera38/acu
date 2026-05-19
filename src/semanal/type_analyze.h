@@ -5,6 +5,7 @@
 #include "errors.h"
 #include "index.h"
 #include "ir.h"
+#include "project.h"
 #include "type_utils.h"
 #include "types.h"
 #include "variant.h"
@@ -14,10 +15,7 @@ class PackageAnalyzer;
 class TypeAnalyzer {
 public:
     TypeAnalyzer(
-        PackageAnalyzer& package,
-        ir::FuncRef func_ref,
-        const ir::Func& func,
-        types::TypeId type
+        PackageAnalyzer& package, ir::FuncRef func_ref, const ir::Func& func
     );
 
     bool propagate();
@@ -35,8 +33,11 @@ private:
     [[nodiscard]] std::span<const ir::CallArg> get_call_args(
         ir::CallArgs args
     ) const;
+    [[nodiscard]] std::span<const ir::Param> get_params(
+        ir::Params params
+    ) const;
+    [[nodiscard]] const ir::Param& get_param(ir::ParamRef param) const;
     void error(Location location, std::string message) const;
-    [[nodiscard]] const types::Type::Func& get_func_type() const;
     void require_var(ir::InstRef ref, Location loc, std::string_view context);
     void propagate_range(ir::Block range);
     void propagate_inst(ir::InstRef ref);
@@ -117,11 +118,10 @@ private:
     IndexMap<ir::ComparatorRef, types::TypeId> comparator_types_;
     std::unordered_map<
         ir::InstRef,
-        ir::AFuncRef,
+        utils::Variant<ir::AFuncRef, ir::AUsedFuncRef>,
         hash<ir::InstRef>,
         equal_to<ir::InstRef>>
         call_funcs_;
-    types::TypeId func_type_id_ {};
     const ir::Func* func_;
     ir::FuncRef func_ref_;
     bool changed_ = false;
@@ -130,17 +130,21 @@ private:
 
 class PackageAnalyzer {
 public:
-    PackageAnalyzer(ir::Package& package, ErrorHandler& err_handler);
+    PackageAnalyzer(
+        const Packages& project, ir::Package& package, ErrorHandler& err_handler
+    );
     ir::AnalyzedPackage analyze();
 
 private:
     ir::AFuncRef func(ir::FuncRef ref);
     types::SpecType func_return_type(ir::AFuncRef ref);
-
     types::TypeId func_type(ir::AFuncRef ref);
-    types::TypeId used_func_type(ir::UsedFuncRef ref);
+
+    ir::AUsedFuncRef used_func(ir::UsedFuncRef ref);
+    types::TypeId used_func_type(ir::AUsedFuncRef ref);
 
     friend class TypeAnalyzer;
+    const Packages* project_;
     ir::Package* package_;
     ErrorHandler* err_handler_;
     IndexVector<
@@ -149,6 +153,8 @@ private:
         funcs_;
     std::deque<ir::AFuncRef> analyze_funcs_;
     IndexVector<ir::OptionalAFuncRef, ir::FuncRef> func_map_;
+    IndexVector<ir::AUsedFunc, ir::AUsedFuncRef> used_funcs_;
+    IndexVector<ir::OptionalAUsedFuncRef, ir::UsedFuncRef> used_func_map_;
 };
 
 }

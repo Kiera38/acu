@@ -82,7 +82,7 @@ void semanal_package(
     }
 
     package.analyzed =
-        acu::semanal::type_analyze(package.ir_package, err_handler);
+        acu::semanal::type_analyze(context, package.ir_package, err_handler);
     if (err_handler.has_errors()) {
         err_handler.emit_all();
         throw std::runtime_error("");
@@ -330,11 +330,6 @@ std::pair<ir::PackageRef, ir::Module*> Packages::module_package(
     return {ir::PackageRef {package_ref.index}, &ir_module};
 }
 
-std::string join_module_name(std::span<const std::string_view> module_name) {
-    return module_name | std::views::join_with('.') |
-           std::ranges::to<std::string>();
-}
-
 Packages::Packages(Project& project) : project_(&project) {
     for (auto ref : project.modules_.indices()) {
         modules_.insert({project.modules_[ref].source.name(), ref});
@@ -363,7 +358,7 @@ Packages::Packages(Project& project) : project_(&project) {
                         module_name.second,
                         std::format(
                             "module '{}' not found",
-                            join_module_name(module_name.first)
+                            module_name.first.join()
                         )
                     );
                 }

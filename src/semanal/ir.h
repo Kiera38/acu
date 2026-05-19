@@ -255,7 +255,6 @@ using PackageRef = Ref<Package>;
 struct UsedFunc {
     PackageRef package;
     FuncRef func;
-    types::TypeId type;
 
     [[nodiscard]] const Source& source(const Project& project) const;
     [[nodiscard]] Location location(const Project& project) const;
@@ -291,7 +290,7 @@ public:
     Package() = default;
     Package(PackageName name) : name_(std::move(name)) {}
     [[nodiscard]] PackageNameRef name() const { return name_; }
-    
+
     Module& root_module() { return root_module_; }
     [[nodiscard]] const Module& root_module() const { return root_module_; }
 
@@ -314,8 +313,6 @@ public:
     types::TypePool& types() { return types_; }
     [[nodiscard]] const types::TypePool& types() const { return types_; }
 
-    types::TypeId func_type(FuncRef ref);
-
     UsedFuncRef add(UsedFunc func) { return used_funcs_.push_back(func); }
     [[nodiscard]] IndexSpan<const UsedFunc, UsedFuncRef> used_funcs() const {
         return used_funcs_.data();
@@ -335,13 +332,9 @@ public:
         return params_[ref];
     }
 
-    InstRef add(const Inst& inst) {
-        return insts_.push_back(inst);
-    }
+    InstRef add(const Inst& inst) { return insts_.push_back(inst); }
     [[nodiscard]] InstRef last_inst() const { return insts_.last_index(); }
-    [[nodiscard]] const Inst& inst(InstRef ref) const {
-        return insts_[ref];
-    }
+    [[nodiscard]] const Inst& inst(InstRef ref) const { return insts_[ref]; }
     [[nodiscard]] std::span<const Inst> insts(Insts insts) const {
         return insts_.range(insts);
     }
@@ -412,18 +405,35 @@ struct AFunc;
 using AFuncRef = Ref<AFunc>;
 using OptionalAFuncRef = OptionalRef<AFunc>;
 
+struct AUsedFunc;
+using AUsedFuncRef = Ref<AUsedFunc>;
+using OptionalAUsedFuncRef = OptionalRef<AUsedFunc>;
+
 struct AFunc {
-    FuncRef func{};
-    types::TypeId type{};
+    FuncRef func {};
+    types::TypeId type {};
     IndexMap<ir::InstRef, types::SpecType> types;
     IndexMap<ComparatorRef, types::TypeId> comparator_types;
-    std::unordered_map<ir::InstRef, AFuncRef, hash<ir::InstRef>, equal_to<ir::InstRef>> call_funcs;
+    std::unordered_map<
+        ir::InstRef,
+        utils::Variant<AFuncRef, AUsedFuncRef>,
+        hash<ir::InstRef>,
+        equal_to<ir::InstRef>>
+        call_funcs;
+};
+
+struct AUsedFunc {
+    PackageRef package;
+    AFuncRef func;
+    types::TypeId type;
 };
 
 struct AnalyzedPackage {
-    Package* ir_package{}; 
-    IndexVector<AFunc, AFuncRef> funcs_;
-    std::unordered_map<FuncRef, AFuncRef, hash<FuncRef>, equal_to<FuncRef>> public_funcs;
+    Package* ir_package {};
+    IndexVector<AFunc, AFuncRef> funcs;
+    IndexVector<AUsedFunc, AUsedFuncRef> used_funcs;
+    std::unordered_map<FuncRef, AFuncRef, hash<FuncRef>, equal_to<FuncRef>>
+        public_funcs;
 };
 
 std::string to_string(const Package& package, const Func& func);

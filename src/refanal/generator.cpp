@@ -34,7 +34,7 @@ class FuncGenerator {
         Value() = default;
         Value(ir::Const c) : value(c) {}
         Value(ir::LocalRef lr) : value(lr) {}
-        Value(ir::PlaceBuilder pb) : value(pb) {}
+        Value(ir::PlaceBuilder pb) : value(std::move(pb)) {}
 
         ir::OperandRef as_operand(
             ir::Builder& builder, types::SpecType type, Location loc
@@ -99,7 +99,7 @@ public:
         const acu::ir::AnalyzedPackage& apackage, acu::ir::AFuncRef aref
     )
         : apackage_(&apackage),
-          afunc_(&apackage.funcs_[aref]),
+          afunc_(&apackage.funcs[aref]),
           sfunc_(&apackage.ir_package->func(afunc_->func)),
           rfunc_(
               sfunc_->name,
@@ -266,17 +266,20 @@ private:
         return 0;
     }
 
-    ir::Const convert_const(const SemInst::Const::Value& val) {
+    ir::Const convert_const(SemInstRef ref, const SemInst::Const::Value& val) {
         return val.visit(
             [&](bool v) -> ir::Const { return {v}; },
             [&](std::int64_t v) -> ir::Const { return {v}; },
             [&](double v) -> ir::Const { return {v}; },
             [&](char32_t v) -> ir::Const { return {v}; },
             [&](std::string_view v) -> ir::Const { return {v}; },
-            [&](::acu::ir::FuncRef v) -> ir::Const {
+            [&](::acu::ir::FuncRef) -> ir::Const {
+                auto v = afunc_->call_funcs.at(ref).get<acu::ir::AFuncRef>();
                 return {ir::FuncRef {v.index}};
             },
-            [&](::acu::ir::UsedFuncRef v) -> ir::Const {
+            [&](::acu::ir::UsedFuncRef) -> ir::Const {
+                auto v =
+                    afunc_->call_funcs.at(ref).get<acu::ir::AUsedFuncRef>();
                 return {ir::UsedFuncRef {v.index}};
             },
             [&](types::TypeId) -> ir::Const { return {false}; }
@@ -291,7 +294,7 @@ private:
 
         sinst.data.visit(
             [&](const SemInst::Const& c) {
-                values_[sref] = Value {convert_const(c.value)};
+                values_[sref] = Value {convert_const(sref, c.value)};
             },
             [&](const SemInst::VarDecl& inst) {
                 values_[sref] = Value {builder_.add_local(type, inst.name)};
@@ -673,11 +676,11 @@ ir::Module generate(acu::ir::AnalyzedPackage& analyzed_package) {
         analyzed_package.ir_package->name(),
         analyzed_package.ir_package->types()
     );
-    for (auto i : analyzed_package.funcs_.indices()) {
+    for (auto i : analyzed_package.funcs.indices()) {
         FuncGenerator fg(analyzed_package, i);
         rmod.add(fg.generate());
     }
-    for (const auto& ufunc : analyzed_package.ir_package->used_funcs()) {
+    for (const auto& ufunc : analyzed_package.used_funcs) {
         rmod.add(
             ir::UsedFunc {
                 .module = ir::ModuleRef {ufunc.package.index},

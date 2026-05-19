@@ -12,22 +12,17 @@
 #include "semanal/types.h"
 #include "source.h"
 
-
 namespace acu::semanal {
 
 TypeAnalyzer::TypeAnalyzer(
-    PackageAnalyzer& package,
-    ir::FuncRef func_ref,
-    const ir::Func& func,
-    types::TypeId type
+    PackageAnalyzer& package, ir::FuncRef func_ref, const ir::Func& func
 )
     : package_(&package),
       type_pool_(&package.package_->types()),
       type_vars_(func.insts),
       comparator_types_(func.comparators),
       func_(&func),
-      func_ref_(func_ref),
-      func_type_id_(type) {}
+      func_ref_(func_ref) {}
 
 bool TypeAnalyzer::propagate() {
     changed_ = false;
@@ -51,9 +46,20 @@ bool TypeAnalyzer::propagate() {
             types[i] = var.get();
         }
     }
+    std::vector<types::Type::FuncParam> param_types;
+    param_types.reserve(func_->params.size);
+    for (const auto& param : get_params(func_->params)) {
+        param_types.push_back({.name = param.name, .type = param.type});
+    }
+    auto type = type_pool_->add_func({
+        .params = std::move(param_types),
+        .min_pos_args = func_->min_pos_args,
+        .max_pos_args = func_->max_pos_args,
+        .return_type = func_->return_type,
+    });
     return {
         .func = func_ref_,
-        .type = func_type_id_,
+        .type = type,
         .types = std::move(types),
         .comparator_types = std::move(comparator_types_),
         .call_funcs = std::move(call_funcs_)
@@ -79,13 +85,19 @@ std::span<const ir::CallArg> TypeAnalyzer::get_call_args(
 ) const {
     return package_->package_->call_args(args);
 }
+std::span<const ir::Param> TypeAnalyzer::get_params(
+    ir::Params params
+) const {
+    return package_->package_->params(params);
+}
+const ir::Param& TypeAnalyzer::get_param(
+    ir::ParamRef ref
+) const {
+    return package_->package_->param(ref);
+}
 
 void TypeAnalyzer::error(Location location, std::string message) const {
     package_->err_handler_->error(*func_->source, location, std::move(message));
-}
-
-[[nodiscard]] const types::Type::Func& TypeAnalyzer::get_func_type() const {
-    return type_pool_->get(func_type_id_).data.get<types::Type::Func>();
 }
 
 void TypeAnalyzer::require_var(
@@ -205,7 +217,7 @@ void TypeAnalyzer::require_var(
             return false;
         },
         [&](const ir::Inst::LoadParam& data) {
-            auto param_type = get_func_type().params[data.param.index];
+            auto param_type = get_param(data.param);
             if (param_type.type.specifier == types::Specifier::Let) {
                 error(
                     loc,
@@ -332,7 +344,9 @@ void TypeAnalyzer::handle_const(
             return package_->func_type(aref);
         },
         [&](ir::UsedFuncRef func_ref) {
-            return package_->used_func_type(func_ref);
+            auto aref = package_->used_func(func_ref);
+            call_funcs_.emplace(ref, aref);
+            return package_->used_func_type(aref);
         },
         [&](types::TypeId type_id) { return types::Const; }
     );
@@ -368,7 +382,7 @@ void TypeAnalyzer::handle_load_var(
 void TypeAnalyzer::handle_load_param(
     ir::InstRef ref, const ir::Inst::LoadParam& data, Location loc
 ) {
-    auto param_type = get_func_type().params[data.param.index];
+    auto param_type = get_param(data.param);
     lock_type(ref, param_type.type, loc);
 }
 
@@ -555,11 +569,10 @@ void TypeAnalyzer::handle_return(
     ir::InstRef ref, const ir::Inst::Return& data, Location loc
 ) {
     if (data.value.has_value()) {
-        auto& func_type = get_func_type();
-        if (func_type.return_type.specifier == types::Specifier::Var) {
+        if (func_->return_type.specifier == types::Specifier::Var) {
             require_var(*data.value, loc, "return value");
         }
-        add_type(*data.value, func_type.return_type, loc);
+        add_type(*data.value, func_->return_type, loc);
     }
     lock_type(ref, types::Nothing, loc);
 }
