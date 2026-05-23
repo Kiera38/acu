@@ -1,4 +1,7 @@
+#include <cassert>
+#include "index.h"
 #include "resolver.h"
+#include "types.h"
 
 namespace acu::semanal {
 namespace {
@@ -76,63 +79,66 @@ types::SpecType Resolver::resolve_builtin_type(
     return {.type = types::None};
 }
 
-types::SpecType Resolver::resolve_type(const nodes::Expr& expr) {
-    auto res = expr.value.visit(
-        [&](const nodes::Expr::Name& name) -> types::SpecType {
+types::OptionalSpecType Resolver::resolve_type(const nodes::Expr* expr) {
+    if (!expr) {
+        return {.type = NullRef};
+    }
+    auto res = expr->value.visit(
+        [&](const nodes::Expr::Name& name) -> types::OptionalSpecType {
             if (auto type = context_->find(name.name)) {
                 return {.type = type->data.get<types::TypeId>()};
             }
-            auto builtin = resolve_builtin_type(name.name, expr.location);
+            auto builtin = resolve_builtin_type(name.name, expr->location);
             if (builtin.type != types::None) {
-                return builtin;
+                return builtin.as_optional();
             }
             err_handler_->error(
                 context_->source(),
-                expr.location,
+                expr->location,
                 std::format("name '{}' not found", name.name),
                 context_->suggest_similar_name(name.name)
             );
             return {.type = types::None};
         },
-        [&](const nodes::Expr::GetItem& node) -> types::SpecType {
+        [&](const nodes::Expr::GetItem& node) -> types::OptionalSpecType {
             const auto& name = node.value->value.get<nodes::Expr::Name>();
             if (name.name == "Array") {
                 if (node.args.size() != 2) {
                     err_handler_->error(
                         context_->source(),
-                        expr.location,
+                        expr->location,
                         "Array type has 2 parameters"
                     );
                     return {.type = types::None};
                 }
-                auto type = resolve_type(*node.args[0]);
+                auto type = resolve_type(node.args[0].get());
                 if (type.specifier == types::Specifier::None) {
                     type.specifier = types::Specifier::Val;
                 }
                 auto length = get_int_const(*node.args[1]);
-                return {.type = ir_package_.types().add_array(type, length)};
+                return {.type = ir_package_.types().add_array(type.as_type(), length)};
             } else if (name.name == "Ptr") {
                 if (node.args.size() != 1) {
                     err_handler_->error(
                         context_->source(),
-                        expr.location,
+                        expr->location,
                         "Ptr type has 1 parameter"
                     );
                     return {.type = types::None};
                 }
-                auto type = resolve_type(*node.args[0]);
+                auto type = resolve_type(node.args[0].get());
                 if (type.specifier == types::Specifier::None) {
                     type.specifier = types::Specifier::Val;
                 }
-                return {.type = ir_package_.types().add_ptr(type)};
+                return {.type = ir_package_.types().add_ptr(type.as_type())};
             } else {
                 err_handler_->error(
-                    context_->source(), expr.location, "unknown type"
+                    context_->source(), expr->location, "unknown type"
                 );
                 return {.type = types::None};
             }
         },
-        [&](const nodes::Expr::Spec& spec) -> types::SpecType {
+        [&](const nodes::Expr::Spec& spec) -> types::OptionalSpecType {
             auto specifier = [&] {
                 switch (spec.specifier) {
                     using enum nodes::Expr::Specifier;
@@ -143,12 +149,12 @@ types::SpecType Resolver::resolve_type(const nodes::Expr& expr) {
                 std::unreachable();
             }();
             return {
-                .type = resolve_type(*spec.type).type, .specifier = specifier
+                .type = spec.type ? resolve_type(spec.type.get()).type : NullRef, .specifier = specifier
             };
         },
-        [&](const nodes::Expr::GetAttr& node) -> types::SpecType {
+        [&](const nodes::Expr::GetAttr& node) -> types::OptionalSpecType {
             PackageName path;
-            if (flatten_module_path(expr, path)) {
+            if (flatten_module_path(*expr, path)) {
                 if (auto item_entry = find_in_imported_module_chain(path)) {
                     if (auto* type_id_ptr =
                             item_entry->data.get_if<types::TypeId>()) {
@@ -157,13 +163,13 @@ types::SpecType Resolver::resolve_type(const nodes::Expr& expr) {
                 }
             }
             err_handler_->error(
-                context_->source(), expr.location, "expr is not a type"
+                context_->source(), expr->location, "expr is not a type"
             );
             return {.type = types::None};
         },
-        [&](const auto&) -> types::SpecType {
+        [&](const auto&) -> types::OptionalSpecType {
             err_handler_->error(
-                context_->source(), expr.location, "expr is not a type"
+                context_->source(), expr->location, "expr is not a type"
             );
             return {.type = types::None};
         }
@@ -187,9 +193,9 @@ void Resolver::resolve_stmt(const nodes::Stmt& stmt, ir::Func& func) {
     stmt.value.visit(
         [&](const nodes::Stmt::Expr& data) { resolve_expr(*data.expr, func); },
         [&](const nodes::Stmt::Var& data) {
-            std::optional<types::SpecType> type;
+            types::OptionalSpecType type;
             if (data.type) {
-                type = resolve_type(*data.type);
+                type = resolve_type(data.type.get());
             }
             auto var_ref = ir_package_.add({
                 .data = ir::Inst::VarDecl {.name = data.name, .type = type},
@@ -617,7 +623,7 @@ ir::InstRef Resolver::resolve_expr(const nodes::Expr& expr, ir::Func& func) {
         },
         [&](const nodes::Expr::As& node) {
             auto value_ref = resolve_expr(*node.value, func);
-            auto type = resolve_type(*node.type);
+            auto type = resolve_type(node.type.get());
             return ir_package_.add({
                 .data = ir::Inst::As {.value = value_ref, .type = type},
                 .location = expr.location,

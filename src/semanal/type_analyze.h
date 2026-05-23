@@ -124,6 +124,7 @@ private:
         call_funcs_;
     const ir::Func* func_;
     ir::FuncRef func_ref_;
+    types::OptionalSpecType return_type_;
     bool changed_ = false;
     std::uint32_t current_inst_ = 0;
 };
@@ -137,8 +138,8 @@ public:
 
 private:
     ir::AFuncRef func(ir::FuncRef ref);
-    types::SpecType func_return_type(ir::AFuncRef ref);
-    types::TypeId func_type(ir::AFuncRef ref);
+    types::OptionalSpecType func_return_type(ir::AFuncRef ref);
+    types::OptionalTypeId func_type(ir::AFuncRef ref);
 
     ir::AUsedFuncRef used_func(ir::UsedFuncRef ref);
     types::TypeId used_func_type(ir::AUsedFuncRef ref);

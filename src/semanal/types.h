@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -15,6 +16,7 @@ namespace acu::types {
 class TypePool;
 struct Type;
 using TypeId = Ref<Type>;
+using OptionalTypeId = OptionalRef<Type>;
 
 constexpr TypeId None {0};
 constexpr TypeId Nothing {1};
@@ -40,6 +42,7 @@ constexpr TypeId Const {13};
 
 enum class Specifier : std::uint8_t { None, Let, Var, Val };
 
+struct OptionalSpecType;
 struct SpecType {
     TypeId type;
     Specifier specifier = Specifier::None;
@@ -51,7 +54,29 @@ struct SpecType {
         }
         return type == other.type && specifier == other.specifier;
     }
+
+    [[nodiscard]] inline OptionalSpecType as_optional() const;
 };
+
+struct OptionalSpecType {
+    OptionalTypeId type;
+    Specifier specifier = Specifier::None;
+
+    [[nodiscard]] SpecType as_type() const {
+        assert(type.has_value());
+        return {
+            .type = *type,
+            .specifier = specifier
+        };
+    }
+};
+
+OptionalSpecType SpecType::as_optional() const {
+    return {
+        .type = type,
+        .specifier = specifier
+    };
+}
 
 struct Type {
     struct None {};

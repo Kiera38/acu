@@ -1,4 +1,5 @@
 #include "resolver.h"
+#include <cassert>
 
 #include "package_name.h"
 #include "semanal/ir.h"
@@ -422,11 +423,11 @@ void Resolver::resolve_struct_def(const nodes::Struct& struct_node) {
     fields.reserve(struct_node.fields.size());
 
     for (const auto& field : struct_node.fields) {
-        auto field_type = resolve_type(*field.type);
+        auto field_type = resolve_type(field.type.get());
         if (field_type.specifier == types::Specifier::None) {
             field_type.specifier = types::Specifier::Val;
         }
-        fields.push_back({.name = field.name, .type = field_type});
+        fields.push_back({.name = field.name, .type = field_type.as_type()});
     }
     ir_package_.types().set_struct_fields(type_id, std::move(fields));
 }
@@ -440,7 +441,7 @@ void Resolver::resolve_func_def(const nodes::Func& func_node) {
     ir_params.reserve(func_node.args.size());
 
     for (const auto& arg : func_node.args) {
-        auto param_type = resolve_type(*arg.type);
+        auto param_type = resolve_type(arg.type.get());
         if (func_node.is_extern) {
             if (param_type.specifier != types::Specifier::None &&
                 param_type.specifier != types::Specifier::Val) {
@@ -458,9 +459,9 @@ void Resolver::resolve_func_def(const nodes::Func& func_node) {
         ir_params.push_back({.name = arg.name, .type = param_type});
     }
 
-    types::SpecType return_type = {.type = types::None};
+    types::OptionalSpecType return_type = {.type = types::None};
     if (func_node.return_type) {
-        return_type = resolve_type(*func_node.return_type);
+        return_type = resolve_type(func_node.return_type.get());
         if (func_node.is_extern) {
             if (return_type.specifier != types::Specifier::None &&
                 return_type.specifier != types::Specifier::Val) {

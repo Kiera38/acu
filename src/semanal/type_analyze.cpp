@@ -15,17 +15,25 @@ PackageAnalyzer::PackageAnalyzer(
       func_map_(package.funcs().size(), NullRef),
       used_func_map_(package.used_funcs().size(), NullRef) {}
 
-types::TypeId get_func_type(const ir::Func& func, ir::Package& package) {
+types::OptionalTypeId get_func_type(
+    const ir::Func& func,
+    types::OptionalSpecType return_type,
+    ir::Package& package
+) {
+    if (!return_type.type) return NullRef;
     std::vector<types::Type::FuncParam> param_types;
     param_types.reserve(func.params.size);
     for (const auto& param : package.params(func.params)) {
-        param_types.push_back({.name = param.name, .type = param.type});
+        if (!param.type.type) return NullRef;
+        param_types.push_back(
+            {.name = param.name, .type = param.type.as_type()}
+        );
     }
     return package.types().add_func({
         .params = std::move(param_types),
         .min_pos_args = func.min_pos_args,
         .max_pos_args = func.max_pos_args,
-        .return_type = func.return_type,
+        .return_type = return_type.as_type(),
     });
 }
 
@@ -42,7 +50,8 @@ ir::AnalyzedPackage PackageAnalyzer::analyze() {
             auto aref = funcs_.emplace_back(
                 ir::AFunc {
                     .func = ref,
-                    .type = get_func_type(func, *package_),
+                    .type =
+                        get_func_type(func, func.return_type, *package_).ref(),
                     .types = {RefRange<types::SpecType, ir::InstRef> {}},
                     .comparator_types = {
                         RefRange<types::TypeId, ir::ComparatorRef> {}
@@ -99,7 +108,7 @@ ir::AFuncRef PackageAnalyzer::func(ir::FuncRef ref) {
     return aref;
 }
 
-types::SpecType PackageAnalyzer::func_return_type(ir::AFuncRef ref) {
+types::OptionalSpecType PackageAnalyzer::func_return_type(ir::AFuncRef ref) {
     return funcs_[ref].visit(
         [&](const std::unique_ptr<TypeAnalyzer>& analyzer) {
             return analyzer->func_->return_type;
@@ -108,17 +117,21 @@ types::SpecType PackageAnalyzer::func_return_type(ir::AFuncRef ref) {
             return package_->types()
                 .get(func.type)
                 .data.get<types::Type::Func>()
-                .return_type;
+                .return_type.as_optional();
         }
     );
 }
 
-types::TypeId PackageAnalyzer::func_type(ir::AFuncRef ref) {
+types::OptionalTypeId PackageAnalyzer::func_type(ir::AFuncRef ref) {
     return funcs_[ref].visit(
         [&](const std::unique_ptr<TypeAnalyzer>& analyzer) {
-            return get_func_type(*analyzer->func_, *package_);
+            return get_func_type(
+                *analyzer->func_, analyzer->return_type_, *package_
+            );
         },
-        [&](const ir::AFunc& func) { return func.type; }
+        [&](const ir::AFunc& func) -> types::OptionalTypeId {
+            return func.type;
+        }
     );
 }
 

@@ -8,7 +8,10 @@
 namespace acu::ir {
 namespace {
 std::string to_string(const Param& param) {
-    return std::format("{}: {}", param.name, param.type.type.index);
+    if (param.type.type.has_value()) {
+        return std::format("{}: {}", param.name, (*param.type.type).index);
+    }
+    return std::string(param.name);
 }
 
 std::string to_string(const Inst::Const::Value& value) {
@@ -325,7 +328,7 @@ std::string to_string(
                     "%{} = as %{} type {}\n",
                     idx,
                     inst.value.index,
-                    inst.type.type.index
+                    inst.type.type.has_value() ? inst.type.type.ref().index : -1
                 );
             },
             [&](const auto&) {

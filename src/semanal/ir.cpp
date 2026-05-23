@@ -32,7 +32,7 @@ IndexSpan<const Param, ParamRef> UsedFunc::params(
     return pkg.params(pkg.func(func).params);
 }
 
-types::SpecType UsedFunc::return_type(const Project& project) const {
+types::OptionalSpecType UsedFunc::return_type(const Project& project) const {
     return project.package(package).func(func).return_type;
 }
 }

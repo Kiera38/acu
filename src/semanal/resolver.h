@@ -112,7 +112,7 @@ private:
 
     types::SpecType resolve_builtin_type(std::string_view name, Location location);
 
-    types::SpecType resolve_type(const nodes::Expr& expr);
+    types::OptionalSpecType resolve_type(const nodes::Expr* expr);
 
     std::int64_t get_int_const(const nodes::Expr& expr);
 

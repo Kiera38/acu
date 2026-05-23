@@ -63,7 +63,7 @@ struct Inst {
 
     struct VarDecl {
         std::string_view name;
-        std::optional<types::SpecType> type;
+        types::OptionalSpecType type;
     };
 
     struct LoadVar {
@@ -185,7 +185,7 @@ struct Inst {
 
     struct As {
         InstRef value {};
-        types::SpecType type;
+        types::OptionalSpecType type;
     };
 
     using Value = utils::Variant<
@@ -218,7 +218,7 @@ struct Inst {
 
 struct Param {
     std::string_view name;
-    types::SpecType type;
+    types::OptionalSpecType type;
 };
 
 enum class ComparisonOp : std::uint8_t {
@@ -244,7 +244,7 @@ struct Func {
     Params params;
     std::uint32_t min_pos_args;
     std::uint32_t max_pos_args;
-    types::SpecType return_type;
+    types::OptionalSpecType return_type;
     Insts insts;
     Comparators comparators;
 };
@@ -264,7 +264,7 @@ struct UsedFunc {
     [[nodiscard]] IndexSpan<const Param, ParamRef> params(
         const Project& project
     ) const;
-    [[nodiscard]] types::SpecType return_type(const Project& project) const;
+    [[nodiscard]] types::OptionalSpecType return_type(const Project& project) const;
 };
 
 class Module {

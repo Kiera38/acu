@@ -89,7 +89,6 @@ public:
     [[nodiscard]] nodes::Module& module(ModuleRef ref) const {
         return *project_->modules_[ref].module;
     }
-    [[nodiscard]] PackageNameRef package_name(PackageNameRef module_name) const;
     [[nodiscard]] const ir::Package& package(PackageNameRef name) const {
         return project_->packages_[packages_.at(name)].ir_package;
     }

@@ -1,5 +1,6 @@
 #include "parser.h"
 
+#include <memory>
 #include <stdexcept>
 #include <string_view>
 
@@ -636,42 +637,50 @@ private:
         );
     }
 
+    std::optional<nodes::Expr::Specifier> get_spec(TokenType type) {
+        switch (type) {
+            case TokenType::Let: return nodes::Expr::Specifier::Let;
+            case TokenType::Var: return nodes::Expr::Specifier::Var;
+            case TokenType::Val: return nodes::Expr::Specifier::Val;
+            default: return std::nullopt;
+        }
+    }
+
+    bool has_expr() {
+        switch(peek().type) {
+            case TokenType::Identifier:
+            case TokenType::Minus:
+            case TokenType::Amp:
+            case TokenType::Tilde:
+            case TokenType::Not:
+            case TokenType::True:
+            case TokenType::False:
+            case TokenType::Integer:
+            case TokenType::Float:
+            case TokenType::Char:
+            case TokenType::String:
+            case TokenType::LParen:
+            case TokenType::LBracket:
+                return true;
+            default: return false;
+        }
+    }
+
     std::unique_ptr<nodes::Expr> parse_spec() {
-        switch (peek().type) {
-            case TokenType::Let: {
+        return get_spec(peek().type)
+            .transform([&](auto spec) {
                 auto token = next();
+                auto expr = has_expr() ? parse_expr() : nullptr;
                 return std::make_unique<nodes::Expr>(
                     token.location,
                     nodes::Expr::Spec {
-                        .type = parse_expr(),
+                        .type = std::move(expr),
                         .specifier = nodes::Expr::Specifier::Let
                     }
                 );
-            }
-            case TokenType::Var: {
-                auto token = next();
-                return std::make_unique<nodes::Expr>(
-                    token.location,
-                    nodes::Expr::Spec {
-                        .type = parse_expr(),
-                        .specifier = nodes::Expr::Specifier::Var
-                    }
-                );
-            }
-            case TokenType::Val: {
-                auto token = next();
-                return std::make_unique<nodes::Expr>(
-                    token.location,
-                    nodes::Expr::Spec {
-                        .type = parse_expr(),
-                        .specifier = nodes::Expr::Specifier::Val
-                    }
-                );
-            }
-            default: {
-                return parse_expr();
-            }
-        }
+            })
+            .or_else([&] { return std::optional {has_expr() ? parse_expr() : nullptr}; })
+            .value();
     }
 
     enum class Precedence : std::uint8_t {

@@ -22,7 +22,8 @@ TypeAnalyzer::TypeAnalyzer(
       type_vars_(func.insts),
       comparator_types_(func.comparators),
       func_(&func),
-      func_ref_(func_ref) {}
+      func_ref_(func_ref),
+      return_type_(func.return_type) {}
 
 bool TypeAnalyzer::propagate() {
     changed_ = false;
@@ -49,13 +50,15 @@ bool TypeAnalyzer::propagate() {
     std::vector<types::Type::FuncParam> param_types;
     param_types.reserve(func_->params.size);
     for (const auto& param : get_params(func_->params)) {
-        param_types.push_back({.name = param.name, .type = param.type});
+        param_types.push_back(
+            {.name = param.name, .type = param.type.as_type()}
+        );
     }
     auto type = type_pool_->add_func({
         .params = std::move(param_types),
         .min_pos_args = func_->min_pos_args,
         .max_pos_args = func_->max_pos_args,
-        .return_type = func_->return_type,
+        .return_type = return_type_.as_type(),
     });
     return {
         .func = func_ref_,
@@ -85,14 +88,10 @@ std::span<const ir::CallArg> TypeAnalyzer::get_call_args(
 ) const {
     return package_->package_->call_args(args);
 }
-std::span<const ir::Param> TypeAnalyzer::get_params(
-    ir::Params params
-) const {
+std::span<const ir::Param> TypeAnalyzer::get_params(ir::Params params) const {
     return package_->package_->params(params);
 }
-const ir::Param& TypeAnalyzer::get_param(
-    ir::ParamRef ref
-) const {
+const ir::Param& TypeAnalyzer::get_param(ir::ParamRef ref) const {
     return package_->package_->param(ref);
 }
 
@@ -325,11 +324,11 @@ void TypeAnalyzer::handle_const(
     ir::InstRef ref, const ir::Inst::Const& data, Location loc
 ) {
     auto type = data.value.visit(
-        [&](bool) { return types::Bool; },
-        [&](std::int64_t) { return types::Int; },
-        [&](double) { return types::Float; },
-        [&](char32_t) { return types::UInt32; },
-        [&](std::string_view v) {
+        [&](bool) -> types::OptionalTypeId { return types::Bool; },
+        [&](std::int64_t) -> types::OptionalTypeId { return types::Int; },
+        [&](double) -> types::OptionalTypeId { return types::Float; },
+        [&](char32_t) -> types::OptionalTypeId { return types::UInt32; },
+        [&](std::string_view v) -> types::OptionalTypeId {
             return type_pool_->add_array(
                 {
                     .type = types::UInt8,
@@ -338,30 +337,32 @@ void TypeAnalyzer::handle_const(
                 v.size() + 1
             );
         },
-        [&](ir::FuncRef func_ref) {
+        [&](ir::FuncRef func_ref) -> types::OptionalTypeId {
             auto aref = package_->func(func_ref);
             call_funcs_.emplace(ref, aref);
             return package_->func_type(aref);
         },
-        [&](ir::UsedFuncRef func_ref) {
+        [&](ir::UsedFuncRef func_ref) -> types::OptionalTypeId {
             auto aref = package_->used_func(func_ref);
             call_funcs_.emplace(ref, aref);
             return package_->used_func_type(aref);
         },
-        [&](types::TypeId type_id) { return types::Const; }
+        [&](types::TypeId type_id) -> types::OptionalTypeId { return types::Const; }
     );
     if (data.value.is<std::string_view>()) {
-        lock_type(ref, {.type = type, .specifier = types::Specifier::Var}, loc);
+        lock_type(ref, {.type = *type, .specifier = types::Specifier::Var}, loc);
     } else {
-        lock_type(ref, {.type = type, .specifier = types::Specifier::Val}, loc);
+        if (type.has_value()) {
+            lock_type(ref, {.type = *type, .specifier = types::Specifier::Val}, loc);
+        }
     }
 }
 
 void TypeAnalyzer::handle_var_decl(
     ir::InstRef ref, const ir::Inst::VarDecl& data, Location loc
 ) {
-    if (data.type.has_value()) {
-        lock_type(ref, *data.type, loc);
+    if (data.type.type.has_value()) {
+        lock_type(ref, data.type.as_type(), loc);
     } else {
         add_type(
             ref,
@@ -383,7 +384,9 @@ void TypeAnalyzer::handle_load_param(
     ir::InstRef ref, const ir::Inst::LoadParam& data, Location loc
 ) {
     auto param_type = get_param(data.param);
-    lock_type(ref, param_type.type, loc);
+    if (param_type.type.type.has_value()) {
+        lock_type(ref, param_type.type.as_type(), loc);
+    }
 }
 
 void TypeAnalyzer::handle_store(
@@ -572,7 +575,22 @@ void TypeAnalyzer::handle_return(
         if (func_->return_type.specifier == types::Specifier::Var) {
             require_var(*data.value, loc, "return value");
         }
-        add_type(*data.value, func_->return_type, loc);
+        if (func_->return_type.type.has_value()) {
+            add_type(*data.value, func_->return_type.as_type(), loc);
+        } else {
+            const auto& tv = type_vars_[*data.value];
+            if (tv.defined()) {
+                return_type_ = tv.get().as_optional();
+            }
+        }
+    } else {
+        if (func_->return_type.type.has_value()) {
+            if (*func_->return_type.type != types::None) {
+                error(loc, "not None return type requires return value");
+            }
+        } else {
+            return_type_ = {.type = types::None};
+        }
     }
     lock_type(ref, types::Nothing, loc);
 }
@@ -710,18 +728,30 @@ void TypeAnalyzer::handle_array(
 void TypeAnalyzer::handle_as(
     ir::InstRef ref, const ir::Inst::As& data, Location loc
 ) {
-    lock_type(ref, data.type, loc);
     auto from_tp = type_vars_[data.value].type;
-    if (from_tp.has_value() &&
-        !can_cast(from_tp->type, data.type.type, *type_pool_)) {
-        error(
-            loc,
-            std::format(
-                "Type mismatch: cannot explicitly cast {} to {}",
-                type_pool_->to_string(*from_tp),
-                type_pool_->to_string(data.type)
-            )
-        );
+    if (!data.type.type) {
+        if (from_tp) {
+            add_type(
+                ref,
+                {.type = from_tp->type, .specifier = data.type.specifier},
+                loc
+            );
+        }
+    } else {
+        auto type = data.type.as_type();
+        lock_type(ref, type, loc);
+
+        if (from_tp.has_value() &&
+            !can_cast(from_tp->type, type.type, *type_pool_)) {
+            error(
+                loc,
+                std::format(
+                    "Type mismatch: cannot explicitly cast {} to {}",
+                    type_pool_->to_string(*from_tp),
+                    type_pool_->to_string(type)
+                )
+            );
+        }
     }
 }
 

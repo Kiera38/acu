@@ -8,7 +8,6 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <ranges>
 #include <stdexcept>
 #include <string_view>
 
@@ -309,10 +308,6 @@ PackageName get_package_name(Module& module) {
     }
     auto name = module.source.name();
     return {PackageNameRef(PackageNameRef(name).subspan(0, name.size() - 1))};
-}
-
-PackageNameRef Packages::package_name(PackageNameRef module_name) const {
-    return get_package_name(project_->modules_[modules_.at(module_name)]);
 }
 
 std::pair<ir::PackageRef, ir::Module*> Packages::module_package(
