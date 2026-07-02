@@ -129,22 +129,22 @@ int main(int argc, char** argv) {
     }
 
     try {
-        acu::Project project(config->input_path);
-        project.parse(config->show_ast);
-        project.semanal(config->show_semanal);
-        project.refanal(config->show_refanal);
-        if (config->mode == RunMode::Compile) {
-            project.codegen(
-                config->show_llvm,
-                config->show_opt_llvm,
-                config->opt_level,
-                config->output_path
-            );
-        } else {
-            project.run_jit(
-                config->show_llvm, config->show_opt_llvm, config->opt_level
-            );
-        }
+        // acu::Project project(config->input_path);
+        // project.parse(config->show_ast);
+        // project.semanal(config->show_semanal);
+        // project.refanal(config->show_refanal);
+        // if (config->mode == RunMode::Compile) {
+        //     project.codegen(
+        //         config->show_llvm,
+        //         config->show_opt_llvm,
+        //         config->opt_level,
+        //         config->output_path
+        //     );
+        // } else {
+        //     project.run_jit(
+        //         config->show_llvm, config->show_opt_llvm, config->opt_level
+        //     );
+        // }
     } catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << '\n';
         return 1;

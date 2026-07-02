@@ -11,7 +11,7 @@
 namespace acu {
 struct PackageNameRef : std::span<const std::string_view> {
     PackageNameRef() = default;
-    PackageNameRef(std::span<const std::string_view> n)
+    explicit PackageNameRef(std::span<const std::string_view> n)
         : std::span<const std::string_view>(n) {}
 
     [[nodiscard]] std::string join() const {
@@ -21,12 +21,13 @@ struct PackageNameRef : std::span<const std::string_view> {
         return *this | std::views::join_with('.') |
                std::ranges::to<std::string>();
     }
+    using std::span<const std::string_view>::subspan;
 };
 struct PackageName : std::vector<std::string_view> {
     using std::vector<std::string_view>::vector;
-    PackageName(PackageNameRef ref) { append_range(ref); }
+    explicit PackageName(PackageNameRef ref) { append_range(ref); }
 
-    PackageName(std::string_view package_name) {
+    explicit PackageName(std::string_view package_name) {
         if (package_name.empty()) {
             return;
         }
@@ -37,7 +38,7 @@ struct PackageName : std::vector<std::string_view> {
 
     operator PackageNameRef() const {
         auto name = std::span(*this);
-        return {name};
+        return PackageNameRef{name};
     }
 
     [[nodiscard]] std::string join() const {
@@ -45,40 +46,16 @@ struct PackageName : std::vector<std::string_view> {
     }
 };
 
+inline bool operator==(PackageNameRef name1, PackageNameRef name2) {
+    return std::ranges::equal(name1, name2);
+}
+
 inline bool operator==(const PackageName& name1, const PackageName& name2) {
-    if (name1.size() != name2.size()) {
-        return false;
-    }
-    for (const auto& [i1, i2] : std::views::zip(name1, name2)) {
-        if (i1 != i2) {
-            return false;
-        }
-    }
-    return true;
+    return PackageNameRef(name1) == PackageNameRef(name2);
 }
 
 inline bool operator==(const PackageName& name1, PackageNameRef name2) {
-    if (name1.size() != name2.size()) {
-        return false;
-    }
-    for (const auto& [i1, i2] : std::views::zip(name1, name2)) {
-        if (i1 != i2) {
-            return false;
-        }
-    }
-    return true;
-}
-
-inline bool operator==(PackageNameRef name1, PackageNameRef name2) {
-    if (name1.size() != name2.size()) {
-        return false;
-    }
-    for (const auto& [i1, i2] : std::views::zip(name1, name2)) {
-        if (i1 != i2) {
-            return false;
-        }
-    }
-    return true;
+    return PackageNameRef(name1) == name2;
 }
 
 template <>

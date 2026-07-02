@@ -138,7 +138,7 @@ Token Lexer::make_token(TokenType type, std::uint32_t start_byte_index) const {
 }
 
 Token Lexer::make_token(
-    TokenType type, std::uint32_t start_byte_index, Token::Value value
+    TokenType type, std::uint32_t start_byte_index, Value value
 ) const {
     Location loc;
     if (start_byte_index != 0) {
@@ -672,7 +672,7 @@ Token Lexer::next_token() {
     return operator_();
 }
 
-std::string token_type_to_string(TokenType type) {
+std::string to_string(TokenType type) {
     switch (type) {
         case TokenType::Func: return "FUNC";
         case TokenType::Extern: return "EXTERN";
@@ -746,28 +746,26 @@ std::string token_type_to_string(TokenType type) {
     }
 }
 
-std::string token_value_to_string(const Token& token) {
-    return token.value.visit(
+std::string to_string(const Value& value) {
+    return value.visit(
         [](bool val) -> std::string { return val ? "true" : "false"; },
         [](std::int64_t val) { return std::to_string(val); },
         [](double val) { return std::to_string(val); },
         [](char32_t val) {
-            if (val < 0x80) {
-                return std::string(1, static_cast<char>(val));
-            } else {
-                return "U+" + std::to_string(static_cast<uint32_t>(val));
-            }
+            std::array<char, 4> buffer;
+            auto count = encode_utf8(val, buffer);
+            return std::string(buffer.data(), count);
         },
         [](std::string_view val) { return std::string(val); }
     );
 }
 
-std::string token_to_string(const Token& token) {
-    std::string result = token_type_to_string(token.type);
+std::string to_string(const Token& token) {
+    std::string result = to_string(token.type);
     if (token.type == TokenType::Identifier ||
         token.type == TokenType::Integer || token.type == TokenType::Float ||
         token.type == TokenType::Char || token.type == TokenType::String) {
-        result += "(" + token_value_to_string(token) + ")";
+        result += "(" + to_string(token) + ")";
     }
     result += " @ " + std::to_string(token.location.start) + "-" +
               std::to_string(token.location.end);

@@ -69,27 +69,18 @@ message(STATUS "LLVM LIBS: ${llvm_libs}")
 add_executable(acu
     src/main.cpp
     src/source.cpp
-    src/project.cpp
     src/parser/lexer.cpp
     src/parser/parser.cpp
-    src/parser/nodes_output.cpp
+        src/parser/nodes_str.cpp
 
     src/errors.cpp
-    src/semanal/types.cpp
-    src/semanal/resolve.cpp
-    src/semanal/resolver.cpp
-    src/semanal/resolve_inst.cpp
-    src/semanal/type_analyze.cpp
-    src/semanal/func_type_analyzer.cpp
-    src/semanal/ir_str.cpp
-    src/semanal/ir.cpp
 
-    src/refanal/generator.cpp
-    src/refanal/ir_str.cpp
-    src/refanal/ir.cpp
-
-    src/codegen/generator.cpp
-    src/codegen/jit.cpp
+#    src/refanal/generator.cpp
+#    src/refanal/ir_str.cpp
+#    src/refanal/ir.cpp
+#
+#    src/codegen/generator.cpp
+#    src/codegen/jit.cpp
 )
 
 # Set include directories

@@ -28,7 +28,7 @@ private:
         TokenType type, std::uint32_t start_byte_index = 0
     ) const;
     [[nodiscard]] Token make_token(
-        TokenType type, std::uint32_t start_byte_index, Token::Value value
+        TokenType type, std::uint32_t start_byte_index, Value value
     ) const;
     void skip_whitespace();
     void skip_comment();

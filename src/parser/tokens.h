@@ -88,20 +88,20 @@ enum class TokenType : std::uint8_t {
     Error,
 };
 
+using Value = utils::Variant<bool, std::int64_t, double, char32_t, std::string_view>;
+
 struct Token {
     TokenType type = TokenType::EndOfFile;
     Location location;
-    using Value =
-        utils::Variant<bool, std::int64_t, double, char32_t, std::string_view>;
     Value value {""};
 };
 
 // Helper function to get token type name as string
-std::string token_type_to_string(TokenType type);
+std::string to_string(TokenType type);
 
 // Helper function to get token value as string
-std::string token_value_to_string(const Token& token);
+std::string to_string(const Value& token);
 
 // Helper function to get complete token representation as string
-std::string token_to_string(const Token& token);
+std::string to_string(const Token& token);
 }

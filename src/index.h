@@ -40,7 +40,7 @@ class OptionalRef {
 public:
     OptionalRef() : OptionalRef(NullRef) {}
     OptionalRef(NullRefT) : index(std::numeric_limits<std::uint32_t>::max()) {}
-    OptionalRef(Ref<T> ref) : index(ref.index) {}
+    explicit OptionalRef(Ref<T> ref) : index(ref.index) {}
 
     Ref<T> operator*() const { return {index}; }
     Ref<T> ref() const {
@@ -67,7 +67,7 @@ public:
     using reference = const I&;
     using iterator_category = std::random_access_iterator_tag;
 
-    IndexIterator(std::size_t idx) : index_(idx) {}
+    explicit IndexIterator(std::size_t idx) : index_(idx) {}
 
     I operator*() const { return I {static_cast<decltype(I::index)>(index_)}; }
     I operator[](difference_type n) const {
@@ -161,7 +161,7 @@ public:
 
     IndexSpan() = default;
     IndexSpan(T* data, std::size_t size) : span_(data, size) {}
-    IndexSpan(std::span<T> span) : span_(span) {}
+    explicit IndexSpan(std::span<T> span) : span_(span) {}
 
     [[nodiscard]] decltype(auto) operator[](I i) const {
         return span_[i.index];
@@ -193,10 +193,10 @@ public:
 
     [[nodiscard]] std::span<T> data() const { return span_; }
 
-    IndexSpan<T, I> subspan(
+    IndexSpan subspan(
         I start, std::size_t count = std::dynamic_extent
     ) const {
-        return IndexSpan<T, I>(span_.subspan(start.index, count));
+        return IndexSpan(span_.subspan(start.index, count));
     }
 
 private:
@@ -211,7 +211,7 @@ public:
 
     IndexVector() = default;
     IndexVector(std::size_t size, T items) : vec(size, items) {}
-    IndexVector(std::size_t size) : vec(size) {}
+    explicit IndexVector(std::size_t size) : vec(size) {}
     template <std::input_iterator InputIt>
     IndexVector(InputIt first, InputIt last) : vec(first, last) {}
 
@@ -251,7 +251,7 @@ public:
     using index_iterator = IndexIterator<I>;
     using index_range = RefRange<T, I>;
 
-    index_iterator index_begin() const { return index_iterator(0); }
+    index_iterator index_begin() { return index_iterator(0); }
     index_iterator index_end() const { return index_iterator(vec.size()); }
 
     index_range indices() { return index_range(0, vec.size()); }
@@ -300,10 +300,10 @@ template <Index I, typename T>
 class IndexMap {
 public:
     template <typename IT>
-    IndexMap(RefRange<IT, I> range) : start(range.start), vec(range.size) {}
+    explicit IndexMap(RefRange<IT, I> range) : start(range.start), vec(range.size) {}
     template <typename IT>
     IndexMap(RefRange<IT, I> range, T i)
-        : start(range.start), vec(range.size, i) {}
+        : vec(range.size, i), start(range.start) {}
 
     decltype(auto) operator[](I i) { return vec[i.index - start]; }
     decltype(auto) operator[](I i) const { return vec[i.index - start]; }
