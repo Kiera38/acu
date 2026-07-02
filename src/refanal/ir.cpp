@@ -26,7 +26,4 @@ IndexSpan<const Local, LocalRef> UsedFunc::params(
 ) const {
     return project.module(module).func(func).params();
 }
-types::SpecType UsedFunc::return_type(const Project& project) const {
-    return project.module(module).func(func).return_type();
-}
 }

@@ -1,6 +1,0 @@
-using pkgB.main
-extern func puts(str: Ptr[UInt8])
-public func main() Int:
-    pkgB.main.main()
-    puts("Hello" as Ptr[UInt8])
-    return 0

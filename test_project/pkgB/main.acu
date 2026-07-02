@@ -1,9 +1,0 @@
-using pkgA.math
-using pkgA
-
-public func main() Int:
-    x: Int = pkgA.math.add(5, 3)
-    y: Int = pkgA.math.multiply(4, 2)
-    z: Int = pkgA.math.add(x, y)
-    c = pkgA.sub(5, 2)
-    return 0

@@ -56,11 +56,15 @@ public:
         function_types_.clear();
         function_types_.reserve(ir_module_->funcs().size());
         for (const auto& ir_func : ir_module_->funcs()) {
+            const auto& type = ir_module_->types()
+                                   .get(ir_func.type())
+                                   .data.get<types::Type::Func>();
             std::vector<llvm::Type*> param_types;
-            for (const auto& param : ir_func.params())
+            param_types.reserve(type.params.size());
+            for (const auto& param : type.params)
                 param_types.push_back(get_rep_type(param.type));
             llvm::FunctionType* func_type = llvm::FunctionType::get(
-                get_rep_type(ir_func.return_type()), param_types, false
+                get_rep_type(type.return_type), param_types, false
             );
             function_types_.push_back(func_type);
             functions_.push_back(
@@ -79,11 +83,15 @@ public:
         used_function_types_.clear();
         used_function_types_.reserve(ir_module_->used_funcs().size());
         for (const auto& ir_func : ir_module_->used_funcs()) {
+            const auto& type = ir_module_->types()
+                                   .get(ir_func.type)
+                                   .data.get<types::Type::Func>();
             std::vector<llvm::Type*> param_types;
-            for (const auto& param : ir_func.params(*project_))
+            param_types.reserve(type.params.size());
+            for (const auto& param : type.params)
                 param_types.push_back(get_rep_type(param.type));
             llvm::FunctionType* func_type = llvm::FunctionType::get(
-                get_rep_type(ir_func.return_type(*project_)), param_types, false
+                get_rep_type(type.return_type), param_types, false
             );
             used_function_types_.push_back(func_type);
             used_funcs_.push_back(

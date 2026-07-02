@@ -18,6 +18,7 @@ class FuncGenerator {
     const acu::ir::AnalyzedPackage* apackage_;
     const acu::ir::AFunc* afunc_;
     const acu::ir::Func* sfunc_;
+    const types::Type::Func* type_;
     ir::Func rfunc_;
     ir::Builder builder_;
 
@@ -101,6 +102,9 @@ public:
         : apackage_(&apackage),
           afunc_(&apackage.funcs[aref]),
           sfunc_(&apackage.ir_package->func(afunc_->func)),
+          type_(&apackage.ir_package->types()
+                     .get(afunc_->type)
+                     .data.get<types::Type::Func>()),
           rfunc_(
               sfunc_->name,
               *sfunc_->source,
@@ -108,8 +112,7 @@ public:
               sfunc_->is_extern,
               sfunc_->is_public,
               afunc_->type,
-              get_params(apackage, *sfunc_),
-              sfunc_->return_type
+              get_params(apackage, *type_)
           ),
           builder_(rfunc_),
           values_(sfunc_->insts, Value {}) {}
@@ -139,12 +142,11 @@ public:
 
 private:
     static std::vector<ir::Local> get_params(
-        const acu::ir::AnalyzedPackage& apackage, const ::acu::ir::Func& sfunc
+        const acu::ir::AnalyzedPackage& apackage, const types::Type::Func& type
     ) {
         std::vector<ir::Local> rparams;
-        rparams.reserve(sfunc.params.size);
-        for (auto i : sfunc.params) {
-            const auto& param = apackage.ir_package->param(i);
+        rparams.reserve(type.params.size());
+        for (const auto& param : type.params) {
             rparams.push_back(
                 ir::Local {.name = param.name, .type = param.type}
             );
@@ -185,7 +187,8 @@ private:
     Value get_cast(
         acu::ir::ParamRef param, types::SpecType expected_type, Location loc
     ) {
-        auto actual_type = apackage_->ir_package->param(param).type;
+        auto actual_type =
+            type_->params[param.index - sfunc_->params.start].type;
         Value v {ir::LocalRef {param.index}};
         return get_cast(v, actual_type, expected_type, loc);
     }
@@ -274,12 +277,12 @@ private:
             [&](char32_t v) -> ir::Const { return {v}; },
             [&](std::string_view v) -> ir::Const { return {v}; },
             [&](::acu::ir::FuncRef) -> ir::Const {
-                auto v = afunc_->call_funcs.at(ref).get<acu::ir::AFuncRef>();
+                auto v = afunc_->extra_info.at(ref).get<acu::ir::AFuncRef>();
                 return {ir::FuncRef {v.index}};
             },
             [&](::acu::ir::UsedFuncRef) -> ir::Const {
                 auto v =
-                    afunc_->call_funcs.at(ref).get<acu::ir::AUsedFuncRef>();
+                    afunc_->extra_info.at(ref).get<acu::ir::AUsedFuncRef>();
                 return {ir::UsedFuncRef {v.index}};
             },
             [&](types::TypeId) -> ir::Const { return {false}; }
@@ -514,7 +517,7 @@ private:
                 std::optional<ir::OperandRef> val;
                 if (inst.value) {
                     val = get_operand_cast(
-                        *inst.value, sfunc_->return_type, sinst.location
+                        *inst.value, type_->return_type, sinst.location
                     );
                 }
                 builder_.ret(val, sinst.location);

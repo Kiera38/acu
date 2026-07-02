@@ -149,6 +149,8 @@ struct RefRange {
     I operator[](size_t i) const {
         return {static_cast<std::uint32_t>(start + i)};
     }
+
+    I back() const {return {start + size-1};}
 };
 
 template <typename T, Index I = Ref<T>>

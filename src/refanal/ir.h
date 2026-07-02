@@ -203,8 +203,7 @@ public:
         bool is_extern,
         bool is_public,
         types::TypeId type,
-        std::span<const Local> params,
-        types::SpecType return_type
+        std::span<const Local> params
     )
         : name_(name),
           source_(&source),
@@ -213,7 +212,6 @@ public:
           is_public_(is_public),
           type_(type),
           arg_count_(params.size()),
-          return_type_(return_type),
           locals_(params.begin(), params.end()) {}
 
     [[nodiscard]] std::string_view name() const { return name_; }
@@ -238,7 +236,6 @@ public:
     [[nodiscard]] IndexSpan<Local, LocalRef> params() {
         return locals_.data().subspan(LocalRef {0}, arg_count_);
     }
-    [[nodiscard]] types::SpecType return_type() const { return return_type_; }
 
     [[nodiscard]] const Statement& statement(StatementRef ref) const {
         return statements_[ref];
@@ -385,7 +382,6 @@ private:
     bool is_public_;
     types::TypeId type_;
     std::uint32_t arg_count_ = 0;
-    types::SpecType return_type_;
     IndexVector<Statement, StatementRef> statements_;
     IndexVector<Block, BlockRef> blocks_;
     IndexVector<Local, LocalRef> locals_;
@@ -416,7 +412,6 @@ struct UsedFunc {
     [[nodiscard]] IndexSpan<const Local, LocalRef> params(
         const Project& project
     ) const;
-    [[nodiscard]] types::SpecType return_type(const Project& project) const;
 };
 
 class Module {

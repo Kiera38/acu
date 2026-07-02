@@ -1,7 +1,0 @@
-public func add(a: Int, b: Int) Int:
-    result: Int = a + b
-    return result
-
-public func multiply(a: Int, b: Int) Int:
-    result: Int = a * b
-    return result
