@@ -331,6 +331,7 @@ struct FuncArg {
 struct Func {
     bool is_public = false;
     bool is_extern = false;
+    Location name_location;
     std::string_view name;
     std::vector<FuncArg> args;
     std::uint32_t min_pos_args = 0;
@@ -346,6 +347,7 @@ struct StructField {
 };
 
 struct Struct {
+    Location name_location;
     std::string_view name;
     std::vector<StructField> fields;
 };

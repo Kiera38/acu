@@ -1,5 +1,6 @@
 #include "parser.h"
 
+#include <cassert>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -19,14 +20,9 @@ public:
 class Parser {
 public:
     Parser(Lexer& lexer, ErrorHandler& err_handler)
-        : err_handler_(&err_handler), source_(&lexer.source()) {
-        Token token = lexer.next_token();
-        tokens_.push_back(token);
-        while (token.type != TokenType::EndOfFile) {
-            token = lexer.next_token();
-            tokens_.push_back(token);
-        }
-    }
+        : lexer_(&lexer),
+          source_(&lexer.source()),
+          err_handler_(&err_handler) {}
 
     nodes::Module parse() {
         std::vector<nodes::Item> items;
@@ -38,7 +34,7 @@ public:
                 } else if (match(TokenType::From)) {
                     items.push_back(parse_from_use_stmt());
                 }
-            } catch (const ParseError& e) {
+            } catch (const ParseError&) {
                 synchronize_imports();
             }
         }
@@ -48,24 +44,24 @@ public:
                 if (match(TokenType::NewLine)) {
                     continue;
                 }
+                Location location = peek().location;
                 if (match(TokenType::Public)) {
                     expect(TokenType::Func, "Expected 'func' after 'public'");
-                    items.push_back(parse_function(true, false));
+                    items.push_back(parse_function(location, true, false));
                 } else if (match(TokenType::Extern)) {
                     expect(TokenType::Func, "Expected 'func' after 'extern'");
-                    items.push_back(parse_function(false, true));
+                    items.push_back(parse_function(location, false, true));
                 } else if (match(TokenType::Func)) {
-                    items.push_back(parse_function(false, false));
+                    items.push_back(parse_function(location, false, false));
                 } else if (match(TokenType::Struct)) {
                     items.push_back(parse_struct());
                 } else {
-                    Token token = peek();
                     err_handler_->error(
-                        *source_, token.location, "Expected function or struct"
+                        *source_, location, "Expected function or struct"
                     );
                     synchronize_items();
                 }
-            } catch (const ParseError& e) {
+            } catch (const ParseError&) {
                 synchronize_items();
             }
         }
@@ -73,23 +69,28 @@ public:
     }
 
 private:
+    Lexer* lexer_;
     Source* source_;
     ErrorHandler* err_handler_;
-    std::vector<Token> tokens_;
-    std::size_t current_ = 0;
+    Token current_;
+    std::optional<Token> next_token_;
+    std::optional<Token> prev_token_;
 
-    [[nodiscard]] Token peek(int rel_pos = 0) const {
-        std::ptrdiff_t pos = static_cast<std::ptrdiff_t>(current_) + rel_pos;
-        if (pos < 0) {
-            return tokens_[0];
+    [[nodiscard]] const Token& peek() const { return current_; }
+
+    [[nodiscard]] const Token& peek_next() {
+        if (!next_token_) {
+            next_token_ = lexer_->next_token();
         }
-        if (static_cast<std::size_t>(pos) >= tokens_.size()) {
-            return tokens_.back();
-        }
-        return tokens_[pos];
+        return *next_token_;
     }
 
-    nodes::Expr::BinaryOp get_binary_op(TokenType type) {
+    [[nodiscard]] const Token& peek_prev() const {
+        assert(prev_token_);
+        return *prev_token_;
+    }
+
+    static nodes::Expr::BinaryOp get_binary_op(TokenType type) {
         switch (type) {
             case TokenType::Plus: return nodes::Expr::BinaryOp::Add;
             case TokenType::Minus: return nodes::Expr::BinaryOp::Sub;
@@ -108,7 +109,7 @@ private:
         }
     }
 
-    nodes::Expr::UnaryOp get_unary_op(TokenType type) {
+    static nodes::Expr::UnaryOp get_unary_op(TokenType type) {
         switch (type) {
             case TokenType::Not: return nodes::Expr::UnaryOp::Not;
             case TokenType::Minus: return nodes::Expr::UnaryOp::Neg;
@@ -119,7 +120,7 @@ private:
         }
     }
 
-    nodes::Expr::ComparisonOp get_comparison_op(TokenType type) {
+    static nodes::Expr::ComparisonOp get_comparison_op(TokenType type) {
         switch (type) {
             case TokenType::Less: return nodes::Expr::ComparisonOp::Less;
             case TokenType::Greater: return nodes::Expr::ComparisonOp::Greater;
@@ -134,7 +135,7 @@ private:
         }
     }
 
-    nodes::Stmt::AssignOp get_assign_op(TokenType type) {
+    static nodes::Stmt::AssignOp get_assign_op(TokenType type) {
         switch (type) {
             case TokenType::PlusEqual: return nodes::Stmt::AssignOp::Add;
             case TokenType::MinusEqual: return nodes::Stmt::AssignOp::Sub;
@@ -157,11 +158,18 @@ private:
 
     [[nodiscard]] bool at_end() const { return check(TokenType::EndOfFile); }
 
-    Token next() {
+    const Token& next() {
+        Token current = peek();
+        prev_token_ = current;
         if (!at_end()) {
-            current_++;
+            if (next_token_) {
+                current_ = *next_token_;
+                next_token_ = std::nullopt;
+            } else {
+                current_ = lexer_->next_token();
+            }
         }
-        return peek(-1);
+        return *prev_token_;
     }
 
     bool match(TokenType type) {
@@ -172,11 +180,11 @@ private:
         return false;
     }
 
-    Token expect(TokenType type, const std::string& message) {
+    const Token& expect(TokenType type, const std::string& message) {
         if (check(type)) {
             return next();
         }
-        Token token = peek();
+        const Token& token = peek();
         err_handler_->error(*source_, token.location, message);
         throw ParseError(message);
     }
@@ -203,26 +211,28 @@ private:
         }
     }
 
-    std::unique_ptr<nodes::Expr> parse_type() { return parse_spec(); }
+    std::unique_ptr<nodes::Expr> parse_type() { return parse_expr(); }
 
     nodes::Item parse_use_stmt() {
-        Location location = peek(-1).location;
+        Location location = peek_prev().location;
         PackageName module_name = parse_module_name();
+        Location end_location = peek_prev().location;
         expect(TokenType::NewLine, "Expected newline after import statement");
 
         return {
-            .location = location, .data = nodes::Use {std::move(module_name)}
+            .location = location.merge(end_location),
+            .data = nodes::Use {std::move(module_name)}
         };
     }
 
     PackageName parse_module_name() {
         PackageName name;
-        Token module_token =
+        const Token& module_token =
             expect(TokenType::Identifier, "Expected module name after 'using'");
         name.push_back(module_token.value.get<std::string_view>());
 
         while (match(TokenType::Dot)) {
-            Token token = expect(
+            const Token& token = expect(
                 TokenType::Identifier, "Expected module name after 'using'"
             );
             name.push_back(token.value.get<std::string_view>());
@@ -231,7 +241,7 @@ private:
     }
 
     nodes::Item parse_from_use_stmt() {
-        Location location = peek(-1).location;
+        Location location = peek_prev().location;
         PackageName module_name = parse_module_name();
         expect(TokenType::Using, "Expected 'using' after module name");
 
@@ -243,17 +253,19 @@ private:
             );
             std::string_view name = name_token.value.get<std::string_view>();
             std::optional<std::string_view> alias;
+            Location end_location = name_token.location;
 
             if (match(TokenType::As)) {
                 Token alias_token = expect(
                     TokenType::Identifier, "Expected alias name after 'as'"
                 );
                 alias = alias_token.value.get<std::string_view>();
+                end_location = alias_token.location;
             }
 
             items.emplace_back(
                 nodes::UseItem {
-                    .location = name_token.location,
+                    .location = name_token.location.merge(end_location),
                     .name = name,
                     .alias = alias
                 }
@@ -266,16 +278,19 @@ private:
         if (need_rparen) {
             expect(TokenType::RParen, "Expected ')' after import list");
         }
+        Location end_location = peek_prev().location;
         expect(TokenType::NewLine, "Expected newline after import statement");
         return {
-            .location = location,
+            .location = location.merge(end_location),
             .data = nodes::FromUse {
                 .module_name = std::move(module_name), .items = std::move(items)
             }
         };
     }
 
-    nodes::Item parse_function(bool is_public, bool is_extern) {
+    nodes::Item parse_function(
+        Location start_location, bool is_public, bool is_extern
+    ) {
         Token name = expect(TokenType::Identifier, "expected function name");
         expect(TokenType::LParen, "Expected '(' after function name");
         std::vector<nodes::FuncArg> args;
@@ -287,7 +302,7 @@ private:
                     if (min_pos_args.has_value()) {
                         err_handler_->error(
                             *source_,
-                            peek(-1).location,
+                            peek_prev().location,
                             "разедлитель позиционных параметров уже указан"
                         );
                     }
@@ -296,7 +311,7 @@ private:
                     if (max_pos_args.has_value()) {
                         err_handler_->error(
                             *source_,
-                            peek(-1).location,
+                            peek_prev().location,
                             "разедлитель параметров со значением уже указан"
                         );
                     }
@@ -312,13 +327,12 @@ private:
                     args.emplace_back(
                         nodes::FuncArg {
                             .location = param.location,
-                            .name =
-                                std::get<std::string_view>(param.value.value),
+                            .name = param.value.get<std::string_view>(),
                             .type = std::move(type)
                         }
                     );
                 }
-            } catch (const ParseError& e) {
+            } catch (const ParseError&) {
                 if (synchronize_func_arg()) {
                     expect(TokenType::RParen, "Expected ')' after parameters");
                     break;
@@ -349,11 +363,13 @@ private:
             body = parse_body();
         }
         std::uint32_t args_size = args.size();
+        auto end_location = peek_prev().location;
         return {
-            .location = name.location,
+            .location = start_location.merge(end_location),
             .data = nodes::Func {
                 .is_public = is_public,
                 .is_extern = is_extern,
+                .name_location = name.location,
                 .name = name.value.get<std::string_view>(),
                 .args = std::move(args),
                 .min_pos_args = min_pos_args.value_or(0),
@@ -382,13 +398,14 @@ private:
     bool synchronize_struct_field() { return synchronize_func_arg(); }
 
     nodes::Item parse_struct() {
+        auto location = peek_prev().location;
         Token name = expect(TokenType::Identifier, "expected struct name");
         std::vector<nodes::StructField> fields;
         expect(TokenType::LParen, "Expected '(' after struct name");
         while (!match(TokenType::RParen) && !at_end()) {
             try {
                 fields.push_back(parse_struct_field());
-            } catch (const ParseError& e) {
+            } catch (const ParseError&) {
                 if (synchronize_struct_field()) {
                     expect(TokenType::RParen, "Expected ')' after fields");
                     break;
@@ -399,10 +416,12 @@ private:
                 break;
             }
         }
+        auto end_location = peek_prev().location;
         expect(TokenType::NewLine, "Expected new line after struct");
         return {
-            .location = name.location,
+            .location = location.merge(end_location),
             .data = nodes::Struct {
+                .name_location = name.location,
                 .name = name.value.get<std::string_view>(),
                 .fields = std::move(fields)
             }
@@ -414,7 +433,7 @@ private:
         expect(TokenType::Colon, "Expected ':' after field name");
         std::unique_ptr<nodes::Expr> type = parse_type();
         return nodes::StructField {
-            .location = name.location,
+            .location = name.location.merge(peek_prev().location),
             .name = name.value.get<std::string_view>(),
             .type = std::move(type)
         };
@@ -432,12 +451,13 @@ private:
             while (!match(TokenType::Dedent) && !at_end()) {
                 try {
                     stmts.push_back(parse_stmt());
-                } catch (const ParseError& e) {
+                } catch (const ParseError&) {
                     synchronize_stmt();
                 }
             }
             result = std::make_unique<nodes::Stmt>(
-                location, nodes::Stmt::Block {std::move(stmts)}
+                location.merge(peek_prev().location),
+                nodes::Stmt::Block {std::move(stmts)}
             );
         } else {
             result = parse_stmt();
@@ -482,21 +502,24 @@ private:
             return parse_return_stmt();
         }
         if (match(TokenType::Break)) {
+            auto location = peek_prev().location;
             expect(TokenType::NewLine, "Expected new line after break");
             return std::make_unique<nodes::Stmt>(
-                peek(-2).location, nodes::Stmt::Break {}
+                location, nodes::Stmt::Break {}
             );
         }
         if (match(TokenType::Continue)) {
+            auto location = peek_prev().location;
             expect(TokenType::NewLine, "Expected new line after continue");
             return std::make_unique<nodes::Stmt>(
-                peek(-2).location, nodes::Stmt::Continue {}
+                location, nodes::Stmt::Continue {}
             );
         }
         return parse_assign();
     }
 
     std::unique_ptr<nodes::Stmt> parse_let_stmt() {
+        auto location = peek_prev().location;
         Token name = expect(TokenType::Identifier, "expected variable name");
         std::unique_ptr<nodes::Expr> type = nullptr;
         if (match(TokenType::Colon)) {
@@ -506,11 +529,12 @@ private:
         if (match(TokenType::Equal)) {
             init = parse_expr();
         }
+        auto end_location = peek_prev().location;
         expect(
             TokenType::NewLine, "expected new line after variable declaration"
         );
         return std::make_unique<nodes::Stmt>(
-            name.location,
+            location.merge(end_location),
             nodes::Stmt::Var {
                 .name = std::get<std::string_view>(name.value.value),
                 .type = std::move(type),
@@ -520,7 +544,7 @@ private:
     }
 
     std::unique_ptr<nodes::Stmt> parse_if_stmt() {
-        Location location = peek(-1).location;
+        Location location = peek_prev().location;
         std::unique_ptr<nodes::Expr> condition = parse_expr();
         expect(TokenType::Colon, "Expected ':' after if condition");
         std::unique_ptr<nodes::Stmt> then_block = parse_body();
@@ -534,7 +558,7 @@ private:
             }
         }
         return std::make_unique<nodes::Stmt>(
-            location,
+            location.merge(peek_prev().location),
             nodes::Stmt::If {
                 .cond = std::move(condition),
                 .then_block = std::move(then_block),
@@ -544,12 +568,12 @@ private:
     }
 
     std::unique_ptr<nodes::Stmt> parse_while_stmt() {
-        Location location = peek(-1).location;
+        Location location = peek_prev().location;
         std::unique_ptr<nodes::Expr> condition = parse_expr();
         expect(TokenType::Colon, "expected ':' after while condition");
         std::unique_ptr<nodes::Stmt> body = parse_body();
         return std::make_unique<nodes::Stmt>(
-            location,
+            location.merge(peek_prev().location),
             nodes::Stmt::While {
                 .cond = std::move(condition), .body = std::move(body)
             }
@@ -557,20 +581,21 @@ private:
     }
 
     std::unique_ptr<nodes::Stmt> parse_return_stmt() {
-        Location location = peek(-1).location;
+        Location location = peek_prev().location;
         std::unique_ptr<nodes::Expr> value = nullptr;
         if (!match(TokenType::NewLine)) {
             value = parse_expr();
             expect(TokenType::NewLine, "expected new line after");
         }
         return std::make_unique<nodes::Stmt>(
-            location, nodes::Stmt::Return {std::move(value)}
+            location.merge(peek_prev().location),
+            nodes::Stmt::Return {std::move(value)}
         );
     }
 
     std::unique_ptr<nodes::Stmt> parse_assign() {
         if (peek().type == TokenType::Identifier &&
-            peek(1).type == TokenType::Colon) {
+            peek_next().type == TokenType::Colon) {
             auto name = next();
             expect(TokenType::Colon, "");
             auto type = parse_type();
@@ -580,7 +605,7 @@ private:
             }
             expect(TokenType::NewLine, "");
             return std::make_unique<nodes::Stmt>(
-                name.location,
+                name.location.merge(peek_prev().location),
                 nodes::Stmt::Var {
                     .name = name.value.get<std::string_view>(),
                     .type = std::move(type),
@@ -601,9 +626,10 @@ private:
             peek().type == TokenType::CaretEqual) {
             Token op = next();
             std::unique_ptr<nodes::Expr> value = parse_expr();
+            auto end_location = peek_prev().location;
             expect(TokenType::NewLine, "Expected new line");
             return std::make_unique<nodes::Stmt>(
-                op.location,
+                expr->location.merge(end_location),
                 nodes::Stmt::OpAssign {
                     .target = std::move(expr),
                     .value = std::move(value),
@@ -617,37 +643,28 @@ private:
         targets.push_back(std::move(expr));
 
         while (match(TokenType::Equal)) {
-            location = peek(-1).location;
             targets.push_back(parse_expr());
         }
+        auto end_location = peek_prev().location;
         expect(TokenType::NewLine, "Expected new line");
         std::unique_ptr<nodes::Expr> expr_val = std::move(targets.back());
         targets.pop_back();
         if (targets.empty()) {
-            auto location = expr_val->location;
+            location = expr_val->location;
             return std::make_unique<nodes::Stmt>(
                 location, nodes::Stmt::Expr {std::move(expr_val)}
             );
         }
         return std::make_unique<nodes::Stmt>(
-            location,
+            location.merge(end_location),
             nodes::Stmt::Assign {
                 .targets = std::move(targets), .value = std::move(expr_val)
             }
         );
     }
 
-    std::optional<nodes::Expr::Specifier> get_spec(TokenType type) {
-        switch (type) {
-            case TokenType::Let: return nodes::Expr::Specifier::Let;
-            case TokenType::Var: return nodes::Expr::Specifier::Var;
-            case TokenType::Val: return nodes::Expr::Specifier::Val;
-            default: return std::nullopt;
-        }
-    }
-
-    bool has_expr() {
-        switch(peek().type) {
+    [[nodiscard]] bool has_expr() const {
+        switch (peek().type) {
             case TokenType::Identifier:
             case TokenType::Minus:
             case TokenType::Amp:
@@ -660,27 +677,9 @@ private:
             case TokenType::Char:
             case TokenType::String:
             case TokenType::LParen:
-            case TokenType::LBracket:
-                return true;
+            case TokenType::LBracket: return true;
             default: return false;
         }
-    }
-
-    std::unique_ptr<nodes::Expr> parse_spec() {
-        return get_spec(peek().type)
-            .transform([&](auto spec) {
-                auto token = next();
-                auto expr = has_expr() ? parse_expr() : nullptr;
-                return std::make_unique<nodes::Expr>(
-                    token.location,
-                    nodes::Expr::Spec {
-                        .type = std::move(expr),
-                        .specifier = nodes::Expr::Specifier::Let
-                    }
-                );
-            })
-            .or_else([&] { return std::optional {has_expr() ? parse_expr() : nullptr}; })
-            .value();
     }
 
     enum class Precedence : std::uint8_t {
@@ -698,7 +697,7 @@ private:
         Call,
     };
 
-    [[nodiscard]] Precedence get_precedence(TokenType type) const {
+    static Precedence get_precedence(TokenType type) {
         switch (type) {
             case TokenType::Or: return Precedence::LogicalOr;
             case TokenType::And: return Precedence::LogicalAnd;
@@ -740,6 +739,14 @@ private:
         return left;
     }
 
+    static nodes::Expr::Specifier get_specifier(TokenType type) {
+        switch (type) {
+            case TokenType::Let: return nodes::Expr::Specifier::Let;
+            case TokenType::Var: return nodes::Expr::Specifier::Var;
+            case TokenType::Val: return nodes::Expr::Specifier::Val;
+            default: throw ParseError("Invalid specifier token");
+        }
+    }
     std::unique_ptr<nodes::Expr> parse_prefix(Token token) {
         switch (token.type) {
             case TokenType::Integer:
@@ -747,19 +754,16 @@ private:
             case TokenType::String:
             case TokenType::Char:
                 return std::make_unique<nodes::Expr>(
-                    token.location, token.value.visit(
+                    token.location,
+                    token.value.visit(
                         [&](std::int64_t v) -> nodes::Expr::Literal {
                             return v;
                         },
-                        [&](double v) -> nodes::Expr::Literal {
-                            return v;
-                        },
+                        [&](double v) -> nodes::Expr::Literal { return v; },
                         [&](std::string_view v) -> nodes::Expr::Literal {
                             return v;
                         },
-                        [&](char32_t v) -> nodes::Expr::Literal {
-                            return v;
-                        },
+                        [&](char32_t v) -> nodes::Expr::Literal { return v; },
                         [&](auto v) -> nodes::Expr::Literal {
                             throw std::runtime_error {""};
                         }
@@ -799,7 +803,8 @@ private:
                     }
                 }
                 return std::make_unique<nodes::Expr>(
-                    location, nodes::Expr::Array {std::move(items)}
+                    location.merge(peek_prev().location),
+                    nodes::Expr::Array {std::move(items)}
                 );
             }
             case TokenType::Minus:
@@ -808,13 +813,24 @@ private:
             case TokenType::Amp: {
                 auto operand = parse_expr(Precedence::Prefix);
                 return std::make_unique<nodes::Expr>(
-                    token.location,
+                    token.location.merge(peek_prev().location),
                     nodes::Expr::Unary {
                         .operand = std::move(operand),
                         .op = get_unary_op(token.type)
                     }
                 );
             }
+            case TokenType::Let:
+            case TokenType::Var:
+            case TokenType::Val:
+                return std::make_unique<nodes::Expr>(
+                    token.location.merge(peek_prev().location),
+                    nodes::Expr::Spec {
+                        .type = has_expr() ? parse_expr(Precedence::Prefix)
+                                           : nullptr,
+                        .specifier = get_specifier(token.type)
+                    }
+                );
             default:
                 err_handler_->error(
                     *source_, token.location, "expected expression"
@@ -843,7 +859,7 @@ private:
             case TokenType::Or: {
                 auto right = parse_expr(precedence);
                 return std::make_unique<nodes::Expr>(
-                    op_token.location,
+                    left->location.merge(peek_prev().location),
                     nodes::Expr::Binary {
                         .left = std::move(left),
                         .right = std::move(right),
@@ -859,7 +875,6 @@ private:
             case TokenType::NotEqual: {
                 std::vector<std::unique_ptr<nodes::Expr>> operands;
                 std::vector<nodes::Expr::ComparisonOp> operators;
-                Location location = op_token.location;
 
                 operands.push_back(std::move(left));
                 operators.push_back(get_comparison_op(op_token.type));
@@ -869,13 +884,13 @@ private:
                     Precedence next_prec = get_precedence(peek().type);
                     if (next_prec != Precedence::Comparison) break;
 
-                    Token next_op = next();
+                    const Token& next_op = next();
                     operators.push_back(get_comparison_op(next_op.type));
                     operands.push_back(parse_expr(precedence));
                 }
 
                 return std::make_unique<nodes::Expr>(
-                    location,
+                    left->location.merge(peek_prev().location),
                     nodes::Expr::Comparison {
                         .operands = std::move(operands),
                         .operators = std::move(operators)
@@ -889,7 +904,7 @@ private:
             case TokenType::Dot: {
                 if (match(TokenType::Star)) {
                     return std::make_unique<nodes::Expr>(
-                        op_token.location,
+                        left->location.merge(peek_prev().location),
                         nodes::Expr::Unary {
                             .operand = std::move(left),
                             .op = nodes::Expr::UnaryOp::Deref
@@ -901,7 +916,7 @@ private:
                         "expected attribute name after '.'"
                     );
                     return std::make_unique<nodes::Expr>(
-                        name.location,
+                        left->location.merge(peek_prev().location),
                         nodes::Expr::GetAttr {
                             .value = std::move(left),
                             .name = name.value.get<std::string_view>()
@@ -911,9 +926,8 @@ private:
             }
             case TokenType::As: {
                 std::unique_ptr<nodes::Expr> type = parse_type();
-                auto location = type->location;
                 return std::make_unique<nodes::Expr>(
-                    location,
+                    left->location.merge(peek_prev().location),
                     nodes::Expr::As {
                         .value = std::move(left), .type = std::move(type)
                     }
@@ -929,7 +943,7 @@ private:
         std::vector<nodes::Expr::CallArg> args;
         while (!match(TokenType::RParen)) {
             if (peek().type == TokenType::Identifier &&
-                peek(1).type == TokenType::Equal) {
+                peek_next().type == TokenType::Equal) {
                 args.push_back({
                     .name = next().value.get<std::string_view>(),
                     .value = parse_expr(),
@@ -944,7 +958,7 @@ private:
             }
         }
         return std::make_unique<nodes::Expr>(
-            location,
+            expr->location.merge(peek_prev().location),
             nodes::Expr::Call {
                 .value = std::move(expr), .args = std::move(args)
             }
@@ -963,7 +977,7 @@ private:
             }
         }
         return std::make_unique<nodes::Expr>(
-            location,
+            expr->location.merge(peek_prev().location),
             nodes::Expr::GetItem {
                 .value = std::move(expr), .args = std::move(args)
             }

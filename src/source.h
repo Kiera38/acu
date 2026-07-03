@@ -50,5 +50,9 @@ struct Location {
     std::uint32_t end = 0;
 
     [[nodiscard]] std::string to_string(const Source& source) const;
+
+    Location merge(Location location) {
+        return {.start=start, .end=location.end};
+    }
 };
 }
