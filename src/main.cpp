@@ -12,7 +12,6 @@ struct Config {
     std::filesystem::path output_path;
     acu::OptimizationLevel opt_level = acu::OptimizationLevel::O0;
     bool show_ast = false;
-    bool show_semanal = false;
     bool show_refanal = false;
     bool show_llvm = false;
     bool show_opt_llvm = false;
@@ -28,7 +27,6 @@ void print_help(const char* prog_name) {
               << "  -O0, -O1, -O2,\n"
               << "  -O3, -Os, -Oz     Set optimization level (default: -O0)\n"
               << "  --emit-ast        Show Ast\n"
-              << "  --emit-semanal    Show Semanal IR\n"
               << "  --emit-refanal    Show Refanal IR\n"
               << "  --emit-llvm       Show LLVM IR (pre-optimization)\n"
               << "  --emit-opt-llvm   Show optimized LLVM IR\n"
@@ -78,8 +76,6 @@ std::optional<Config> parse_args(std::span<char*> argv) {
             config.opt_level = acu::OptimizationLevel::Oz;
         } else if (arg == "--emit-ast") {
             config.show_ast = true;
-        } else if (arg == "--emit-semanal") {
-            config.show_semanal = true;
         } else if (arg == "--emit-refanal") {
             config.show_refanal = true;
         } else if (arg == "--emit-llvm") {
@@ -87,7 +83,7 @@ std::optional<Config> parse_args(std::span<char*> argv) {
         } else if (arg == "--emit-opt-llvm") {
             config.show_opt_llvm = true;
         } else if (arg == "--show-ir") {
-            config.show_ast = config.show_semanal = config.show_refanal =
+            config.show_ast = config.show_refanal =
                 config.show_llvm = config.show_opt_llvm = true;
         } else if (arg == "--compile" || arg == "-c") {
             config.mode = RunMode::Compile;

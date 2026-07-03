@@ -15,10 +15,10 @@ file(
 include(${CMAKE_CURRENT_BINARY_DIR}/aui.boot.cmake)
 set(AUIB_VALID_INSTALLATION_PATHS "C:/Program Files/Microsoft Visual Studio/*")
 auib_import(
-    LLVM https://github.com/llvm/llvm-project 
+    LLVM https://github.com/llvm/llvm-project
     VERSION llvmorg-22.1.4
     LINK STATIC
-    CMAKE_ARGS 
+    CMAKE_ARGS
         -DLLVM_INCLUDE_EXAMPLES=OFF
         -DLLVM_BUILD_EXAMPLES=OFF
         -DLLVM_INCLUDE_TESTS=OFF
@@ -42,56 +42,55 @@ find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
-# Map LLVM components to library names
-llvm_map_components_to_libnames(llvm_libs
-    core
-    support
-    native
-    mc
-    target
-    binaryformat
-    bitreader
-    bitwriter
-    executionengine
-    orcjit
-    ipo
-    passes
-    scalaropts
-    selectiondag
-    instcombine
-    transformutils
-    analysis
-)
+if(TARGET LLVM)
+    set(LLVM_LINK_LIBS LLVM)
+    message(STATUS "Using shared LLVM target")
+else()
+    llvm_map_components_to_libnames(
+        LLVM_LINK_LIBS
+        core
+        support
+        analysis
+        target
+        mc
+        bitreader
+        passes
+        codegen
+        asmparser
+        asmprinter
+        ${LLVM_TARGETS_TO_BUILD}
+    )
+    message(STATUS "Using static LLVM components: ${LLVM_LINK_LIBS}")
+endif()
 
-message(STATUS "LLVM LIBS: ${llvm_libs}")
 
-# Define the executable
-add_executable(acu
-    src/main.cpp
+add_library(acuc
     src/source.cpp
     src/parser/lexer.cpp
     src/parser/parser.cpp
-        src/parser/nodes_str.cpp
+    src/parser/nodes_str.cpp
 
     src/errors.cpp
+        src/unicode.h
 
-#    src/refanal/generator.cpp
-#    src/refanal/ir_str.cpp
-#    src/refanal/ir.cpp
+        # src/refanal/generator.cpp
+# src/refanal/ir_str.cpp
+# src/refanal/ir.cpp
 #
-#    src/codegen/generator.cpp
-#    src/codegen/jit.cpp
+# src/codegen/generator.cpp
+# src/codegen/jit.cpp
 )
+target_include_directories(acuc PUBLIC src)
 
 # Set include directories
-target_include_directories(acu SYSTEM PRIVATE
-    ${LLVM_INCLUDE_DIRS}
-)
-target_include_directories(acu PRIVATE
-    src
-)
+target_include_directories(acuc SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
 # LLVM Definitions
-target_compile_definitions(acu PRIVATE ${LLVM_DEFINITIONS})
+target_compile_definitions(acuc PRIVATE ${LLVM_DEFINITIONS})
 
-target_link_libraries(acu PRIVATE ${llvm_libs})
+target_link_libraries(acuc PRIVATE ${LLVM_LINK_LIBS})
+
+# Define the executable
+add_executable(acu src/main.cpp)
+target_link_libraries(acu PRIVATE acuc)
+

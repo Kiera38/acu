@@ -747,7 +747,23 @@ private:
             case TokenType::String:
             case TokenType::Char:
                 return std::make_unique<nodes::Expr>(
-                    token.location, nodes::Expr::Literal {token.value}
+                    token.location, token.value.visit(
+                        [&](std::int64_t v) -> nodes::Expr::Literal {
+                            return v;
+                        },
+                        [&](double v) -> nodes::Expr::Literal {
+                            return v;
+                        },
+                        [&](std::string_view v) -> nodes::Expr::Literal {
+                            return v;
+                        },
+                        [&](char32_t v) -> nodes::Expr::Literal {
+                            return v;
+                        },
+                        [&](auto v) -> nodes::Expr::Literal {
+                            throw std::runtime_error {""};
+                        }
+                    )
                 );
             case TokenType::True:
                 return std::make_unique<nodes::Expr>(

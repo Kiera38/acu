@@ -29,7 +29,12 @@ private:
     void format(const Expr& expr) {
         expr.visit(
             [&](const Expr::Literal& literal) {
-                print("Literal: {}\n", parser::to_string(literal.value));
+                print(
+                    "Literal: {}\n",
+                    parser::to_string(
+                        literal.visit([](auto v) -> parser::Value { return v; })
+                    )
+                );
             },
             [&](const Expr::Name& name) { print("Name: {}\n", name.name); },
             [&](const Expr::Binary& binary) {

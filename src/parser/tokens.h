@@ -85,10 +85,15 @@ enum class TokenType : std::uint8_t {
     Dedent,
     NewLine,
     EndOfFile,
-    Error,
 };
 
-using Value = utils::Variant<bool, std::int64_t, double, char32_t, std::string_view>;
+using Value = utils::Variant<
+    std::monostate,
+    bool,
+    std::int64_t,
+    double,
+    char32_t,
+    std::string_view>;
 
 struct Token {
     TokenType type = TokenType::EndOfFile;
@@ -97,7 +102,7 @@ struct Token {
 };
 
 // Helper function to get token type name as string
-std::string to_string(TokenType type);
+std::string_view to_string(TokenType type);
 
 // Helper function to get token value as string
 std::string to_string(const Value& token);
