@@ -28,7 +28,7 @@ Token Lexer::make_token(
 
 Lexer::Lexer(Source& source, ErrorHandler& err_handler)
     : source_(&source),
-      source_text_(source.content),
+      source_text_(source.content()),
       begin_of_line_(true),
       dedents_(0),
       err_handler_(&err_handler) {
@@ -428,7 +428,7 @@ Token Lexer::string() {
     }
     next();
     return make_token(
-        TokenType::String, start_byte_index, {source_->strings.intern(value)}
+        TokenType::String, start_byte_index, {source_->strings().intern(value)}
     );
 }
 

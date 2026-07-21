@@ -1,30 +1,56 @@
 #include "source.h"
 
+#include <cassert>
+#include <fstream>
 #include <string_view>
 
 namespace acu {
-std::string Location::to_string(const Source& source) const {
-    auto byte_start = source.content[start] == '\n' ? start-1 : start;
-    auto line_start = source.content.rfind('\n', byte_start);
-    auto line_end = source.content.find('\n', end);
-    if (line_start == std::string_view::npos) {
-        line_start = 0;
-    } else if(line_start != line_end) {
-        line_start += 1;  // Move past the newline
+Source::Source(std::string module_name, std::filesystem::path file_path)
+    : name_(std::move(module_name)),
+      path_(std::move(file_path)),
+      module_name_(name_) {
+    std::ifstream ifs(path_.string());
+    ifs >> content_;
+    lines_ = std::views::split(content_, '\n') |
+             std::views::transform([&](auto c) {
+                 return c.begin() - content_.begin();
+             }) |
+             std::ranges::to<std::vector<std::uint32_t>>();
+}
+
+Source::Source(
+    std::string module_name,
+    std::filesystem::path file_path,
+    std::string content
+)
+    : name_(std::move(module_name)),
+      path_(std::move(file_path)),
+      content_(std::move(content)),
+      module_name_(name_) {
+
+    lines_ = std::views::split(content_, '\n') |
+             std::views::transform([&](auto c) {
+                 return c.begin() - content_.begin();
+             }) |
+             std::ranges::to<std::vector<std::uint32_t>>();
+}
+
+Position Source::position(std::uint32_t byte) const {
+    auto it = std::ranges::lower_bound(lines_, byte);
+    assert(it != lines_.end());
+    auto line = it - lines_.begin();
+    auto column = byte - *it;
+    return {line, column};
+}
+
+Line Source::line(std::uint32_t line) const {
+    auto start = lines_.at(line);
+    if (line + 1 < lines_.size()) {
+        auto end = lines_.at(line + 1);
+        return {
+            line, start, std::string_view(content_).substr(start, end - start)
+        };
     }
-    if (line_end == std::string_view::npos) {
-        line_end = source.content.size();
-    }
-    if(line_end <= line_start) {
-        line_end = line_start + 1;
-    }
-    auto line_number =
-        std::count(
-            source.content.begin(), source.content.begin() + start, '\n'
-        ) +
-        1;
-    return std::format(
-        "{}:{}:{}", source.path.string(), line_number, start - line_start
-    );
+    return {line, start, std::string_view(content_).substr(start)};
 }
 }

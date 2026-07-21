@@ -7,12 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(AUI_VERSION v8.0.0-rc.20)
 # Use AUI.Boot
-file(
-    DOWNLOAD
-    https://raw.githubusercontent.com/aui-framework/aui/${AUI_VERSION}/aui.boot.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/aui.boot.cmake
-)
-include(${CMAKE_CURRENT_BINARY_DIR}/aui.boot.cmake)
+include(aui.boot.cmake)
 set(AUIB_VALID_INSTALLATION_PATHS "C:/Program Files/Microsoft Visual Studio/*")
 auib_import(
     LLVM https://github.com/llvm/llvm-project
@@ -64,7 +59,7 @@ else()
 endif()
 
 
-add_library(acuc
+add_library(acuc STATIC
     src/source.cpp
     src/parser/lexer.cpp
     src/parser/parser.cpp

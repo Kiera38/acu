@@ -249,7 +249,7 @@ private:
         );
     }
     void format(const Module& module) {
-        print("Module: {}\n", module.source->module_name);
+        print("Module: {}\n", module.source->name());
         indent([&] {
             for (const auto& item : module.items) {
                 format(item);

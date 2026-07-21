@@ -9,93 +9,43 @@
 namespace acu {
 
 enum class Severity : std::uint8_t { Note, Warning, Error, Fatal };
+enum class LabelStyle : std::uint8_t { Primary, Secondary };
 
 struct Label {
+    LabelStyle style = LabelStyle::Primary;
     const Source* source;
     Location location;
     std::string message;
 };
 
 struct Error {
-    Severity severity;
-    const Source* source;
-    Location location;
+    Severity severity = Severity::Error;
     std::string message;
-    std::string hint;
     std::vector<Label> labels;
+    std::vector<std::string> notes;
 };
 
 class ErrorHandler {
 public:
-    void report(
-        Severity severity,
-        const Source& source,
-        Location location,
-        std::string message,
-        std::string hint = "",
-        std::vector<Label> labels = {}
-    ) {
-        errors_.push_back({
-            .severity = severity,
-            .source = &source,
-            .location = location,
-            .message = std::move(message),
-            .hint = std::move(hint),
-            .labels = std::move(labels),
-        });
-        if (severity == Severity::Error || severity == Severity::Fatal) {
+    void report(Error error) {
+        if (error.severity == Severity::Error ||
+            error.severity == Severity::Fatal) {
             has_errors_ = true;
         }
+        errors_.push_back(std::move(error));
     }
 
     void error(
         const Source& source,
-        Location location,
-        std::string message,
-        std::string hint = "",
-        std::vector<Label> labels = {}
+        const Location& location,
+        const std::string& message
     ) {
         report(
-            Severity::Error,
-            source,
-            location,
-            std::move(message),
-            std::move(hint),
-            std::move(labels)
-        );
-    }
-
-    void warning(
-        const Source& source,
-        Location location,
-        std::string message,
-        std::string hint = "",
-        std::vector<Label> labels = {}
-    ) {
-        report(
-            Severity::Warning,
-            source,
-            location,
-            std::move(message),
-            std::move(hint),
-            std::move(labels)
-        );
-    }
-
-    void note(
-        const Source& source,
-        Location location,
-        std::string message,
-        std::string hint = "",
-        std::vector<Label> labels = {}
-    ) {
-        report(
-            Severity::Note,
-            source,
-            location,
-            std::move(message),
-            std::move(hint),
-            std::move(labels)
+            {.severity = Severity::Error,
+             .message = message,
+             .labels = {
+                 {.source = &source, .location = location, .message = message}
+             }}
         );
     }
 
@@ -108,5 +58,4 @@ private:
     std::vector<Error> errors_;
     bool has_errors_ = false;
 };
-
 }

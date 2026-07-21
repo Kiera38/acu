@@ -3,6 +3,11 @@
 #include <optional>
 #include <vector>
 
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "project.h"
 
 enum class RunMode : std::uint8_t { Jit, Compile };
@@ -83,8 +88,8 @@ std::optional<Config> parse_args(std::span<char*> argv) {
         } else if (arg == "--emit-opt-llvm") {
             config.show_opt_llvm = true;
         } else if (arg == "--show-ir") {
-            config.show_ast = config.show_refanal =
-                config.show_llvm = config.show_opt_llvm = true;
+            config.show_ast = config.show_refanal = config.show_llvm =
+                config.show_opt_llvm = true;
         } else if (arg == "--compile" || arg == "-c") {
             config.mode = RunMode::Compile;
         } else if (arg == "--run" || arg == "--jit") {
@@ -119,6 +124,9 @@ std::optional<Config> parse_args(std::span<char*> argv) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     auto config = parse_args({argv, static_cast<std::size_t>(argc)});
     if (!config) {
         return 1;
