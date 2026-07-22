@@ -308,7 +308,7 @@ struct Stmt {
 };
 
 struct Use {
-    PackageName module_name;
+    ModuleName module_name;
 };
 
 struct UseItem {
@@ -318,7 +318,7 @@ struct UseItem {
 };
 
 struct FromUse {
-    PackageName module_name;
+    ModuleName module_name;
     std::vector<UseItem> items;
 };
 

@@ -9,9 +9,9 @@
 #include "hash.h"
 
 namespace acu {
-struct PackageNameRef : std::span<const std::string_view> {
-    PackageNameRef() = default;
-    explicit PackageNameRef(std::span<const std::string_view> n)
+struct ModuleNameRef : std::span<const std::string_view> {
+    ModuleNameRef() = default;
+    explicit ModuleNameRef(std::span<const std::string_view> n)
         : std::span<const std::string_view>(n) {}
 
     [[nodiscard]] std::string join() const {
@@ -21,13 +21,15 @@ struct PackageNameRef : std::span<const std::string_view> {
         return *this | std::views::join_with('.') |
                std::ranges::to<std::string>();
     }
-    using std::span<const std::string_view>::subspan;
+    [[nodiscard]] ModuleNameRef parent() const {
+        return ModuleNameRef(subspan(0, size()-1));
+    }
 };
-struct PackageName : std::vector<std::string_view> {
+struct ModuleName : std::vector<std::string_view> {
     using std::vector<std::string_view>::vector;
-    explicit PackageName(PackageNameRef ref) { append_range(ref); }
+    explicit ModuleName(ModuleNameRef ref) { append_range(ref); }
 
-    explicit PackageName(std::string_view package_name) {
+    explicit ModuleName(std::string_view package_name) {
         if (package_name.empty()) {
             return;
         }
@@ -36,32 +38,32 @@ struct PackageName : std::vector<std::string_view> {
         }
     }
 
-    operator PackageNameRef() const {
+    operator ModuleNameRef() const {
         auto name = std::span(*this);
-        return PackageNameRef{name};
+        return ModuleNameRef{name};
     }
 
     [[nodiscard]] std::string join() const {
-        return PackageNameRef(*this).join();
+        return ModuleNameRef(*this).join();
     }
 };
 
-inline bool operator==(PackageNameRef name1, PackageNameRef name2) {
+inline bool operator==(ModuleNameRef name1, ModuleNameRef name2) {
     return std::ranges::equal(name1, name2);
 }
 
-inline bool operator==(const PackageName& name1, const PackageName& name2) {
-    return PackageNameRef(name1) == PackageNameRef(name2);
+inline bool operator==(const ModuleName& name1, const ModuleName& name2) {
+    return ModuleNameRef(name1) == ModuleNameRef(name2);
 }
 
-inline bool operator==(const PackageName& name1, PackageNameRef name2) {
-    return PackageNameRef(name1) == name2;
+inline bool operator==(const ModuleName& name1, ModuleNameRef name2) {
+    return ModuleNameRef(name1) == name2;
 }
 
 template <>
-struct hash<PackageNameRef> {
+struct hash<ModuleNameRef> {
     using is_transparent = void;
-    std::size_t operator()(PackageNameRef name) const {
+    std::size_t operator()(ModuleNameRef name) const {
         std::size_t result = 0;
         for (auto i : name) {
             hash_combine(result, i);

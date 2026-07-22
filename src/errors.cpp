@@ -505,10 +505,18 @@ private:
     std::uint8_t current_style = 0;
 };
 
-void print_header(const Error& error) {}
+std::string_view severity(Severity severity) {
+    switch (severity) {
+        case Severity::Error: return "Error";
+        case Severity::Warning: return "Warning";
+        case Severity::Note: return "Note";
+        case Severity::Fatal: return "Fatal";
+    }
+    std::unreachable();
+}
 
 void print_diagnostic(const Error& error) {
-    print_header(error);
+    std::println(std::cerr, "{}: {}", severity(error.severity), error.message);
     std::vector<SourceGroup> source_groups;
     for (const auto& label : error.labels) {
         auto it = std::ranges::find(
@@ -526,6 +534,10 @@ void print_diagnostic(const Error& error) {
     bool is_first = true;
     for (auto& group : source_groups) {
         group.print(is_first);
+        is_first = false;
+    }
+    for (const auto& note : error.notes) {
+        std::println(std::cerr, "Note: {}", note);
     }
 }
 

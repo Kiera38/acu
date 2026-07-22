@@ -6,7 +6,7 @@
 #include <string_view>
 #include <unordered_set>
 
-#include "package_name.h"
+#include "module_name.h"
 
 namespace acu {
 class Source;
@@ -58,7 +58,7 @@ public:
     [[nodiscard]] std::string_view name() const { return name_; }
     [[nodiscard]] const std::filesystem::path& path() const { return path_; }
     [[nodiscard]] std::string_view content() const { return content_; }
-    [[nodiscard]] PackageNameRef module_name() const { return module_name_; }
+    [[nodiscard]] ModuleNameRef module_name() const { return module_name_; }
     [[nodiscard]] Strings& strings() { return strings_; }
 
     [[nodiscard]] Position position(std::uint32_t byte) const;
@@ -70,7 +70,7 @@ private:
     std::filesystem::path path_;
     std::string content_;
     Strings strings_;
-    PackageName module_name_;
+    ModuleName module_name_;
     std::vector<std::uint32_t> lines_;
 };
 }
