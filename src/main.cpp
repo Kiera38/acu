@@ -13,6 +13,7 @@
 enum class RunMode : std::uint8_t { Jit, Compile };
 
 struct Config {
+    std::vector<std::filesystem::path> search_paths;
     std::filesystem::path input_path;
     std::filesystem::path output_path;
     acu::OptimizationLevel opt_level = acu::OptimizationLevel::O0;
@@ -29,6 +30,7 @@ void print_help(const char* prog_name) {
     std::cout << "Usage: " << prog_name << " <input_files...> [options]\n"
               << "Options:\n"
               << "  -o <path>         Set output object file path\n"
+              << "  -I <path>         Add search path\n"
               << "  -O0, -O1, -O2,\n"
               << "  -O3, -Os, -Oz     Set optimization level (default: -O0)\n"
               << "  --emit-ast        Show Ast\n"
@@ -42,6 +44,7 @@ void print_help(const char* prog_name) {
 }
 
 std::optional<Config> parse_args(std::span<char*> argv) {
+    bool has_err = false;
     Config config;
     std::vector<std::string_view> args;
     args.reserve(argv.size() - 1);
@@ -65,7 +68,14 @@ std::optional<Config> parse_args(std::span<char*> argv) {
                 config.mode = RunMode::Compile;
             } else {
                 std::cerr << "Error: -o requires an output path\n";
-                return std::nullopt;
+                has_err = true;
+            }
+        } else if (arg == "-I") {
+            if (i + 1 < args.size()) {
+                config.search_paths.push_back(args[++i]);
+            } else {
+                std::cerr << "Error: -I requires an search path\n";
+                has_err = true;
             }
         } else if (arg == "-O0") {
             config.opt_level = acu::OptimizationLevel::O0;
@@ -96,29 +106,40 @@ std::optional<Config> parse_args(std::span<char*> argv) {
             config.mode = RunMode::Jit;
         } else if (arg.starts_with("-")) {
             std::cerr << "Unknown option: " << arg << "\n";
-            return std::nullopt;
+            has_err = true;
         } else {
             if (!config.input_path.empty()) {
-                std::cerr << "Error: multiple input files specified\n";
+                has_err = true;
             } else {
                 config.input_path = arg;
             }
         }
     }
+    if (config.search_paths.empty()) {
+        config.search_paths.push_back(std::filesystem::current_path());
+    }
+    for (const auto& path : config.search_paths) {
+        if (!std::filesystem::exists(path)) {
+            std::cerr << "Error: search path '" << path << "' does not exist\n";
+            has_err = true;
+        }
+        if (!std::filesystem::is_directory(path)) {
+            std::cerr << "Error: search path '" << path
+                      << "' is not a directory\n";
+            has_err = true;
+        }
+    }
 
     if (!std::filesystem::exists(config.input_path)) {
         std::cerr << "Error: file not found: " << config.input_path << "\n";
-        return std::nullopt;
+        has_err = true;
     }
 
     if (config.mode == RunMode::Compile && config.output_path.empty()) {
-        if (std::filesystem::is_directory(config.input_path)) {
-            config.output_path = config.input_path;
-        } else {
-            config.output_path =
-                std::filesystem::absolute(config.input_path).parent_path();
-        }
+        config.output_path =
+            std::filesystem::absolute(config.input_path).parent_path();
     }
+    if (has_err) return std::nullopt;
     return config;
 }
 }
@@ -133,9 +154,8 @@ int main(int argc, char** argv) {
     }
 
     try {
-        // acu::Project project(config->input_path);
-        // project.parse(config->show_ast);
-        // project.semanal(config->show_semanal);
+        acu::Project project(config->input_path);
+
         // project.refanal(config->show_refanal);
         // if (config->mode == RunMode::Compile) {
         //     project.codegen(

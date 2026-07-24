@@ -369,7 +369,7 @@ private:
             .data = nodes::Func {
                 .is_public = is_public,
                 .is_extern = is_extern,
-                .name_location = name.location,
+                .location = name.location,
                 .name = name.value.get<std::string_view>(),
                 .args = std::move(args),
                 .min_pos_args = min_pos_args.value_or(0),
@@ -421,7 +421,7 @@ private:
         return {
             .location = location.merge(end_location),
             .data = nodes::Struct {
-                .name_location = name.location,
+                .location = name.location,
                 .name = name.value.get<std::string_view>(),
                 .fields = std::move(fields)
             }

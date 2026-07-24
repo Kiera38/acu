@@ -331,7 +331,7 @@ struct FuncArg {
 struct Func {
     bool is_public = false;
     bool is_extern = false;
-    Location name_location;
+    Location location;
     std::string_view name;
     std::vector<FuncArg> args;
     std::uint32_t min_pos_args = 0;
@@ -347,7 +347,7 @@ struct StructField {
 };
 
 struct Struct {
-    Location name_location;
+    Location location;
     std::string_view name;
     std::vector<StructField> fields;
 };
@@ -372,9 +372,9 @@ struct Item {
     [[nodiscard]] const FromUse* get_from_using() const {
         return data.get_if<FromUse>();
     }
-    [[nodiscard]] const Func& get_func() const { return data.get<Func>(); }
-    [[nodiscard]] const Struct& get_struct() const {
-        return data.get<Struct>();
+    [[nodiscard]] const Func* get_func() const { return data.get_if<Func>(); }
+    [[nodiscard]] const Struct* get_struct() const {
+        return data.get_if<Struct>();
     }
     template <typename... Args>
     auto visit(Args&&... args) const {

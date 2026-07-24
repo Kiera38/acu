@@ -68,6 +68,8 @@ add_library(acuc STATIC
     src/errors.cpp
         src/unicode.h
         src/project.cpp
+        src/semanal/resolve.h
+        src/semanal/resolve.cpp
 
         # src/refanal/generator.cpp
 # src/refanal/ir_str.cpp
