@@ -1,6 +1,7 @@
 #include "project.h"
 
 #include <print>
+#include <utility>
 
 #include "parser/parser.h"
 #include "semanal/context.h"
@@ -19,10 +20,10 @@ void Project::analyze(const std::filesystem::path& path) {
         modules.at(ModuleNameRef{std::array {std::string_view {module_name}}});
 }
 
-void Project::load_module(const std::filesystem::path& path, std::string name) {
+void Project::load_module(std::filesystem::path path, std::string name) {
     auto module =
         std::make_unique<Module>(Source {std::move(name), std::move(path)});
-    module->module = parser::parse(module->source, err_handler);
+    module->module = parser::parse(module->source, err_handler_);
     semanal::resolve(module->module, *this);
     modules.insert_or_assign(module->source.module_name(), std::move(module));
 }
@@ -50,7 +51,7 @@ void Project::add_module(
             return;
         }
     }
-    err_handler.report({
+    err_handler_.report({
         .message = std::format("module '{}' not found", module_name.join()),
         .labels = {
             {.source = &source,

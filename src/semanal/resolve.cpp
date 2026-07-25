@@ -61,24 +61,31 @@ public:
 
     void add(std::string_view name, Symbol symbol, Location location) {
         if (auto redefined = add(name, symbol)) {
-            auto redefined_location = redefined->visit([](const auto* item) {
-                return item->location;
-            });
-            err_handler_->report({
-                .message = std::format("name '{}' already defined", name),
-                .labels = {
-                    {.source = source_,
-                     .location = location,
-                     .message = "this name already defined"},
-                    {.source = source_,
-                     .location = redefined_location,
-                     .message = "defined here"}
+            if (redefined->is<builtins::Type>()) return;
+            auto redefined_location = redefined->visit(
+                [](const auto* item) {
+                    return item->location;
                 },
-            });
+                [](builtins::Type)->Location {
+                    std::unreachable();
+                }
+            );
+                err_handler_->report({
+                    .message = std::format("name '{}' already defined", name),
+                    .labels = {
+                        {.source = source_,
+                         .location = location,
+                         .message = "this name already defined"},
+                        {.source = source_,
+                         .location = redefined_location,
+                         .message = "defined here"}
+                    },
+                });
+
         }
     }
 
-    std::optional<std::uint8_t> from_str(
+    [[nodiscard]] std::optional<std::uint8_t> from_str(
         std::string_view str, Location location
     ) const {
         std::uint8_t number = 0;
@@ -229,7 +236,7 @@ Scopes collect(
                 used_module->module = &module_context;
             },
             [&](const nodes::FromUse& from_use) {
-                auto used_module = project.module_context(from_use.module_name);
+                const auto& used_module = project.module_context(from_use.module_name);
                 for (const auto& use_item : from_use.items) {
                     auto it = used_module.public_items.find(use_item.name);
                     if (it == used_module.public_items.end()) {

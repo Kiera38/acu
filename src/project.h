@@ -35,7 +35,7 @@ public:
     ErrorHandler& err_handler() {return err_handler_;}
 
 private:
-    void load_module(const std::filesystem::path& path, std::string name);
+    void load_module(std::filesystem::path path, std::string name);
 
     std::vector<std::filesystem::path> search_paths;
     ErrorHandler err_handler_;

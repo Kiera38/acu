@@ -10,6 +10,7 @@
 
 #include "project.h"
 
+namespace {
 enum class RunMode : std::uint8_t { Jit, Compile };
 
 struct Config {
@@ -24,23 +25,25 @@ struct Config {
     RunMode mode = RunMode::Jit;
 };
 
-namespace {
+constexpr std::string_view help = R"(
+Options:
+  -o <path>         Set output object file path
+  -I <path>         Add search path
+  -O0, -O1, -O2,
+  -O3, -Os, -Oz     Set optimization level (default: -O0)
+  --emit-ast        Show Ast
+  --emit-refanal    Show Refanal IR
+  --emit-llvm       Show LLVM IR (pre-optimization)
+  --emit-opt-llvm   Show optimized LLVM IR
+  --show-ir         Show all intermediate representations
+  --compile, -c     Compile to object file (no execution)
+  --run, --jit      Execute with JIT (default)
+  -h, --help        Show this help message
+)";
 
 void print_help(const char* prog_name) {
-    std::cout << "Usage: " << prog_name << " <input_files...> [options]\n"
-              << "Options:\n"
-              << "  -o <path>         Set output object file path\n"
-              << "  -I <path>         Add search path\n"
-              << "  -O0, -O1, -O2,\n"
-              << "  -O3, -Os, -Oz     Set optimization level (default: -O0)\n"
-              << "  --emit-ast        Show Ast\n"
-              << "  --emit-refanal    Show Refanal IR\n"
-              << "  --emit-llvm       Show LLVM IR (pre-optimization)\n"
-              << "  --emit-opt-llvm   Show optimized LLVM IR\n"
-              << "  --show-ir         Show all intermediate representations\n"
-              << "  --compile, -c     Compile to object file (no execution)\n"
-              << "  --run, --jit      Execute with JIT (default)\n"
-              << "  -h, --help        Show this help message\n";
+    std::cout << "Usage: " << prog_name << " <input_files...> [options]";
+    std::cout << help;
 }
 
 std::optional<Config> parse_args(std::span<char*> argv) {
@@ -154,7 +157,8 @@ int main(int argc, char** argv) {
     }
 
     try {
-        acu::Project project(config->input_path);
+        acu::Project project(config->search_paths);
+        project.analyze(config->input_path);
 
         // project.refanal(config->show_refanal);
         // if (config->mode == RunMode::Compile) {

@@ -70,6 +70,8 @@ add_library(acuc STATIC
         src/project.cpp
         src/semanal/resolve.h
         src/semanal/resolve.cpp
+        src/semanal/type.h
+        src/semanal/type.cpp
 
         # src/refanal/generator.cpp
 # src/refanal/ir_str.cpp
